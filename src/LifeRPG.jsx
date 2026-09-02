@@ -1,0 +1,3519 @@
+import { useState, useEffect, useRef, useId } from "react";
+import {
+  Flame, Zap, Shield, Trophy, Target, Plus, X, Lock, RotateCcw,
+  TrendingUp, Bot, ChevronRight, Swords, Check, CheckCircle2, Sparkles, Star,
+  Brain, GraduationCap, Store
+, Flag, ClipboardList, Camera, Paperclip, Link as LinkIcon} from "lucide-react";
+
+/* ───────────────────────── 상수: 게임 규칙 ───────────────────────── */
+
+const RANKS = [
+  { name: "지망생", gate: "관심 단계, 실행 전", req: "시작하면 됩니다" },
+  { name: "견습",   gate: "배우는 중", req: "학습 기록이 존재해야 함" },
+  { name: "초심자", gate: "작은 결과물이 있음", req: "직접 만든 산출물 1개" },
+  { name: "실무자", gate: "그 일로 실제 결과가 나옴", req: "외부로 나간 산출물 · 첫 수익 · 실업무 수행" },
+  { name: "숙련자", gate: "안정적으로 반복 가능", req: "검증된 결과 3건 이상" },
+  { name: "전문가", gate: "남이 돈 주고 맡기는 수준", req: "유료 의뢰 · 취업 · 지속 수익 등 타인의 지갑이 열린 증거" },
+  { name: "리더",   gate: "사람과 프로젝트를 이끎", req: "팀 운영 · 가르친 기록 · 사업 운영" },
+  { name: "마스터", gate: "업계가 알아봄", req: "수상 · 초청 · 지명 의뢰 같은 외부 인정" },
+  { name: "거장",   gate: "분야에 영향을 줌", req: "업계의 레퍼런스가 된 증거" },
+  { name: "정점",   gate: "그 분야의 정상", req: "대체 불가능한 위치의 증거" },
+];
+
+const DIFFS = {
+  E: { pts: 10,  label: "30분 내 가벼운 일" },
+  D: { pts: 25,  label: "반나절, 집중 필요" },
+  C: { pts: 60,  label: "며칠~1주 작업" },
+  B: { pts: 150, label: "몇 주 이상 큰 도전" },
+  A: { pts: 400, label: "인생 이벤트 (취득·출시·계약)" },
+};
+const DIFF_ORDER = ["E", "D", "C", "B", "A"];
+
+/* 자격증 DB — 분야(c) · 등급(l) · 개별 점수(s). 같은 '기사'라도 시험별 난이도로 차등 */
+const EVIDENCE_MIN = 150;
+const scoreTier = (s) => (s >= 400 ? "A" : s >= 150 ? "B" : s >= 60 ? "C" : s >= 25 ? "D" : "E");
+/* 자격증 전용 등급 — A 기술사·전문자격 / B 상위기사·기능장·국가전문 / C 산업기사·기사 / D 기능사·초급공인 / E 입문 */
+const DIFF_RAW_VERSION = "1.1";
+const certP = (d) => Math.round((0.2 * d * d) / 10) * 10;
+const achGrade = (d) => (d >= 82 ? "A" : d >= 65 ? "B" : d >= 50 ? "C" : d >= 35 ? "D" : "E");
+const certGrade = achGrade; /* D 기반 통일 */
+const legacyCertGrade = (s) => (s >= 550 ? "A" : s >= 250 ? "B" : s >= 100 ? "C" : s >= 50 ? "D" : "E");
+const GRADE_TEXT = { A: "text-amber-300", B: "text-violet-300", C: "text-sky-300", D: "text-emerald-300", E: "text-zinc-300" };
+const GRADE_BORDER = { A: "border-amber-600", B: "border-violet-700", C: "border-sky-700", D: "border-emerald-700", E: "border-zinc-600" };
+/* v1(S~D 체계) 저장 데이터 → v2(A~E 체계) 자동 변환 */
+
+const CERT_CATS = ["IT·데이터", "클라우드·글로벌IT", "전기·기계·설비", "건설·안전·환경", "사무·회계", "금융·경영", "부동산·법·행정", "전문직", "기능사·서비스"];
+/* V1.1 확정 — d: Raw Difficulty(0~100), sg/st: 단계형 그룹(차액 지급) */
+const CERTS = [
+  { n: "정보처리기능사", d: 33, c: "IT·데이터", l: "기능사" },
+  { n: "정보처리산업기사", d: 48, c: "IT·데이터", l: "산업기사" },
+  { n: "정보처리기사", d: 57, c: "IT·데이터", l: "기사" },
+  { n: "정보보안기사", d: 64, c: "IT·데이터", l: "기사" },
+  { n: "정보통신기사", d: 58, c: "IT·데이터", l: "기사" },
+  { n: "빅데이터분석기사", d: 60, c: "IT·데이터", l: "기사" },
+  { n: "전자계산기조직응용기사", d: 59, c: "IT·데이터", l: "기사" },
+  { n: "SQLD", d: 42, c: "IT·데이터", l: "국가공인" },
+  { n: "SQLP", d: 65, c: "IT·데이터", l: "국가공인" },
+  { n: "ADsP", d: 38, c: "IT·데이터", l: "국가공인" },
+  { n: "ADP", d: 73, c: "IT·데이터", l: "국가공인" },
+  { n: "리눅스마스터 2급", d: 36, c: "IT·데이터", l: "국가공인", sg: "lnx", st: 1 },
+  { n: "리눅스마스터 1급", d: 52, c: "IT·데이터", l: "국가공인", sg: "lnx", st: 2 },
+  { n: "네트워크관리사 2급", d: 40, c: "IT·데이터", l: "국가공인" },
+  { n: "컴퓨터활용능력 2급", d: 36, c: "IT·데이터", l: "국가기술", sg: "cph", st: 1 },
+  { n: "컴퓨터활용능력 1급", d: 52, c: "IT·데이터", l: "국가기술", sg: "cph", st: 2 },
+  { n: "워드프로세서", d: 31, c: "IT·데이터", l: "국가기술" },
+  { n: "ITQ", d: 26, c: "IT·데이터", l: "국가공인" },
+  { n: "GTQ 그래픽 1급", d: 34, c: "IT·데이터", l: "국가공인" },
+  { n: "웹디자인기능사", d: 37, c: "IT·데이터", l: "기능사" },
+  { n: "정보관리기술사", d: 90, c: "IT·데이터", l: "기술사" },
+  { n: "컴퓨터시스템응용기술사", d: 89, c: "IT·데이터", l: "기술사" },
+  { n: "AWS Cloud Practitioner", d: 29, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS AI Practitioner", d: 30, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS Solutions Architect Associate", d: 47, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS Developer Associate", d: 47, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS CloudOps Associate", d: 50, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS Data Engineer Associate", d: 50, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS ML Engineer Associate", d: 52, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS Security Specialty", d: 59, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS Advanced Networking Specialty", d: 61, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS Solutions Architect Professional", d: 64, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "AWS DevOps Engineer Professional", d: 64, c: "클라우드·글로벌IT", l: "AWS" },
+  { n: "Azure Fundamentals (AZ-900)", d: 28, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure AI Fundamentals (AI-900)", d: 28, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure Data Fundamentals (DP-900)", d: 28, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Security Fundamentals (SC-900)", d: 28, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure Administrator Associate", d: 47, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure Developer Associate", d: 48, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure Security Engineer Associate", d: 50, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure Network Engineer Associate", d: 50, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure Database Administrator", d: 50, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure AI Engineer Associate", d: 51, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure Solutions Architect Expert", d: 59, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Azure DevOps Engineer Expert", d: 61, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "Cybersecurity Architect Expert", d: 62, c: "클라우드·글로벌IT", l: "MS" },
+  { n: "GCP Cloud Digital Leader", d: 28, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Generative AI Leader", d: 29, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Associate Cloud Engineer", d: 47, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Professional Cloud Developer", d: 58, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Professional Cloud Architect", d: 59, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Professional Data Engineer", d: 60, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Professional DevOps Engineer", d: 60, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Professional Security Engineer", d: 61, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "GCP Professional ML Engineer", d: 62, c: "클라우드·글로벌IT", l: "GCP" },
+  { n: "KCNA", d: 35, c: "클라우드·글로벌IT", l: "CNCF" },
+  { n: "KCSA", d: 39, c: "클라우드·글로벌IT", l: "CNCF" },
+  { n: "CKAD", d: 57, c: "클라우드·글로벌IT", l: "CNCF" },
+  { n: "CKA", d: 61, c: "클라우드·글로벌IT", l: "CNCF" },
+  { n: "CKS", d: 68, c: "클라우드·글로벌IT", l: "CNCF" },
+  { n: "Cisco CCST", d: 32, c: "클라우드·글로벌IT", l: "Cisco" },
+  { n: "Cisco CCNA", d: 48, c: "클라우드·글로벌IT", l: "Cisco" },
+  { n: "Cisco Specialist", d: 55, c: "클라우드·글로벌IT", l: "Cisco" },
+  { n: "Cisco CCNP", d: 61, c: "클라우드·글로벌IT", l: "Cisco" },
+  { n: "Cisco CCIE", d: 84, c: "클라우드·글로벌IT", l: "Cisco" },
+  { n: "Linux Essentials", d: 30, c: "클라우드·글로벌IT", l: "Linux" },
+  { n: "LFCA", d: 32, c: "클라우드·글로벌IT", l: "Linux" },
+  { n: "LFCS", d: 54, c: "클라우드·글로벌IT", l: "Linux" },
+  { n: "RHCSA", d: 58, c: "클라우드·글로벌IT", l: "RedHat" },
+  { n: "RHCE", d: 65, c: "클라우드·글로벌IT", l: "RedHat" },
+  { n: "CompTIA A+", d: 34, c: "클라우드·글로벌IT", l: "CompTIA" },
+  { n: "CompTIA Network+", d: 41, c: "클라우드·글로벌IT", l: "CompTIA" },
+  { n: "CompTIA Security+", d: 46, c: "클라우드·글로벌IT", l: "CompTIA" },
+  { n: "CompTIA CySA+", d: 51, c: "클라우드·글로벌IT", l: "CompTIA" },
+  { n: "CompTIA PenTest+", d: 52, c: "클라우드·글로벌IT", l: "CompTIA" },
+  { n: "CompTIA SecurityX", d: 59, c: "클라우드·글로벌IT", l: "CompTIA" },
+  { n: "ISC2 CC", d: 32, c: "클라우드·글로벌IT", l: "ISC2" },
+  { n: "SSCP", d: 52, c: "클라우드·글로벌IT", l: "ISC2" },
+  { n: "CISA 시험 합격", d: 60, c: "클라우드·글로벌IT", l: "ISACA", sg: "cisa", st: 1 },
+  { n: "CISA 자격 취득", d: 67, c: "클라우드·글로벌IT", l: "ISACA", sg: "cisa", st: 2 },
+  { n: "CISSP 시험 합격", d: 64, c: "클라우드·글로벌IT", l: "ISC2", sg: "cissp", st: 1 },
+  { n: "CISSP 자격 취득", d: 72, c: "클라우드·글로벌IT", l: "ISC2", sg: "cissp", st: 2 },
+  { n: "CCSP", d: 65, c: "클라우드·글로벌IT", l: "ISC2" },
+  { n: "PMP 시험 합격", d: 59, c: "클라우드·글로벌IT", l: "PMI", sg: "pmp", st: 1 },
+  { n: "PMP 자격 취득", d: 67, c: "클라우드·글로벌IT", l: "PMI", sg: "pmp", st: 2 },
+  { n: "전기기능사", d: 35, c: "전기·기계·설비", l: "기능사" },
+  { n: "전기산업기사", d: 50, c: "전기·기계·설비", l: "산업기사" },
+  { n: "전기기사", d: 67, c: "전기·기계·설비", l: "기사" },
+  { n: "전기공사기사", d: 61, c: "전기·기계·설비", l: "기사" },
+  { n: "전기기능장", d: 74, c: "전기·기계·설비", l: "기능장" },
+  { n: "발송배전기술사", d: 91, c: "전기·기계·설비", l: "기술사" },
+  { n: "건축전기설비기술사", d: 90, c: "전기·기계·설비", l: "기술사" },
+  { n: "일반기계기사", d: 60, c: "전기·기계·설비", l: "기사" },
+  { n: "기계설계산업기사", d: 46, c: "전기·기계·설비", l: "산업기사" },
+  { n: "공조냉동기계기사", d: 60, c: "전기·기계·설비", l: "기사" },
+  { n: "공조냉동기계산업기사", d: 47, c: "전기·기계·설비", l: "산업기사" },
+  { n: "에너지관리기사", d: 60, c: "전기·기계·설비", l: "기사" },
+  { n: "설비보전기사", d: 55, c: "전기·기계·설비", l: "기사" },
+  { n: "승강기기사", d: 57, c: "전기·기계·설비", l: "기사" },
+  { n: "용접기능사", d: 33, c: "전기·기계·설비", l: "기능사" },
+  { n: "용접기능장", d: 71, c: "전기·기계·설비", l: "기능장" },
+  { n: "자동차정비기능사", d: 34, c: "전기·기계·설비", l: "기능사" },
+  { n: "자동차정비산업기사", d: 45, c: "전기·기계·설비", l: "산업기사" },
+  { n: "산업안전산업기사", d: 48, c: "건설·안전·환경", l: "산업기사" },
+  { n: "산업안전기사", d: 59, c: "건설·안전·환경", l: "기사" },
+  { n: "건설안전기사", d: 60, c: "건설·안전·환경", l: "기사" },
+  { n: "소방설비기사(전기)", d: 63, c: "건설·안전·환경", l: "기사" },
+  { n: "소방설비기사(기계)", d: 62, c: "건설·안전·환경", l: "기사" },
+  { n: "소방설비산업기사", d: 49, c: "건설·안전·환경", l: "산업기사" },
+  { n: "위험물기능사", d: 32, c: "건설·안전·환경", l: "기능사" },
+  { n: "위험물산업기사", d: 46, c: "건설·안전·환경", l: "산업기사" },
+  { n: "위험물기능장", d: 69, c: "건설·안전·환경", l: "기능장" },
+  { n: "가스기사", d: 61, c: "건설·안전·환경", l: "기사" },
+  { n: "건축기사", d: 63, c: "건설·안전·환경", l: "기사" },
+  { n: "건축산업기사", d: 48, c: "건설·안전·환경", l: "산업기사" },
+  { n: "토목기사", d: 62, c: "건설·안전·환경", l: "기사" },
+  { n: "실내건축기사", d: 58, c: "건설·안전·환경", l: "기사" },
+  { n: "조경기사", d: 59, c: "건설·안전·환경", l: "기사" },
+  { n: "대기환경기사", d: 61, c: "건설·안전·환경", l: "기사" },
+  { n: "수질환경기사", d: 60, c: "건설·안전·환경", l: "기사" },
+  { n: "폐기물처리기사", d: 58, c: "건설·안전·환경", l: "기사" },
+  { n: "산업위생관리기사", d: 58, c: "건설·안전·환경", l: "기사" },
+  { n: "신재생에너지발전설비기사", d: 57, c: "건설·안전·환경", l: "기사" },
+  { n: "소방기술사", d: 90, c: "건설·안전·환경", l: "기술사" },
+  { n: "건축시공기술사", d: 88, c: "건설·안전·환경", l: "기술사" },
+  { n: "토목시공기술사", d: 88, c: "건설·안전·환경", l: "기술사" },
+  { n: "전산회계 2급", d: 30, c: "사무·회계", l: "국가공인", sg: "acc", st: 1 },
+  { n: "전산회계 1급", d: 38, c: "사무·회계", l: "국가공인", sg: "acc", st: 2 },
+  { n: "전산세무 2급", d: 42, c: "사무·회계", l: "국가공인", sg: "tax", st: 1 },
+  { n: "전산세무 1급", d: 48, c: "사무·회계", l: "국가공인", sg: "tax", st: 2 },
+  { n: "재경관리사", d: 50, c: "사무·회계", l: "국가공인" },
+  { n: "회계관리 1급", d: 37, c: "사무·회계", l: "국가공인" },
+  { n: "ERP정보관리사(회계)", d: 35, c: "사무·회계", l: "국가공인" },
+  { n: "한국사능력검정 기본", d: 27, c: "사무·회계", l: "국가공인", sg: "kh", st: 1 },
+  { n: "한국사능력검정 심화", d: 38, c: "사무·회계", l: "국가공인", sg: "kh", st: 2 },
+  { n: "사회조사분석사 2급", d: 54, c: "사무·회계", l: "국가기술" },
+  { n: "직업상담사 2급", d: 47, c: "사무·회계", l: "국가기술" },
+  { n: "유통관리사 2급", d: 44, c: "사무·회계", l: "국가공인" },
+  { n: "물류관리사", d: 52, c: "사무·회계", l: "국가공인" },
+  { n: "펀드투자권유자문인력", d: 41, c: "금융·경영", l: "금융투자" },
+  { n: "증권투자권유자문인력", d: 44, c: "금융·경영", l: "금융투자" },
+  { n: "파생상품투자권유자문인력", d: 48, c: "금융·경영", l: "금융투자" },
+  { n: "투자자산운용사", d: 52, c: "금융·경영", l: "금융투자" },
+  { n: "신용분석사", d: 54, c: "금융·경영", l: "금융" },
+  { n: "AFPK", d: 47, c: "금융·경영", l: "금융", sg: "fp", st: 1 },
+  { n: "CFP", d: 62, c: "금융·경영", l: "금융", sg: "fp", st: 2 },
+  { n: "재무위험관리사", d: 55, c: "금융·경영", l: "금융" },
+  { n: "CFA Level I 합격", d: 60, c: "금융·경영", l: "CFA", sg: "cfa", st: 1 },
+  { n: "CFA Level II 합격", d: 70, c: "금융·경영", l: "CFA", sg: "cfa", st: 2 },
+  { n: "CFA Level III 합격", d: 78, c: "금융·경영", l: "CFA", sg: "cfa", st: 3 },
+  { n: "CFA Charterholder", d: 83, c: "금융·경영", l: "CFA", sg: "cfa", st: 4 },
+  { n: "공인중개사", d: 64, c: "부동산·법·행정", l: "국가전문" },
+  { n: "주택관리사", d: 66, c: "부동산·법·행정", l: "국가전문" },
+  { n: "행정사", d: 65, c: "부동산·법·행정", l: "국가전문" },
+  { n: "손해사정사", d: 88, c: "전문직", l: "전문자격" },
+  { n: "관세사", d: 93, c: "전문직", l: "전문자격" },
+  { n: "공인노무사", d: 94, c: "전문직", l: "전문자격" },
+  { n: "법무사", d: 95, c: "전문직", l: "전문자격" },
+  { n: "보험계리사", d: 95, c: "전문직", l: "전문자격" },
+  { n: "세무사", d: 96, c: "전문직", l: "전문자격" },
+  { n: "감정평가사", d: 97, c: "전문직", l: "전문자격" },
+  { n: "공인회계사 CPA", d: 98, c: "전문직", l: "전문자격" },
+  { n: "변리사", d: 99, c: "전문직", l: "전문자격" },
+  { n: "변호사(변호사시험)", d: 100, c: "전문직", l: "전문자격" },
+  { n: "지게차운전기능사", d: 27, c: "기능사·서비스", l: "기능사" },
+  { n: "굴착기운전기능사", d: 28, c: "기능사·서비스", l: "기능사" },
+  { n: "한식조리기능사", d: 31, c: "기능사·서비스", l: "기능사" },
+  { n: "양식조리기능사", d: 32, c: "기능사·서비스", l: "기능사" },
+  { n: "제과기능사", d: 30, c: "기능사·서비스", l: "기능사" },
+  { n: "제빵기능사", d: 30, c: "기능사·서비스", l: "기능사" },
+  { n: "미용사(일반)", d: 36, c: "기능사·서비스", l: "기능사" },
+  { n: "미용사(네일)", d: 32, c: "기능사·서비스", l: "기능사" },
+  { n: "조리기능장", d: 70, c: "기능사·서비스", l: "기능장" },
+  { n: "바리스타 2급", d: 22, c: "기능사·서비스", l: "민간" },
+];
+
+/* 클릭형 증거 선택지 */
+const QUEST_EV_CHIPS = ["합격·취득 완료", "결과물 완성·제출", "계약·판매·수익 발생", "공식 기록·인증 있음"];
+const GATE_CHIPS = {
+  1: ["강의·책 학습 기록 있음", "정리 노트·요약 있음"],
+  2: ["직접 만든 산출물 1개", "완주한 과제·프로젝트"],
+  3: ["산출물이 외부로 나감", "이 일로 첫 수익 발생", "실제 업무로 수행 중"],
+  4: ["검증된 결과 3건 이상", "남에게 설명·공유 경험"],
+  5: ["유료 의뢰·계약 경험", "이 일로 취업·채용됨", "지속 수익 발생 중"],
+  6: ["팀·사람을 이끄는 중", "가르친 기록 있음", "사업체 운영 중"],
+  7: ["수상·인증 등 외부 인정", "초청·지명 의뢰 경험"],
+  8: ["업계 레퍼런스로 언급됨"],
+  9: ["정상급 위치의 공적 증거"],
+};
+const PART_PRESETS = ["사업", "직업·커리어", "기본지식", "건강", "어학", "인맥", "자산", "취미·창작"];
+const ROLE_PRESETS = ["대기업 현직 전문가", "월 500 1인 사업가", "프리랜서 전문가", "창업가·대표"];
+const QUEST_TEMPLATES = [
+  { t: "아침 운동 30분", kind: "fit", diff: "E", type: "daily" },
+  { t: "독서 30분", kind: "book", diff: "E", type: "daily" },
+  { t: "업무 회고 작성", kind: "", diff: "E", type: "daily" },
+  { t: "거래처 미팅", kind: "meet", diff: "D", type: "once" },
+];
+const detectKind = (t) => {
+  if (!t) return "";
+  if (/독서|책\s?읽|북클럽/.test(t)) return "book";
+  if (/운동|헬스|러닝|조깅|필라테스|요가|웨이트|수영/.test(t)) return "fit";
+  if (/미팅|회의|거래처/.test(t)) return "meet";
+  return "";
+};
+// 목표 제목·메모·KR을 읽어 이 목표에 의미 있는 활동 유형·학습 여부를 추론
+const goalKinds = (goal) => {
+  const kinds = new Set([""]);
+  let study = false;
+  const txt = `${goal?.title || ""} ${goal?.note || ""}`;
+  const feed = (t) => { const k = detectKind(t); if (k) kinds.add(k); };
+  feed(txt);
+  if (/어학|영어|토익|오픽|일본어|중국어|공부|학습|독서|자격|시험|스펙|지식|개발|코딩/.test(txt)) { study = true; kinds.add("book"); }
+  if (/체력|건강|다이어트|감량|근육|헬스|피트니스|몸/.test(txt)) kinds.add("fit");
+  if (/영업|매출|거래처|고객|세일즈|계약/.test(txt)) kinds.add("meet");
+  for (const kr of goal?.krs || []) {
+    feed(kr.title);
+    if (kr.type === "exam" || kr.type === "cert") { study = true; kinds.add("book"); }
+    if (kr.type === "metric" && /체중|골격근|체지방|근육|인바디/.test(kr.title)) kinds.add("fit");
+  }
+  return { kinds, study };
+};
+
+/* ── 캐릭터 생성 선택지 (정형 데이터) ── */
+const AGE_OPTS = ["10대", "20대 초반", "20대 중반", "20대 후반", "30대 초반", "30대 중·후반", "40대 이상"];
+const STATUS_OPTS = ["고등학생", "대학 재학", "휴학·졸업예정", "취업 준비", "직장인 1~3년", "직장인 4~7년", "직장인 8년+", "프리랜서", "예비 창업", "사업 운영 중", "전환기·무직"];
+const EDU_OPTS = [
+  { k: "hs", t: "고졸", g: 0 },
+  { k: "col", t: "전문대·대학 재학", g: 1 },
+  { k: "assoc", t: "전문대 졸", g: 1 },
+  { k: "ba", t: "학사 졸", g: 1 },
+  { k: "ms", t: "석사", g: 2 },
+  { k: "phd", t: "박사", g: 3 },
+];
+const MAJOR_FIELDS = ["인문", "사회·상경", "자연", "공학", "IT·컴퓨터", "예체능", "의약·보건", "교육", "기타·없음"];
+const KNOWLEDGE_FIELDS = ["IT·개발", "데이터·AI", "마케팅", "경영·창업", "재테크·금융", "디자인", "콘텐츠·미디어", "외국어", "법·행정", "부동산", "심리·상담", "건강·운동"];
+const CAREER_OPTS = [
+  { k: "none", t: "경력 없음", g: 0 },
+  { k: "intern", t: "인턴·알바 경험", g: 1 },
+  { k: "u1", t: "실무 1년 미만", g: 3 },
+  { k: "y13", t: "실무 1~3년", g: 3 },
+  { k: "y35", t: "실무 3~5년", g: 4 },
+  { k: "y510", t: "실무 5~10년", g: 5 },
+  { k: "y10", t: "실무 10년+", g: 5 },
+];
+const LEAD_OPTS = [
+  { k: "no", t: "리드 경험 없음", g: 0 },
+  { k: "yes", t: "팀·후배를 이끈 경험 있음", g: 1 },
+];
+const BIZ_OPTS = [
+  { k: "none", t: "경험 없음", g: 0 },
+  { k: "try", t: "준비·시도만 해봄", g: 1 },
+  { k: "built", t: "제품·서비스 만듦 (매출 X)", g: 2 },
+  { k: "sale", t: "첫 매출 발생", g: 3 },
+  { k: "monthly", t: "월 매출 반복 발생", g: 4 },
+  { k: "living", t: "본업 수준 수익", g: 5 },
+  { k: "org", t: "직원·법인 운영", g: 6 },
+];
+const OUTPUT_OPTS = [
+  { k: "none", t: "없음", g: 0 },
+  { k: "priv", t: "개인 프로젝트 있음 (비공개)", g: 2 },
+  { k: "pub", t: "공개·배포한 산출물 있음", g: 3 },
+  { k: "rev", t: "수익·사용자가 있는 산출물", g: 3 },
+];
+const gFromD = (d) => (d >= 82 ? 5 : d >= 67 ? 4 : d >= 55 ? 3 : d >= 40 ? 2 : d >= 25 ? 1 : 0);
+
+/* 선택지 조합 → 파트별 시작 등급 자동 산정 (동일 선택 = 동일 등급, V1.1 D 기반) */
+const computeGrades = (profile, partNames) => {
+  const certMaxD = (profile.certs || []).reduce((m, n) => {
+    const c = CERTS.find((x) => x.n === n);
+    return c ? Math.max(m, c.d) : m;
+  }, 0);
+  const acadMaxD = (profile.examsOwned || []).reduce((m, o) => {
+    const fx = EXAMS.find((e) => e.id === o.famId);
+    return fx && fx.lang === "Academic" ? Math.max(m, o.d) : m;
+  }, 0);
+  const langMaxD = (profile.examsOwned || []).reduce((m, o) => {
+    const fx = EXAMS.find((e) => e.id === o.famId);
+    return fx && fx.lang !== "Academic" ? Math.max(m, o.d) : m;
+  }, 0);
+  const edu = EDU_OPTS.find((e) => e.k === profile.edu)?.g ?? 0;
+  const out = OUTPUT_OPTS.find((o) => o.k === profile.output)?.g ?? 0;
+  const car = CAREER_OPTS.find((c) => c.k === profile.career)?.g ?? 0;
+  const lead = profile.lead === "yes" ? 1 : 0;
+  const biz = BIZ_OPTS.find((b) => b.k === profile.biz)?.g ?? 0;
+  return partNames.map((name) => {
+    let grade = 0; const why = [];
+    if (name === "기본지식") {
+      const kD = Math.max(certMaxD, acadMaxD);
+      const certG = gFromD(kD);
+      grade = Math.max(edu, certG, out);
+      if (edu === grade && edu > 0) why.push(`학력: ${EDU_OPTS.find((e) => e.k === profile.edu)?.t}`);
+      if (certG === grade && certG > 0) why.push(`보유 자격·성적 최고 D${kD}`);
+      if (out === grade && out > 0) why.push(OUTPUT_OPTS.find((o) => o.k === profile.output)?.t);
+    } else if (name === "어학") {
+      grade = langMaxD >= 88 ? 5 : langMaxD >= 76 ? 4 : langMaxD >= 60 ? 3 : langMaxD >= 45 ? 2 : langMaxD >= 30 ? 1 : 0;
+      why.push(langMaxD > 0 ? `보유 성적 최고 D${langMaxD}` : "어학 성적 없음");
+    } else if (name === "직업·커리어") {
+      grade = car + (car >= 4 ? lead : 0);
+      why.push(CAREER_OPTS.find((c) => c.k === profile.career)?.t || "경력 없음");
+      if (car >= 4 && lead) why.push("리드 경험 +1");
+    } else if (name === "사업") {
+      grade = biz;
+      why.push(BIZ_OPTS.find((b) => b.k === profile.biz)?.t || "경험 없음");
+    } else {
+      why.push("측정 항목 없음 — 지망생 시작, 관문으로 승급");
+    }
+    grade = Math.min(grade, 6);
+    return { name, grade, why: why.filter(Boolean).join(" · ") };
+  });
+};
+
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
+const dstr = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+const shiftDay = (base, delta) => { const d = new Date(base + "T12:00:00"); d.setDate(d.getDate() + delta); return dstr(d); };
+const monthStr = () => dstr().slice(0, 7);
+
+/* ───────────────────────── 저장소 (localStorage + 메모리 폴백) — §3-1 시밍 2026-09-03 ───────────────────────── */
+
+const KEY = "liferpg-state-v1";
+const mem = {};
+const store = {
+  async get(k) {
+    try {
+      const r = window.localStorage.getItem(k);
+      if (r != null) return JSON.parse(r);
+    } catch {}
+    return mem[k] ?? null;
+  },
+  async set(k, v) {
+    mem[k] = v;
+    try { window.localStorage.setItem(k, JSON.stringify(v)); } catch {}
+  },
+  async del(k) {
+    delete mem[k];
+    try { window.localStorage.removeItem(k); } catch {}
+  },
+};
+
+/* ───────────────────────── AI 헬퍼 ───────────────────────── */
+
+
+function Bar({ ratio, color, h = "h-2" }) {
+  return (
+    <div className={`${h} w-full rounded-full bg-zinc-800 overflow-hidden`}>
+      <div
+        className={`h-full rounded-full ${color} transition-all duration-700 ease-out`}
+        style={{ width: `${Math.min(100, Math.max(0, ratio * 100))}%` }}
+      />
+    </div>
+  );
+}
+
+function DiffBadge({ d }) {
+  const tone = {
+    E: "text-zinc-300 border-zinc-600",
+    D: "text-emerald-300 border-emerald-700",
+    C: "text-sky-300 border-sky-700",
+    B: "text-violet-300 border-violet-700",
+    A: "text-amber-300 border-amber-600",
+  }[d];
+  return (
+    <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg border font-mono text-sm font-bold ${tone} bg-zinc-900 shrink-0`}>
+      {d}
+    </span>
+  );
+}
+
+function CertBadge({ g }) {
+  return (
+    <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg border font-mono text-sm font-bold ${GRADE_TEXT[g]} ${GRADE_BORDER[g]} bg-zinc-900 shrink-0`}>
+      {g}
+    </span>
+  );
+}
+
+const SKINS = ["#f6d7b0", "#eec39a", "#d9a066", "#a06a42"];
+const HAIR_COLORS = ["#2b2b2b", "#5b3a1e", "#a9714b", "#c9a227", "#7a4fbf", "#d94f6b"];
+const OUTFITS = ["#f59e0b", "#22d3ee", "#a78bfa", "#34d399", "#fb7185", "#94a3b8"];
+const HAIR_STYLES = ["기본", "단발", "장발", "포니", "스포츠"];
+const FACES = ["기본", "미소", "진지"];
+const CLASS_NOUN = { "사업": "상인", "직업·커리어": "모험가", "기본지식": "현자", "어학": "통역사", "건강": "격투가", "인맥": "음유시인", "자산": "연금술사", "취미·창작": "장인" };
+
+/* ── 실사풍 초상 일러스트 (프로필 사진용 버스트샷) ── */
+/* PortraitSprite v3 — 웹툰 무드 파라메트릭 초상 (디자인 핸드오프 2026-09-02 드롭인)
+ * API 동일: <PortraitSprite look={{skin,hair,hairColor,outfit,face}} gender size />
+ * 4:5, viewBox 120×150 · 무대 radial #2a1e4a→#171130→#0a0716 · 듀얼 림라이트 #67e8f9/#f0abfc */
+function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
+  const fem = gender === "여성";
+  const masc = gender === "남성";
+  const L = { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0, ...(look || {}) };
+  const sk = SKINS[L.skin] || SKINS[0];
+  const hc = HAIR_COLORS[L.hairColor] || HAIR_COLORS[0];
+  const oc = OUTFITS[L.outfit] || OUTFITS[0];
+  const style = HAIR_STYLES[L.hair] || "기본";
+  const face = FACES[L.face] || "기본";
+  const nr = face === "진지";
+  const g = useId().replace(/[:]/g, "");
+  return (
+    <svg width={size} height={size * 1.25} viewBox="0 0 120 150" className={className}>
+      <defs>
+        <radialGradient id={`${g}bg`} cx="50%" cy="32%" r="80%">
+          <stop offset="0%" stopColor="#2a1e4a" /><stop offset="55%" stopColor="#171130" /><stop offset="100%" stopColor="#0a0716" />
+        </radialGradient>
+        <radialGradient id={`${g}gl`} cx="50%" cy="40%" r="55%">
+          <stop offset="0%" stopColor={oc} stopOpacity="0.42" /><stop offset="100%" stopColor={oc} stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id={`${g}fs`} x1="0" y1="0" x2="1" y2="0.3">
+          <stop offset="0%" stopColor="#000" stopOpacity="0.2" /><stop offset="55%" stopColor="#000" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id={`${g}D`} x1="1" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#000" stopOpacity="0.34" /><stop offset="50%" stopColor="#000" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id={`${g}L`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#fff" stopOpacity="0.26" /><stop offset="45%" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+        <radialGradient id={`${g}ir`} cx="42%" cy="36%" r="70%">
+          <stop offset="0%" stopColor="#6b4a34" /><stop offset="100%" stopColor="#170c05" />
+        </radialGradient>
+        <radialGradient id={`${g}bl`} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#d1795f" stopOpacity={fem ? 0.3 : 0.18} /><stop offset="100%" stopColor="#d1795f" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <rect width="120" height="150" fill={`url(#${g}bg)`} />
+      <ellipse cx="60" cy="58" rx="52" ry="56" fill={`url(#${g}gl)`} />
+
+      {/* 뒷머리 */}
+      {style === "장발" && (<>
+        <path d="M30 44 C22 84 25 122 33 150 L45 150 C39 120 38 84 40 50 Z" fill={hc} />
+        <path d="M90 44 C98 84 95 122 87 150 L75 150 C81 120 82 84 80 50 Z" fill={hc} />
+        <path d="M90 44 C98 84 95 122 87 150 L82 150 C88 118 88 82 84 50 Z" fill="#000" opacity="0.24" />
+        <path d="M35 60 C33 84 33.5 112 37 140" fill="none" stroke="#fff" strokeOpacity="0.12" strokeWidth="1.1" strokeLinecap="round" />
+      </>)}
+      {style === "단발" && (<>
+        <path d="M32 38 C26 60 27 82 34 92 L86 92 C93 82 94 60 88 38 Z" fill={hc} />
+        <path d="M86 92 C93 82 94 60 88 38 L84 40 C89 58 88 80 82 90 Z" fill="#000" opacity="0.22" />
+      </>)}
+      {style !== "장발" && style !== "단발" && <path d="M34 38 C30 56 31 72 37 81 L83 81 C89 72 90 56 86 38 Z" fill={hc} />}
+
+      {/* 목·상의 */}
+      <path d="M53 72 C53 91 53.7 101 55.8 109 L64.2 109 C66.3 101 67 91 67 72 Z" fill={sk} />
+      <path d="M53 74 h14 l-1.3 9 q-5.7 3.4 -11.4 0 Z" fill="#000" opacity="0.24" />
+      <path d="M55.4 94 C55.9 100 56.6 104.5 57.5 107.5" fill="none" stroke="#000" strokeOpacity="0.1" strokeWidth="1" strokeLinecap="round" />
+      <path d="M64.6 94 C64.1 100 63.4 104.5 62.5 107.5" fill="none" stroke="#000" strokeOpacity="0.1" strokeWidth="1" strokeLinecap="round" />
+      <path d="M12 150 C15 121 33 109.5 60 108 C87 109.5 105 121 108 150 Z" fill={oc} />
+      <path d="M12 150 C15 121 33 109.5 60 108 C87 109.5 105 121 108 150 Z" fill={`url(#${g}D)`} />
+      <path d="M12 150 C15 121 33 109.5 60 108 L60 150 Z" fill={`url(#${g}L)`} opacity="0.5" />
+      <path d="M26 122 C24 130 23 140 22.8 149" fill="none" stroke="#000" strokeOpacity="0.2" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M94 122 C96 130 97 140 97.2 149" fill="none" stroke="#000" strokeOpacity="0.2" strokeWidth="1.4" strokeLinecap="round" />
+      {masc ? (<>
+        <path d="M47 109 L60 129 L73 109 L67.5 107 L60 118 L52.5 107 Z" fill="#0d0a18" />
+        <path d="M53 108 L60 118.5 L67 108 C64.2 111 55.8 111 53 108 Z" fill="#f4f1ea" />
+      </>) : (<>
+        <path d="M51 108.5 L60 122 L69 108.5 C65.4 112.2 54.6 112.2 51 108.5 Z" fill={sk} />
+        <path d="M51 108.5 L60 122 L69 108.5" fill="none" stroke="#000" strokeOpacity="0.3" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M54.6 113.5 Q60 117.6 65.4 113.5" fill="none" stroke="#e8c66a" strokeWidth="1.3" strokeLinecap="round" />
+        <circle cx="60" cy="117.4" r="1.4" fill="#f3dc8f" />
+      </>)}
+      {style === "장발" && (<>
+        <path d="M37 80 C33 102 34 128 39 150 L47 150 C43 126 43 102 45 84 Z" fill={hc} />
+        <path d="M83 80 C87 102 86 128 81 150 L73 150 C77 126 77 102 75 84 Z" fill={hc} />
+        <path d="M79 90 C81 114 80 132 77 146" fill="none" stroke="#fff" strokeOpacity="0.15" strokeWidth="1.3" strokeLinecap="round" />
+        <path d="M41 92 C39.6 114 40 132 42.6 146" fill="none" stroke="#fff" strokeOpacity="0.1" strokeWidth="1.1" strokeLinecap="round" />
+      </>)}
+
+      {/* 얼굴 — 샤프한 턱 */}
+      <path d={masc
+        ? "M60 21 C76 21 83.4 32.5 82.8 47.5 C82.3 60 76.5 71.5 63.5 77.8 C62 78.6 60.8 79 60 79 C59.2 79 58 78.6 56.5 77.8 C43.5 71.5 37.7 60 37.2 47.5 C36.6 32.5 44 21 60 21 Z"
+        : "M60 21 C77 21 84 33 83.2 48 C82.4 60.5 75 72 62.8 78 C61.6 78.6 60.7 78.9 60 78.9 C59.3 78.9 58.4 78.6 57.2 78 C45 72 37.6 60.5 36.8 48 C36 33 43 21 60 21 Z"} fill={sk} />
+      <ellipse cx="36.8" cy="52" rx="3.7" ry="6" fill={sk} />
+      <ellipse cx="83.2" cy="52" rx="3.7" ry="6" fill={sk} />
+      <path d="M36.4 50 q1.6 2 1.3 4.4" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="1.1" strokeLinecap="round" />
+      <path d="M83.6 50 q-1.6 2 -1.3 4.4" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="1.1" strokeLinecap="round" />
+      {fem && (<><circle cx="36.5" cy="58.9" r="1.2" fill="#f3dc8f" /><circle cx="83.5" cy="58.9" r="1.2" fill="#f3dc8f" /></>)}
+
+      {/* 입체 음영 */}
+      <path d="M82.8 47.5 C82.3 60 76.5 71.5 63.5 77.8 C70.5 72.5 75.5 63.5 77 52.5 C78 43 75.8 33.5 70 28 C77 31 83.1 37.5 82.8 47.5 Z" fill={`url(#${g}fs)`} />
+      <ellipse cx="60" cy="46" rx="25" ry="29" fill="#fff" opacity="0.05" />
+      <path d="M39 39 C37.4 50 38.5 61 44 70 C40.5 62 39 50 41 41 Z" fill="#000" opacity="0.09" />
+      <ellipse cx="46.5" cy="61.5" rx="6.2" ry="3.5" fill={`url(#${g}bl)`} />
+      <ellipse cx="73.5" cy="61.5" rx="6.2" ry="3.5" fill={`url(#${g}bl)`} />
+      <path d="M53.5 74 q6.5 2.4 13 0 l-1.1 2.4 q-5.4 2 -10.8 0 Z" fill="#000" opacity="0.13" />
+
+      {/* 눈썹 — 낮고 직선적 */}
+      {face === "진지" ? (<>
+        <path d="M42.8 45 C47 43.2 52 43 55.8 44.2" fill="none" stroke={hc} strokeOpacity="0.95" strokeWidth={masc ? 2.6 : 2} strokeLinecap="round" />
+        <path d="M64.2 44.2 C68 43 73 43.2 77.2 45" fill="none" stroke={hc} strokeOpacity="0.95" strokeWidth={masc ? 2.6 : 2} strokeLinecap="round" />
+      </>) : (<>
+        <path d="M42.6 43.8 C46.6 41.8 51.6 41.6 55.6 43" fill="none" stroke={hc} strokeOpacity="0.95" strokeWidth={masc ? 2.5 : 1.9} strokeLinecap="round" />
+        <path d="M64.4 43 C68.4 41.6 73.4 41.8 77.4 43.8" fill="none" stroke={hc} strokeOpacity="0.95" strokeWidth={masc ? 2.5 : 1.9} strokeLinecap="round" />
+      </>)}
+
+      {/* 눈 — 가늘고 눈두덩 무거움 */}
+      {face === "미소" ? (<>
+        <path d="M43.5 49.5 C46.5 46.6 52.5 46.6 55.5 49.5" fill="none" stroke="#141018" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M64.5 49.5 C67.5 46.6 73.5 46.6 76.5 49.5" fill="none" stroke="#141018" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M44.5 52.4 Q49.5 53.6 54.5 52.2" fill="none" stroke="#000" strokeOpacity="0.18" strokeWidth="1" strokeLinecap="round" />
+        <path d="M65.5 52.2 Q70.5 53.6 75.5 52.4" fill="none" stroke="#000" strokeOpacity="0.18" strokeWidth="1" strokeLinecap="round" />
+      </>) : (<>
+        <path d="M43 49 C46 46.2 52 46 55.6 48.6 C54.4 51.8 46.4 52.2 43 49 Z" fill="#f4f0ea" />
+        <path d="M64.4 48.6 C68 46 74 46.2 77 49 C73.6 52.2 65.6 51.8 64.4 48.6 Z" fill="#f4f0ea" />
+        <circle cx="49.4" cy="49.2" r={nr ? 2.4 : 2.8} fill={`url(#${g}ir)`} />
+        <circle cx="70.6" cy="49.2" r={nr ? 2.4 : 2.8} fill={`url(#${g}ir)`} />
+        <circle cx="49.4" cy="49.2" r="1.05" fill="#05070b" /><circle cx="70.6" cy="49.2" r="1.05" fill="#05070b" />
+        <circle cx="48.5" cy="48.2" r="0.7" fill="#fff" /><circle cx="71.5" cy="48.2" r="0.7" fill="#fff" />
+        <ellipse cx="49.4" cy="47.6" rx="2.3" ry="1" fill="#000" opacity="0.32" />
+        <ellipse cx="70.6" cy="47.6" rx="2.3" ry="1" fill="#000" opacity="0.32" />
+        <path d="M42.6 48.8 C45.8 45.6 52.4 45.4 56 48.2" fill="none" stroke="#101319" strokeWidth="2.2" strokeLinecap="round" />
+        <path d="M64 48.2 C67.6 45.4 74.2 45.6 77.4 48.8" fill="none" stroke="#101319" strokeWidth="2.2" strokeLinecap="round" />
+        <path d="M42.2 47.6 C45.4 44.6 52.2 44.4 56.2 47.2 L56.2 45.4 C52.2 43.2 45.8 43.5 42.2 46 Z" fill="#000" opacity="0.13" />
+        <path d="M63.8 47.2 C67.8 44.4 74.6 44.6 77.8 47.6 L77.8 46 C74.2 43.5 67.8 43.2 63.8 45.4 Z" fill="#000" opacity="0.13" />
+        <path d="M44 51.4 Q49.4 52.8 54.6 51" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="1" strokeLinecap="round" />
+        <path d="M65.4 51 Q70.6 52.8 76 51.4" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="1" strokeLinecap="round" />
+        <path d="M42.8 48.6 L41.2 47.4" fill="none" stroke="#141018" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M77.2 48.6 L78.8 47.4" fill="none" stroke="#141018" strokeWidth="1.6" strokeLinecap="round" />
+        {fem && (<>
+          <path d="M44.6 46 L43.6 44.6" fill="none" stroke="#141018" strokeWidth="1.1" strokeLinecap="round" />
+          <path d="M75.4 46 L76.4 44.6" fill="none" stroke="#141018" strokeWidth="1.1" strokeLinecap="round" />
+        </>)}
+      </>)}
+
+      {/* 코 — 긴 콧대 */}
+      <path d="M60.7 51 C61.8 57 62 61.8 61.4 65.4 L60.2 65.4 C60.9 61.8 60.7 57 59.6 51 Z" fill="#000" opacity="0.13" />
+      <path d="M62.1 53 C62.5 57.5 62.6 61 62.3 64" fill="none" stroke="#fff" strokeOpacity="0.14" strokeWidth="0.9" strokeLinecap="round" />
+      <path d="M56.8 67 q1.9 1.5 3.3 0.8" fill="none" stroke="#000" strokeOpacity="0.2" strokeWidth="1.1" strokeLinecap="round" />
+      <path d="M60.9 67.8 q1.9 0.7 3.2 -0.8" fill="none" stroke="#000" strokeOpacity="0.2" strokeWidth="1.1" strokeLinecap="round" />
+      <circle cx="60.5" cy="64.2" r="1" fill="#fff" opacity="0.18" />
+
+      {/* 입 — 작게 */}
+      {face === "미소" ? (<>
+        <path d="M54 70.4 C57.5 69.4 62.5 69.4 66 70.4 C64.4 74.9 55.6 74.9 54 70.4 Z" fill="#5e2626" />
+        <path d="M55.8 70.7 C58.4 70.1 61.6 70.1 64.2 70.7 C63.4 72 56.6 72 55.8 70.7 Z" fill="#fdf6ee" />
+        <path d="M53 70.2 L54.4 69.2" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="1" strokeLinecap="round" />
+        <path d="M67 70.2 L65.6 69.2" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="1" strokeLinecap="round" />
+      </>) : face === "진지" ? (<>
+        <path d="M55 71.2 C58 70.5 62 70.5 65 71.2" fill="none" stroke="#6e4038" strokeOpacity="0.95" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M54 71.6 L55.2 72.2" fill="none" stroke="#000" strokeOpacity="0.18" strokeWidth="1" strokeLinecap="round" />
+        <path d="M66 71.6 L64.8 72.2" fill="none" stroke="#000" strokeOpacity="0.18" strokeWidth="1" strokeLinecap="round" />
+      </>) : (<>
+        <path d="M55.2 70.9 C58 70.1 62 70.1 64.8 70.9" fill="none" stroke="#7a4a40" strokeOpacity="0.9" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M56.2 71.3 C58.6 72.4 61.4 72.4 63.8 71.3 C62.6 73.3 57.4 73.3 56.2 71.3 Z" fill="#2a1418" opacity="0.75" />
+        <ellipse cx="60" cy="73.9" rx="3.7" ry="1.3" fill="#c08a7c" opacity="0.55" />
+        <path d="M57 75.6 q3 0.8 6 0" fill="none" stroke="#fff" strokeOpacity="0.22" strokeWidth="0.9" strokeLinecap="round" />
+      </>)}
+
+      {/* 앞머리 — 스타일별 */}
+      {style === "스포츠" ? (<>
+        <path d="M36 35 C36 16 46 10 60 10 C74 10 84 16 84 35 C79 23 70 19.5 60 19.5 C50 19.5 41 23 36 35 Z" fill={hc} />
+        <path d="M46 15.5 C44.8 18.5 44.2 21.5 44.4 24.5" fill="none" stroke="#fff" strokeOpacity="0.28" strokeWidth="1" strokeLinecap="round" />
+        <path d="M56 12.8 C55.2 16 55 19 55.4 22" fill="none" stroke="#fff" strokeOpacity="0.32" strokeWidth="1.1" strokeLinecap="round" />
+        <path d="M66 13 C66.6 16 66.8 19 66.4 22" fill="none" stroke="#fff" strokeOpacity="0.26" strokeWidth="1" strokeLinecap="round" />
+        <path d="M50 14.5 C49 18 48.8 21 49.2 24" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="0.9" strokeLinecap="round" />
+        <path d="M62 13 C62.4 16.5 62.4 19.5 62 22.5" fill="none" stroke="#000" strokeOpacity="0.2" strokeWidth="0.9" strokeLinecap="round" />
+      </>) : style === "포니" ? (<>
+        <path d="M35 39 C33 17 45 10 60 10 C75 10 87 17 85 39 C79 25 69 20.5 60 20.5 C51 20.5 41 25 35 39 Z" fill={hc} />
+        <path d="M50 14 C48.5 18 47.8 22.5 48.4 27" fill="none" stroke="#fff" strokeOpacity="0.3" strokeWidth="1.1" strokeLinecap="round" />
+        <path d="M60 12.5 C59.6 17 59.8 21.5 60.6 25.5" fill="none" stroke="#fff" strokeOpacity="0.34" strokeWidth="1.2" strokeLinecap="round" />
+        <path d="M70 14 C71.4 18 72 22.5 71.6 27" fill="none" stroke="#fff" strokeOpacity="0.26" strokeWidth="1" strokeLinecap="round" />
+        <path d="M55 13 C54 17.5 53.8 22 54.4 26" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="0.9" strokeLinecap="round" />
+        <path d="M85 54 C103 62 108 94 98 127 C93 107 89 83 81 64 Z" fill={hc} />
+        <path d="M85 54 C103 62 108 94 98 127 C97 110 95 90 88 70 Z" fill="#000" opacity="0.22" />
+        <path d="M92 72 C96 88 96 106 93 118" fill="none" stroke="#fff" strokeOpacity="0.16" strokeWidth="1.5" strokeLinecap="round" />
+        <ellipse cx="83.5" cy="58" rx="3.2" ry="5.2" fill="#000" opacity="0.35" />
+      </>) : (<>
+        <path d="M35.5 43 C32.5 23 42.5 12 60 12 C77.5 12 87.5 23 84.5 43 C83 33.5 79.8 27 74.8 24.2 C76.2 29.8 75.2 35.4 71.5 40 C72.8 33.5 71.4 27.6 67.8 24.8 C68.7 30.8 66.8 36.4 62.5 40.6 C63.4 33.8 62 27.2 58.4 23.8 C58.9 29.8 57 35.8 52.8 40 C53.7 33 51.8 27 48.6 24.6 C44.6 27.6 41.4 33.8 39.5 43 Z" fill={hc} />
+        <path d="M51 21.5 C49.8 26.5 50.2 31.5 53 36 C50.2 33 48.8 27.5 49.6 22.8 Z" fill="#000" opacity="0.28" />
+        <path d="M64.5 22 C66 27 65.8 32 63.5 36.2 C66.6 33.2 67.8 27.8 66.6 23 Z" fill="#000" opacity="0.26" />
+        <path d="M46.5 17.5 C44.8 22.5 44.4 27.5 45.4 32.5" fill="none" stroke="#fff" strokeOpacity="0.3" strokeWidth="1.15" strokeLinecap="round" />
+        <path d="M55 14.8 C53.8 20 54 25.5 55.8 30.5" fill="none" stroke="#fff" strokeOpacity="0.34" strokeWidth="1.25" strokeLinecap="round" />
+        <path d="M64 15 C65 20 64.8 25.5 63.4 30" fill="none" stroke="#fff" strokeOpacity="0.28" strokeWidth="1.15" strokeLinecap="round" />
+        <path d="M72.5 17.5 C74.2 22 74.6 27 73.8 32" fill="none" stroke="#fff" strokeOpacity="0.26" strokeWidth="1.1" strokeLinecap="round" />
+        {style === "단발" ? (<>
+          <path d="M33 37 C29 57 30.5 74 37 80 L42.5 76.5 C37.5 68 36 53 37 39 Z" fill={hc} />
+          <path d="M87 37 C91 57 89.5 74 83 80 L77.5 76.5 C82.5 68 84 53 83 39 Z" fill={hc} />
+          <path d="M35.5 46 C34.8 57 35.8 68 39 75" fill="none" stroke="#fff" strokeOpacity="0.16" strokeWidth="1" strokeLinecap="round" />
+        </>) : (<>
+          <path d="M35.5 40 C34 51.5 35 61 39.5 67.5 L43 64.5 C39.6 58 38.4 49 39.4 41.5 Z" fill={hc} />
+          <path d="M84.5 40 C86 51.5 85 61 80.5 67.5 L77 64.5 C80.4 58 81.6 49 80.6 41.5 Z" fill={hc} />
+        </>)}
+      </>)}
+      <path d="M36 25 Q60 32 84 25 L83 28 Q60 34.5 37 28 Z" fill="#000" opacity="0.12" />
+
+      {/* 듀얼 림라이트 — 시그니처, 유지 필수 */}
+      <path d="M82.8 28 C87.6 36.5 88.2 49.5 84.8 62" fill="none" stroke="#67e8f9" strokeOpacity="0.78" strokeWidth="2" strokeLinecap="round" />
+      <path d="M74 107 C91 112 100.5 124 104 142" fill="none" stroke="#67e8f9" strokeOpacity="0.5" strokeWidth="2.3" strokeLinecap="round" />
+      <path d="M37.2 29 C33.4 37 32.8 48.5 34.8 59.5" fill="none" stroke="#f0abfc" strokeOpacity="0.48" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M46 106 C29 111 19.5 123 16 141" fill="none" stroke="#f0abfc" strokeOpacity="0.38" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+const FRIEND_LOOK = { skin: 2, hair: 3, hairColor: 5, outfit: 4, face: 1 };
+const MENTOR_LOOK = { skin: 0, hair: 4, hairColor: 0, outfit: 2, face: 2 };
+
+const resizeImage = (file, w = 256, h = 320) => new Promise((resolve, reject) => {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    const scale = Math.max(w / img.width, h / img.height);
+    const dw = img.width * scale, dh = img.height * scale;
+    ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    URL.revokeObjectURL(url);
+    resolve(c.toDataURL("image/jpeg", 0.82));
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("img")); };
+  img.src = url;
+});
+
+function Portrait({ img, look, gender, size = 84 }) {
+  if (img) return <img src={img} alt="" style={{ width: size, height: size * 1.25, objectFit: "cover" }} />;
+  return <PortraitSprite look={look} gender={gender} size={size} />;
+}
+
+/* ── 공용 유틸 ── */
+
+const statClamp = (v) => Math.max(0, Math.min(100, Math.round(v)));
+
+const BOSS_COLORS = { E: "#a1a1aa", D: "#34d399", C: "#38bdf8", B: "#a78bfa", A: "#fbbf24" };
+/* TrophySvg v2 — 3종(boss/rank/spec) × 티어 5색 전부 반영 (디자인 핸드오프 2026-09-02 드롭인) */
+function TrophySvg({ kind = "boss", tier = "C", size = 30 }) {
+  const c = BOSS_COLORS[tier] || "#38bdf8";
+  if (kind === "rank") return (
+    <svg width={size} height={size * 1.2} viewBox="0 0 30 36">
+      <rect x="4" y="3" width="3" height="29" rx="1.5" fill="#71717a" />
+      <circle cx="5.5" cy="2.6" r="2" fill={c} />
+      <path d="M7 5 L27 10 L7 15 Z" fill={c} />
+      <path d="M7 10 L27 10 L7 15 Z" fill="#000" opacity="0.22" />
+      <rect x="3.4" y="19" width="4.2" height="3.4" rx="1" fill={c} />
+      <rect x="2" y="31" width="8" height="3" rx="1.5" fill="#3f3f46" />
+    </svg>);
+  if (kind === "spec") return (
+    <svg width={size} height={size * 1.2} viewBox="0 0 30 36">
+      <path d="M10 2 h4.6 l-1.8 10 h-2.6 Z" fill={c} />
+      <path d="M15.4 2 h4.6 l-0.2 10 h-2.6 Z" fill={c} />
+      <path d="M15.4 2 h4.6 l-0.2 10 h-2.6 Z" fill="#000" opacity="0.25" />
+      <circle cx="15" cy="20" r="9" fill="#fbbf24" stroke="#b45309" strokeWidth="2" />
+      <circle cx="15" cy="20" r="6.4" fill="none" stroke="#b45309" strokeWidth="0.8" opacity="0.5" />
+      <path d="M15 14.5 l1.8 3.6 4 0.6 -2.9 2.8 0.7 4 -3.6 -1.9 -3.6 1.9 0.7 -4 -2.9 -2.8 4 -0.6 Z" fill="#b45309" />
+    </svg>);
+  return (
+    <svg width={size} height={size * 1.2} viewBox="0 0 30 36">
+      <rect x="3" y="3" width="24" height="20" rx="2" fill="#18181b" stroke={c} strokeWidth="2.5" />
+      <path d="M5 5 h4 M5 5 v4 M25 21 h-4 M25 21 v-4" stroke={c} strokeWidth="1" opacity="0.6" fill="none" />
+      <circle cx="15" cy="13" r="5" fill={c} />
+      <path d="M11 23 L15 30 L19 23" fill={c} opacity="0.85" />
+      <rect x="8" y="31" width="14" height="3" rx="1.5" fill="#3f3f46" />
+    </svg>);
+}
+
+/* ── 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 ── */
+function EmptyGoalSvg() {
+  return (
+    <svg width="110" height="80" viewBox="0 0 120 90" className="mx-auto mb-2">
+      <circle cx="60" cy="45" r="34" fill="none" stroke="#3f3f46" strokeWidth="2" strokeDasharray="5 5" />
+      <circle cx="60" cy="45" r="20" fill="none" stroke="#27272a" strokeWidth="2" strokeDasharray="4 4" />
+      <line x1="60" y1="2" x2="60" y2="14" stroke="#22d3ee" strokeWidth="2" />
+      <line x1="60" y1="76" x2="60" y2="88" stroke="#3f3f46" strokeWidth="2" />
+      <line x1="17" y1="45" x2="29" y2="45" stroke="#3f3f46" strokeWidth="2" />
+      <line x1="91" y1="45" x2="103" y2="45" stroke="#3f3f46" strokeWidth="2" />
+      <circle cx="60" cy="45" r="3" fill="none" stroke="#52525b" strokeWidth="1.5" strokeDasharray="2 2" />
+    </svg>
+  );
+}
+function EmptyQuestSvg() {
+  return (
+    <svg width="110" height="80" viewBox="0 0 120 90" className="mx-auto mb-2">
+      <rect x="10" y="14" width="4" height="62" rx="2" fill="#3f3f46" />
+      <path d="M14 16 L44 23 L14 30 Z" fill="#22d3ee" />
+      <path d="M50 45 H72" stroke="#52525b" strokeWidth="2" strokeDasharray="4 4" fill="none" />
+      <path d="M69 41 L75 45 L69 49" fill="none" stroke="#52525b" strokeWidth="2" />
+      <rect x="82" y="24" width="12" height="12" rx="3" fill="none" stroke="#3f3f46" strokeWidth="2" />
+      <rect x="82" y="42" width="12" height="12" rx="3" fill="none" stroke="#3f3f46" strokeWidth="2" />
+      <rect x="82" y="60" width="12" height="12" rx="3" fill="none" stroke="#3f3f46" strokeWidth="2" />
+      <line x1="100" y1="30" x2="112" y2="30" stroke="#27272a" strokeWidth="3" />
+      <line x1="100" y1="48" x2="112" y2="48" stroke="#27272a" strokeWidth="3" />
+      <line x1="100" y1="66" x2="112" y2="66" stroke="#27272a" strokeWidth="3" />
+    </svg>
+  );
+}
+function EmptyWallSvg() {
+  return (
+    <svg width="110" height="80" viewBox="0 0 120 90" className="mx-auto">
+      <line x1="12" y1="62" x2="108" y2="62" stroke="#3f3f46" strokeWidth="3" />
+      <line x1="18" y1="66" x2="102" y2="66" stroke="#27272a" strokeWidth="2" />
+      <rect x="46" y="24" width="28" height="24" rx="3" fill="none" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" />
+      <path d="M54 48 L60 58 L66 48" fill="none" stroke="#d97706" strokeWidth="2" strokeDasharray="3 3" />
+      <rect x="22" y="38" width="14" height="10" rx="2" fill="none" stroke="#27272a" strokeWidth="2" />
+      <rect x="86" y="34" width="14" height="14" rx="2" fill="none" stroke="#27272a" strokeWidth="2" />
+    </svg>
+  );
+}
+/* 성취의 벽 선반 배경 — 트로피 행 뒤에 absolute로 깐다 */
+function WallFrame() {
+  return (
+    <svg className="absolute inset-0 w-full h-full" viewBox="0 0 480 64" preserveAspectRatio="none" aria-hidden="true">
+      <rect x="0" y="0" width="480" height="64" fill="#0c0c10" />
+      <line x1="0" y1="56" x2="480" y2="56" stroke="#27272a" strokeWidth="4" />
+      <line x1="0" y1="60" x2="480" y2="60" stroke="#1c1c20" strokeWidth="3" />
+    </svg>
+  );
+}
+/* 온보딩 히어로 — 기록(문서)·측정(그래프)·증명(도장) 모티프 */
+function OnboardingHeroSvg({ width = 320 }) {
+  return (
+    <svg width={width} height={width * 0.5} viewBox="0 0 340 170">
+      <rect x="30" y="18" width="120" height="140" rx="6" fill="#131316" stroke="#3f3f46" strokeWidth="1.5" />
+      <line x1="44" y1="40" x2="120" y2="40" stroke="#52525b" strokeWidth="3" />
+      <line x1="44" y1="56" x2="136" y2="56" stroke="#27272a" strokeWidth="3" />
+      <line x1="44" y1="68" x2="128" y2="68" stroke="#27272a" strokeWidth="3" />
+      <line x1="44" y1="80" x2="136" y2="80" stroke="#27272a" strokeWidth="3" />
+      <rect x="44" y="96" width="10" height="10" rx="2" fill="none" stroke="#22d3ee" strokeWidth="1.5" />
+      <path d="M46 101 l2.5 2.5 4.5 -5" fill="none" stroke="#22d3ee" strokeWidth="1.5" />
+      <line x1="62" y1="101" x2="118" y2="101" stroke="#27272a" strokeWidth="3" />
+      <rect x="44" y="114" width="10" height="10" rx="2" fill="none" stroke="#3f3f46" strokeWidth="1.5" />
+      <line x1="62" y1="119" x2="110" y2="119" stroke="#27272a" strokeWidth="3" />
+      <rect x="176" y="52" width="130" height="106" rx="6" fill="#131316" stroke="#3f3f46" strokeWidth="1.5" />
+      <line x1="192" y1="142" x2="292" y2="142" stroke="#3f3f46" strokeWidth="1.5" />
+      <rect x="196" y="118" width="16" height="24" fill="#27272a" />
+      <rect x="220" y="104" width="16" height="38" fill="#27272a" />
+      <rect x="244" y="90" width="16" height="52" fill="#164e63" />
+      <rect x="268" y="72" width="16" height="70" fill="#22d3ee" />
+      <path d="M196 108 L226 96 L252 80 L282 62" fill="none" stroke="#67e8f9" strokeWidth="2" />
+      <circle cx="282" cy="62" r="3" fill="#67e8f9" />
+      <circle cx="122" cy="132" r="24" fill="none" stroke="#d97706" strokeWidth="2.5" transform="rotate(-12 122 132)" />
+      <circle cx="122" cy="132" r="18" fill="none" stroke="#d97706" strokeWidth="1" opacity="0.6" transform="rotate(-12 122 132)" />
+      <text x="122" y="137" textAnchor="middle" fontFamily="ui-monospace,monospace" fontSize="11" fontWeight="700" fill="#fbbf24" transform="rotate(-12 122 132)">증명</text>
+    </svg>
+  );
+}
+
+/* ═══════ 표준화 시험 DB — V1 (시험×점수 밴드, D 0~100, P=0.2D², 스냅샷) ═══════ */
+
+const POINT_POLICY_VERSION = "1.0";
+const EXAMS = [
+  { id: "toeic", n: "TOEIC L&R", lang: "English", cat: "어학·영어", sk: ["RL"],
+    bands: [["600",43,370,"B"],["700",49,480,"B"],["800",60,720,"B"],["850",65,840,"B"],["900",71,1010,"B"],["950",79,1250,"B"],["990",84,1410,"B"]] },
+  { id: "toeicsp", n: "TOEIC Speaking", lang: "English", cat: "어학·영어", sk: ["S"],
+    bands: [["120",45,410,"B"],["140",52,540,"B"],["160",64,820,"B"],["180",77,1190,"B"],["200",82,1340,"B"]] },
+  { id: "opic", n: "OPIc", lang: "English", cat: "어학·영어", sk: ["S"],
+    bands: [["NL",20,80,"C"],["NM",25,120,"C"],["NH",30,180,"C"],["IL",39,300,"C"],["IM1",46,420,"C"],["IM2",52,540,"C"],["IM3",58,670,"C"],["IH",66,870,"C"],["AL",76,1160,"C"]] },
+  { id: "ielts", n: "IELTS", lang: "English", cat: "어학·영어", sk: ["RL","S","W"],
+    bands: [["5.0",45,410,"B"],["5.5",53,560,"B"],["6.0",59,700,"B"],["6.5",66,870,"B"],["7.0",76,1160,"B"],["7.5",82,1340,"B"],["8.0",88,1550,"B"],["8.5",94,1770,"B"],["9.0",98,1920,"B"]] },
+  { id: "toefl", n: "TOEFL iBT (신체계)", lang: "English", cat: "어학·영어", sk: ["RL","S","W"],
+    bands: [["3.0",45,410,"A"],["3.5",52,540,"A"],["4.0",61,740,"A"],["4.5",68,920,"A"],["5.0",78,1220,"A"],["5.5",86,1480,"A"],["6.0",95,1810,"A"]] },
+  { id: "teps", n: "TEPS", lang: "English", cat: "어학·영어", sk: ["RL"],
+    bands: [["268 (3+)",48,460,"B"],["327 (2)",57,650,"B"],["387 (2+)",65,850,"B"],["453 (1)",76,1160,"B"],["526 (1+)",84,1410,"B"],["600",91,1660,"B"]] },
+  { id: "gtelp", n: "G-TELP Lv.2", lang: "English", cat: "어학·영어", sk: ["RL"],
+    bands: [["50",47,440,"C"],["65",56,630,"C"],["77",64,820,"C"],["88",74,1100,"C"],["100",84,1410,"C"]] },
+  { id: "pte", n: "PTE Academic", lang: "English", cat: "어학·영어", sk: ["RL","S","W"],
+    bands: [["42",50,500,"B"],["50",57,650,"B"],["59",64,820,"B"],["65",70,980,"B"],["76",80,1280,"B"],["85",92,1690,"B"],["90",97,1880,"B"]] },
+  { id: "duolingo", n: "Duolingo English Test", lang: "English", cat: "어학·영어", sk: ["RL","S","W"],
+    bands: [["95",49,480,"B"],["100",56,630,"B"],["120",64,820,"B"],["125",68,920,"B"],["130",77,1190,"B"],["145",84,1410,"B"],["150",88,1550,"B"],["155",94,1770,"B"],["160",98,1920,"B"]] },
+  { id: "cambridge", n: "Cambridge English", lang: "English", cat: "어학·영어", sk: ["RL","S","W"],
+    bands: [["A2 Key",36,260,"B"],["B1 Preliminary",50,500,"B"],["B2 First",66,870,"B"],["C1 Advanced",82,1340,"B"],["C2 Proficiency",95,1810,"B"]] },
+  { id: "jlpt", n: "JLPT", lang: "Japanese", cat: "어학·일본어", sk: ["RL"],
+    bands: [["N5",30,180,"B"],["N4",39,300,"B"],["N3",50,500,"B"],["N2",64,820,"B"],["N1",78,1220,"B"]] },
+  { id: "jpt", n: "JPT", lang: "Japanese", cat: "어학·일본어", sk: ["RL"],
+    bands: [["315",30,180,"B"],["375",39,300,"B"],["430",50,500,"B"],["525",64,820,"B"],["660",78,1220,"B"],["740",82,1340,"B"],["880",90,1620,"B"],["990",95,1810,"B"]] },
+  { id: "hsk", n: "HSK (기존 체계)", lang: "Chinese", cat: "어학·중국어", sk: ["RL","W"],
+    bands: [["1급",28,160,"C"],["2급",36,260,"C"],["3급",46,420,"C"],["4급",58,670,"C"],["5급",70,980,"C"],["6급",80,1280,"C"]] },
+  { id: "sat", n: "SAT", lang: "Academic", cat: "학업·적성", sk: ["SAT"],
+    bands: [["1200",53,560,"A"],["1300",61,740,"A"],["1400",72,1040,"A"],["1450",77,1190,"A"],["1500",83,1380,"A"],["1550",90,1620,"A"],["1600",96,1840,"A"]] },
+  { id: "gmat", n: "GMAT", lang: "Academic", cat: "학업·적성", sk: ["GMAT"],
+    bands: [["555",57,650,"A"],["605",65,850,"A"],["655",78,1220,"A"],["705",90,1620,"A"],["755",97,1880,"A"],["805",100,2000,"A"]] },
+  { id: "lsat", n: "LSAT", lang: "Academic", cat: "학업·적성", sk: ["LSAT"],
+    bands: [["155",60,720,"A"],["160",67,900,"A"],["165",76,1160,"A"],["170",84,1410,"A"],["175",93,1730,"A"],["180",100,2000,"A"]] },
+  { id: "mcat", n: "MCAT", lang: "Academic", cat: "학업·적성", sk: ["MCAT"],
+    bands: [["500",66,870,"A"],["510",77,1190,"A"],["515",85,1450,"A"],["518",90,1620,"A"],["520",93,1730,"A"],["522",96,1840,"A"],["525",99,1960,"A"],["528",100,2000,"A"]] },
+];
+const EXAM_CATS = ["어학·영어", "어학·일본어", "어학·중국어", "학업·적성"];
+const LANG_KO = { English: "영어", Japanese: "일본어", Chinese: "중국어" };
+const examGrade = achGrade;
+const DIM_STEPS = [1, 0.7, 0.5, 0.3];
+
+function calcExamPayout(exState, fam, band) {
+  const ex = exState || { best: {}, dim: {}, spec: {} };
+  const prev = ex.best[fam.id];
+  const diffP = Math.max(0, band.p - (prev ? prev.p : 0));
+  let mult = ex.dim[fam.id];
+  let reason = "";
+  if (mult === undefined) {
+    if (fam.lang === "Academic") mult = 1;
+    else {
+      const priors = Object.keys(ex.dim)
+        .map((id) => EXAMS.find((e) => e.id === id))
+        .filter((e) => e && e.lang === fam.lang);
+      const overlap = priors.filter((e) => e.sk.some((b) => fam.sk.includes(b))).length;
+      mult = DIM_STEPS[Math.min(overlap, 3)];
+      if (overlap > 0) reason = `${LANG_KO[fam.lang]} 스킬 중복 ${overlap}회째`;
+    }
+  } else if (mult < 1) {
+    reason = "등록 시 고정된 감쇠";
+  }
+  if (ex.spec && ex.spec[fam.lang] && band.d >= 70 && mult < 0.7) {
+    mult = 0.7; reason = "전문화 하한 70% 보장";
+  }
+  return { payout: Math.round(diffP * mult), mult, prevP: prev ? prev.p : 0, prevLabel: prev ? prev.label : null, reason };
+}
+
+const DIFF_TEXT = {
+  E: "text-zinc-400", D: "text-emerald-400", C: "text-sky-400", B: "text-violet-400", A: "text-amber-400",
+};
+
+function SectionLabel({ children, tone = "text-zinc-500" }) {
+  return <div className={`text-xs tracking-widest font-semibold ${tone} mb-2`}>{children}</div>;
+}
+
+function Chip({ on, onClick, tone = "cyan", children, disabled }) {
+  const act = tone === "amber"
+    ? "bg-amber-400 text-zinc-950 border-amber-300"
+    : "bg-cyan-400 text-zinc-950 border-cyan-300";
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className={`px-3 py-1.5 rounded-full text-xs font-bold border text-left disabled:opacity-30 ${
+        on ? act : "bg-zinc-950 text-zinc-400 border-zinc-700"}`}>
+      {children}
+    </button>
+  );
+}
+
+/* 클릭형 증거 선택기 — 칩 다중 선택 + 선택 메모 */
+function EvidencePicker({ chips, selected, onToggle, memo, setMemo }) {
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {chips.map((c) => (
+          <Chip key={c} on={selected.includes(c)} onClick={() => onToggle(c)}>{c}</Chip>
+        ))}
+      </div>
+      <input value={memo} onChange={(e) => setMemo(e.target.value)}
+        placeholder="한 줄 메모 (선택)"
+        className="mt-2 w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-cyan-500" />
+    </div>
+  );
+}
+
+const composeEvidence = (chips, memo) => chips.join(" · ") + (memo.trim() ? ` — ${memo.trim()}` : "");
+
+function Modal({ onClose, children, title }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-black/70 p-3" onClick={onClose}>
+      <div
+        className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-2xl p-5 anim-pop max-h-full overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-bold text-zinc-100">{title}</h3>
+          <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-200"><X size={18} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── 메인 앱 ───────────────────────── */
+
+/* ═══════ v3 미니멀 엔진 — 지표 · 목표(OKR) · 상태 수명 ═══════ */
+const needsEvidence = (q) => q.isCert || q.isExam || (q.pts ?? DIFFS[q.diff].pts) >= EVIDENCE_MIN;
+
+const METRICS_META = [
+  { k: "asset", n: "자산", c: "bg-amber-400", tc: "text-amber-300", d: "경제력·자본. 성취와 수익 목표로 상승" },
+  { k: "infl", n: "영향력", c: "bg-violet-400", tc: "text-violet-300", d: "실력·평판·네트워크. 승급과 전문 성취로 상승" },
+  { k: "body", n: "외형", c: "bg-emerald-400", tc: "text-emerald-300", d: "운동·식단·컨디션 관리의 결과. 체크인으로 스스로 평가" },
+];
+
+/* KR 타입 칩 · 난이도 셀렉터 색 (등급 5색 계열 — 디자인 핸드오프 2026-09-02) */
+const KR_CHIP = {
+  metric: ["수치", "text-emerald-300 border-emerald-700"],
+  count: ["횟수", "text-cyan-300 border-cyan-700"],
+  exam: ["시험", "text-sky-300 border-sky-700"],
+  cert: ["자격", "text-violet-300 border-violet-700"],
+};
+const DIFF_TONE = { E: "border-zinc-600 text-zinc-300", D: "border-emerald-700 text-emerald-300", C: "border-sky-700 text-sky-300" };
+const DIFF_SEL = { E: "border-zinc-400 text-zinc-200", D: "border-emerald-400 text-emerald-300", C: "border-sky-400 text-sky-300" };
+const DIFF_PT_TEXT = { E: "text-zinc-300", D: "text-emerald-300", C: "text-sky-300" };
+
+const ddayStr = (deadline) => {
+  if (!deadline) return "";
+  const diff = Math.ceil((new Date(deadline + "T23:59") - new Date()) / 86400000);
+  return diff > 0 ? `D-${diff}` : diff === 0 ? "D-DAY" : `D+${-diff}`;
+};
+
+const krProgress = (kr, goal, state) => {
+  if (kr.type === "metric") {
+    const span = (kr.target ?? 0) - (kr.start ?? 0);
+    if (!span) return kr.current >= kr.target ? 1 : 0;
+    return Math.max(0, Math.min(1, ((kr.current ?? kr.start) - kr.start) / span));
+  }
+  if (kr.type === "exam") {
+    const best = state.exams?.best?.[kr.famId];
+    if (!best) return 0;
+    return Math.min(1, best.p / (kr.band?.p || 1));
+  }
+  if (kr.type === "cert") return kr.done ? 1 : 0;
+  if (kr.type === "count") {
+    const done = (state.quests || [])
+      .filter((q) => q.goalId === goal.id)
+      .reduce((n, q) => n + (q.type === "daily" ? (q.doneDates?.length || 0) : q.status === "done" ? 1 : 0), 0);
+    return Math.min(1, done / Math.max(1, kr.need || 1));
+  }
+  return 0;
+};
+const krDoneCount = (goal, state) =>
+  (state.quests || [])
+    .filter((q) => q.goalId === goal.id)
+    .reduce((n, q) => n + (q.type === "daily" ? (q.doneDates?.length || 0) : q.status === "done" ? 1 : 0), 0);
+const goalProgress = (goal, state) => {
+  if (!goal.krs?.length) return 0;
+  return goal.krs.reduce((s, kr) => s + krProgress(kr, goal, state), 0) / goal.krs.length;
+};
+const elapsedRatio = (goal) => {
+  if (!goal.deadline || !goal.createdAt) return null;
+  const s = new Date(goal.createdAt + "T00:00");
+  const e = new Date(goal.deadline + "T23:59");
+  const span = e - s;
+  if (span <= 0) return 1;
+  return Math.max(0, Math.min(1, (Date.now() - s) / span));
+};
+const paceOf = (goal, state) => {
+  const p = goalProgress(goal, state);
+  const el = elapsedRatio(goal);
+  if (el == null) return { p, el: null, gap: null, label: "기한 없음", cls: "text-zinc-500" };
+  const gap = Math.round((p - el) * 100);
+  return {
+    p, el, gap,
+    label: gap <= -5 ? `${-gap}%p 뒤처짐` : gap >= 5 ? `${gap}%p 앞섬` : "궤도 유지",
+    cls: gap <= -5 ? "text-rose-400" : gap >= 5 ? "text-emerald-400" : "text-zinc-400",
+  };
+};
+const krRemainText = (kr, goal, state) => {
+  if (kr.type === "metric") {
+    const cur = kr.current ?? kr.start;
+    const hit = kr.target >= kr.start ? cur >= kr.target : cur <= kr.target;
+    return hit ? "달성" : `${Math.round(Math.abs(kr.target - cur) * 100) / 100}${kr.unit || ""} 남음`;
+  }
+  if (kr.type === "count") {
+    const d = krDoneCount(goal, state);
+    return d >= kr.need ? "달성" : `${kr.need - d}회 남음`;
+  }
+  if (kr.type === "exam") {
+    const best = state.exams?.best?.[kr.famId];
+    if (!best) return "미응시";
+    return best.p >= (kr.band?.p || 0) ? "달성" : `${(kr.band.p - best.p).toLocaleString()}P 남음`;
+  }
+  if (kr.type === "cert") return kr.done ? "취득" : "미취득";
+  return "";
+};
+const roleGap = (state) => {
+  const r = state?.role;
+  if (!r) return null;
+  const items = (state.parts || [])
+    .filter((p) => (r.targets?.[p.id] || 0) > 0)
+    .map((p) => ({ part: p, need: r.targets[p.id], have: p.grade, gap: Math.max(0, r.targets[p.id] - p.grade) }));
+  if (!items.length) return null;
+  // 제곱 곡선: 상위 등급 없이 수치가 오르지 않게. 요구 바로 아래 단계(턱걸이) ≈ 60~70%.
+  const match = Math.round((items.reduce((s, i) => s + Math.pow(Math.min(1, i.have / i.need), 2), 0) / items.length) * 100);
+  return { name: r.name, items, match };
+};
+const certGainOf = (state, c) => {
+  const base = certP(c.d);
+  if (!c.sg) return base;
+  const prev = state.certBest?.[c.sg]?.p || 0;
+  return Math.max(0, base - prev);
+};
+const examBandGain = (state, fam, b) => {
+  const band = { label: b[0], d: b[1], p: b[2], conf: b[3] };
+  const r = calcExamPayout(state.exams, fam, band);
+  return { band, payout: r.payout, mult: r.mult };
+};
+const DIR_CATS = {
+  "IT·개발": { cats: ["IT·데이터", "클라우드·글로벌IT"] },
+  "데이터·AI": { cats: ["IT·데이터", "클라우드·글로벌IT"] },
+  "마케팅": { cats: ["금융·경영", "사무·회계"] },
+  "경영·창업": { cats: ["금융·경영", "사무·회계"] },
+  "재테크·금융": { cats: ["금융·경영", "사무·회계"] },
+  "디자인": { cats: ["기능사·서비스", "IT·데이터"] },
+  "콘텐츠·미디어": { cats: ["기능사·서비스"] },
+  "외국어": { cats: [], exam: true },
+  "법·행정": { cats: ["부동산·법·행정", "전문직"] },
+  "부동산": { cats: ["부동산·법·행정"] },
+  "심리·상담": { cats: ["기능사·서비스"] },
+  "건강·운동": { cats: ["기능사·서비스"] },
+  "개발": { cats: ["IT·데이터", "클라우드·글로벌IT"] },
+  "기획·PM": { cats: ["사무·회계", "금융·경영", "IT·데이터"] },
+  "영업": { cats: ["사무·회계", "금융·경영"] },
+  "회계·재무": { cats: ["사무·회계", "금융·경영"] },
+  "인사·총무": { cats: ["사무·회계", "부동산·법·행정"] },
+  "금융": { cats: ["금융·경영", "전문직"] },
+  "법무·행정": { cats: ["부동산·법·행정", "전문직"] },
+  "건설·안전": { cats: ["건설·안전·환경"] },
+  "전기·기계": { cats: ["전기·기계·설비"] },
+  "미디어·콘텐츠": { cats: ["기능사·서비스"] },
+  "서비스": { cats: ["기능사·서비스"] },
+};
+const JOB_FIELDS = ["개발", "데이터·AI", "기획·PM", "마케팅", "영업", "회계·재무", "인사·총무", "금융", "법무·행정", "건설·안전", "전기·기계", "디자인", "미디어·콘텐츠", "서비스", "외국어"];
+const partCatHints = (state, part) => {
+  const dirs = part.dir?.length ? part.dir : (/지식/.test(part.name) ? state.profile?.directions || [] : []);
+  const cats = new Set();
+  let exam = false;
+  for (const d of dirs) {
+    for (const c of DIR_CATS[d]?.cats || []) cats.add(c);
+    if (DIR_CATS[d]?.exam) exam = true;
+  }
+  if (/어학|영어|외국어|중국어|일본어/.test(part.name)) exam = true;
+  if (!dirs.length) {
+    if (/사업|창업|경영/.test(part.name)) { cats.add("금융·경영"); cats.add("사무·회계"); }
+    if (/커리어|직업|직무|취업/.test(part.name)) cats.add("사무·회계");
+    if (/개발|IT|프로그|데이터/.test(part.name)) { cats.add("IT·데이터"); cats.add("클라우드·글로벌IT"); }
+  }
+  return { cats: [...cats], exam };
+};
+
+/* ── 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) ── */
+const TIER_MULT = { S: 1, A: 0.8, B: 0.5, C: 0 }; // C=무관: 시장에서 평가되지 않음 → 지급 없음
+const TIER_CLS = { S: "text-emerald-400", A: "text-cyan-300", B: "text-zinc-500", C: "text-rose-400" };
+// 미기재 셀 = C. 근거강도: 건설·안전/전기·기계/서비스 [강], 개발/데이터/회계/금융/마케팅 [중], 나머지 [약·추정]
+const WEIGHT_MATRIX = {
+  "개발": { "IT·데이터": "A", "클라우드·글로벌IT": "A" },
+  "데이터·AI": { "IT·데이터": "S", "클라우드·글로벌IT": "A", "금융·경영": "B" },
+  "기획·PM": { "IT·데이터": "B", "사무·회계": "B", "금융·경영": "B", "전문직": "B" },
+  "마케팅": { "IT·데이터": "B", "사무·회계": "B", "금융·경영": "B" },
+  "영업": { "사무·회계": "B", "금융·경영": "B", "기능사·서비스": "B" },
+  "회계·재무": { "IT·데이터": "B", "사무·회계": "S", "금융·경영": "A", "부동산·법·행정": "B", "전문직": "A" },
+  "인사·총무": { "사무·회계": "B", "금융·경영": "B", "부동산·법·행정": "B", "전문직": "B" },
+  "금융": { "IT·데이터": "B", "사무·회계": "B", "금융·경영": "S", "부동산·법·행정": "B", "전문직": "A" },
+  "법무·행정": { "사무·회계": "B", "금융·경영": "B", "부동산·법·행정": "A", "전문직": "A" },
+  "건설·안전": { "전기·기계·설비": "A", "건설·안전·환경": "S", "부동산·법·행정": "B", "전문직": "B", "기능사·서비스": "B" },
+  "전기·기계": { "전기·기계·설비": "S", "건설·안전·환경": "A", "전문직": "B", "기능사·서비스": "A" },
+  "디자인": { "IT·데이터": "B", "사무·회계": "B", "기능사·서비스": "B" },
+  "미디어·콘텐츠": { "IT·데이터": "B", "사무·회계": "B", "기능사·서비스": "B" },
+  "서비스": { "건설·안전·환경": "B", "사무·회계": "B", "기능사·서비스": "S" },
+  "외국어": { "사무·회계": "B", "금융·경영": "B", "전문직": "B" },
+};
+// 개별 예외(직무 기반·리서치 명시분): 실무 무관 판정, 물류 우대 등
+const CERT_W_EXC = {
+  "컴퓨터활용능력 1급": { "개발": "C", "데이터·AI": "C" },
+  "변리사": { "개발": "B", "데이터·AI": "B" }, // IT 특허 경로 [약·추정]
+  "사회조사분석사 2급": { "데이터·AI": "B" }, // 조사방법론·통계 기반, 리서치·데이터마케팅 직무 인식 [중]
+  "컴퓨터활용능력 2급": { "개발": "C", "데이터·AI": "C" },
+  "지게차운전기능사": { "영업": "A" },
+};
+const certByTitle = (t) => CERTS.find((c) => t && t.includes(c.n)) || null;
+// 온보딩 지식 방향 → 가중 매트릭스 직무 별칭
+const DIR_ALIAS = {
+  "IT·개발": "개발", "재테크·금융": "금융", "경영·창업": "기획·PM",
+  "법·행정": "법무·행정", "콘텐츠·미디어": "미디어·콘텐츠", "부동산": "법무·행정",
+  "심리·상담": "서비스", "건강·운동": "서비스",
+};
+const normDirs = (part) => [...new Set((part?.dir || []).map((d) => (WEIGHT_MATRIX[d] ? d : DIR_ALIAS[d])).filter(Boolean))];
+const jobWeightForCert = (state, partId, cert) => {
+  if (!cert) return null;
+  const part = state.parts?.find((p) => p.id === partId);
+  const dirs = normDirs(part);
+  if (!dirs.length) return null; // 직무 미지정 — 판단 근거 없음, ×1.0
+  // 교집합: 지정한 모든 직무에서 통해야 한다 — 최저 등급 적용, 근거 직무 표기
+  let worst = null;
+  for (const d of dirs) {
+    const tier = CERT_W_EXC[cert.n]?.[d] || WEIGHT_MATRIX[d][cert.c] || "C";
+    if (!worst || TIER_MULT[tier] < TIER_MULT[worst.tier]) worst = { tier, field: d };
+  }
+  return { ...worst, mult: TIER_MULT[worst.tier], inter: dirs.length > 1 };
+};
+
+/* ── 상태 수명 ── */
+const migrate = (s) => {
+  if (!s || typeof s !== "object") return null;
+  if (s.v < 11) {
+  const p = { ...(s.profile || {}) };
+  delete p.persona;
+  const act = s.act || {};
+  s = {
+    v: 11,
+    profile: p,
+    parts: (s.parts || []).map((pt) => ({ id: pt.id, name: pt.name, grade: pt.grade || 0, dir: pt.dir, achievements: pt.achievements || [] })),
+    quests: (s.quests || []).map((q) => { const { bossHp, ...rest } = q; return rest; }),
+    goals: s.goals || [],
+    act: { streak: act.streak || 0, lastActive: act.lastActive || null, shieldMonth: act.shieldMonth || monthStr(), shieldsLeft: act.shieldsLeft ?? 2 },
+    metrics: { asset: s.story?.asset ?? 10, infl: s.story?.infl ?? 5, risk: s.story?.risk ?? 5 },
+    exams: s.exams || { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION },
+    certBest: s.certBest || {},
+    room: { trophies: s.room?.trophies || [] },
+    role: s.role || null,
+    lastTick: s.lastTick || dstr(),
+    dModel: DIFF_RAW_VERSION,
+  };
+  }
+  if (s.v < 12) {
+    const m = s.metrics || {};
+    s = { ...s, v: 12, metrics: { asset: statClamp(m.asset ?? 10), infl: statClamp(m.infl ?? 5), body: 15 } };
+  }
+  return s;
+};
+
+const applyDailyTick = (s) => {
+  const a = s.act;
+  if (a.shieldMonth !== monthStr()) { a.shieldMonth = monthStr(); a.shieldsLeft = 2; }
+  s.lastTick = dstr();
+  return s;
+};
+
+const freshState = (parts) => applyDailyTick({
+  v: 12,
+  profile: null,
+  parts,
+  quests: [],
+  goals: [],
+  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2 },
+  metrics: { asset: 10, infl: 5, body: 15 },
+  exams: { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION },
+  certBest: {},
+  room: { trophies: [] },
+  role: null,
+  lastTick: dstr(),
+  dModel: DIFF_RAW_VERSION,
+});
+
+const demoState = () => {
+  const today = dstr();
+  const p1 = { id: uid(), name: "사업", grade: 2, achievements: [{ id: uid(), text: "스마트스토어 월 수익 30만 달성", date: shiftDay(today, -12), grade: 2 }] };
+  const p2 = { id: uid(), name: "직업·커리어", grade: 3, dir: ["전기·기계"], achievements: [{ id: uid(), text: "캐릭터 생성 산정 — 기계·전자 전공, 하네스 설계 지망", date: shiftDay(today, -30), grade: 3 }] };
+  const p3 = { id: uid(), name: "기본지식", grade: 2, dir: ["IT·개발", "재테크·금융"], achievements: [{ id: uid(), text: "보유 자격: 컴퓨터활용능력 2급", date: shiftDay(today, -30), grade: 2 }] };
+  const p4 = { id: uid(), name: "건강", grade: 1, achievements: [] };
+  const gEng = {
+    id: uid(), title: "서류 어학 컷 넘기기", partId: p3.id, deadline: shiftDay(today, 90),
+    note: "부품사 서류 기준 토익 800", status: "active", createdAt: shiftDay(today, -7),
+    krs: [
+      { id: uid(), type: "exam", title: "TOEIC 800 달성", famId: "toeic", band: { label: "800", d: 60, p: 720, conf: "B" } },
+      { id: uid(), type: "count", title: "영어 스터디 참석", need: 12 },
+    ],
+  };
+  const s = freshState([p1, p2, p3, p4]);
+  s.profile = { nick: "하네스 지망생", gender: "남성", age: "20대 중반", status: "취업 준비", edu: "univ4", majorField: "공학", directions: ["IT·개발", "재테크·금융"], look: { skin: 0, hair: 0, hairColor: 0, outfit: 1, face: 0 }, startDate: shiftDay(today, -30) };
+  const gFit = {
+    id: uid(), title: "체력 기반 만들기", partId: p4.id, deadline: shiftDay(today, 60),
+    note: "", status: "active", createdAt: shiftDay(today, -10),
+    krs: [
+      { id: uid(), type: "count", title: "운동 세션", need: 20 },
+      { id: uid(), type: "metric", title: "체중", start: 78, target: 73, current: 77.2, unit: "kg" },
+    ],
+  };
+  const gHarness = {
+    id: uid(), title: "하네스 설계 엔지니어 취업", partId: p2.id, deadline: shiftDay(today, 150),
+    note: "자동차 부품사 설계직 — 전기기사 + 툴 숙련 + 어학 컷", status: "active", createdAt: shiftDay(today, -14),
+    krs: [
+      { id: uid(), type: "cert", title: "전기기사 취득", certName: "전기기사" },
+      { id: uid(), type: "count", title: "CATIA·도면 연습", need: 30 },
+    ],
+  };
+  s.goals = [gHarness, gEng, gFit];
+  s.quests = [
+    { id: uid(), title: "전기기사 취득", partId: p2.id, goalId: gHarness.id, diff: "B", pts: 900, certD: 67, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -14), isCert: true },
+    { id: uid(), title: "CATIA·도면 연습 1시간", partId: p2.id, goalId: gHarness.id, diff: "D", type: "daily", status: "todo", doneDates: [shiftDay(today, -2), shiftDay(today, -1)], createdAt: shiftDay(today, -14) },
+    { id: uid(), title: "영어 스터디 참석", partId: p3.id, goalId: gEng.id, diff: "D", type: "daily", status: "todo", doneDates: [shiftDay(today, -5), shiftDay(today, -3), shiftDay(today, -1)], createdAt: shiftDay(today, -7) },
+    { id: uid(), title: "TOEIC L&R 800 달성", partId: p3.id, goalId: gEng.id, diff: "B", pts: 720, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -7), isExam: true, famId: "toeic", band: { label: "800", d: 60, p: 720, conf: "B" } },
+    { id: uid(), title: "아침 운동 30분", partId: p4.id, goalId: gFit.id, kind: "fit", diff: "E", type: "daily", status: "todo", doneDates: [shiftDay(today, -1)], createdAt: shiftDay(today, -10) },
+  ];
+  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2 };
+  s.metrics = { asset: 24, infl: 14, body: 20 };
+  s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60) } };
+  s.exams.dim = { toeic: 1 };
+  s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
+  s.role = { name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 } };
+  return s;
+};
+
+function Shell({ children, game = false }) {
+  return (
+    <div className={`${game ? "h-screen overflow-hidden" : "min-h-screen"} bg-zinc-950 text-zinc-100`}>
+      <style>{`
+        @keyframes pop { 0%{transform:scale(.7);opacity:0} 60%{transform:scale(1.05)} 100%{transform:scale(1);opacity:1} }
+        .anim-pop { animation: pop .28s ease-out both }
+        @keyframes bigpop { 0%{transform:scale(.4);opacity:0} 55%{transform:scale(1.08)} 100%{transform:scale(1);opacity:1} }
+        .anim-bigpop { animation: bigpop .45s cubic-bezier(.2,.9,.3,1.2) both }
+        @keyframes shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-5px)} 40%{transform:translateX(5px)} 60%{transform:translateX(-3px)} 80%{transform:translateX(3px)} }
+        .anim-shake { animation: shake .4s ease-in-out both }
+        .plumbob { transform: rotate(45deg); animation: bob 1.6s ease-in-out infinite }
+        @keyframes bob { 0%,100% { transform: rotate(45deg) translate(0, 0) } 50% { transform: rotate(45deg) translate(-3px, -3px) } }
+        @media (prefers-reduced-motion: reduce) { .anim-pop,.anim-bigpop,.anim-shake,.plumbob { animation: none } }
+      `}</style>
+      <div className="max-w-md mx-auto relative">{children}</div>
+    </div>
+  );
+}
+
+/* ───────────────────────── 온보딩 (클릭 중심) ───────────────────────── */
+
+function Onboarding({ onStart, onDemo }) {
+  const [step, setStep] = useState("title");
+  const [err, setErr] = useState("");
+  // 기본 정보
+  const [nick, setNick] = useState("");
+  const [age, setAge] = useState(null);
+  const [gender, setGender] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [edu, setEdu] = useState(null);
+  const [majorField, setMajorField] = useState(null);
+  const [majorName, setMajorName] = useState("");
+  // 외형
+  const [look, setLook] = useState({ skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 1 });
+  const setL = (k, v) => setLook((s) => ({ ...s, [k]: v }));
+  const randomLook = () => setLook({
+    skin: Math.floor(Math.random() * SKINS.length),
+    hair: Math.floor(Math.random() * HAIR_STYLES.length),
+    hairColor: Math.floor(Math.random() * HAIR_COLORS.length),
+    outfit: Math.floor(Math.random() * OUTFITS.length),
+    face: Math.floor(Math.random() * FACES.length),
+  });
+  // 파트 + 방향
+  const [selected, setSelected] = useState(["사업", "직업·커리어", "기본지식"]);
+  const [customs, setCustoms] = useState([]);
+  const [customInput, setCustomInput] = useState("");
+  const [directions, setDirections] = useState([]);
+  // 보유 자격
+  const [certSel, setCertSel] = useState([]);
+  const [examOwnFam, setExamOwnFam] = useState(null);
+  const [examsOwned, setExamsOwned] = useState([]);
+  const [cat, setCat] = useState("전체");
+  const [gradeF, setGradeF] = useState("전체");
+  const [query, setQuery] = useState("");
+  // 경험
+  const [career, setCareer] = useState(null);
+  const [lead, setLead] = useState(null);
+  const [biz, setBiz] = useState(null);
+  const [output, setOutput] = useState(null);
+
+  const partNames = [...PART_PRESETS.filter((p) => selected.includes(p)), ...customs];
+  const hasJob = partNames.includes("직업·커리어");
+  const hasBiz = partNames.includes("사업");
+
+  const togglePreset = (name) =>
+    setSelected((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
+  const addCustom = () => {
+    const n = customInput.trim();
+    if (!n) return;
+    if (!customs.includes(n) && !PART_PRESETS.includes(n)) setCustoms((c) => [...c, n]);
+    setCustomInput("");
+  };
+  const toggleCert = (n) =>
+    setCertSel((s) => (s.includes(n) ? s.filter((x) => x !== n) : [...s, n]));
+  const toggleDir = (d) =>
+    setDirections((s) => (s.includes(d) ? s.filter((x) => x !== d) : s.length < 3 ? [...s, d] : s));
+
+  const filtered = CERTS.filter((c) =>
+    (cat === "전체" || c.c === cat) &&
+    (gradeF === "전체" || achGrade(c.d) === gradeF) &&
+    (!query.trim() || c.n.includes(query.trim()))
+  );
+
+  const profile = {
+    nick: nick.trim() || "플레이어", age, gender, status,
+    edu, majorField, majorName: majorName.trim(),
+    directions, look, examsOwned,
+    certs: certSel, career: career ?? "none", lead: lead ?? "no",
+    biz: biz ?? "none", output: output ?? "none",
+  };
+  const results = computeGrades(profile, partNames);
+
+  const next = () => {
+    setErr("");
+    if (step === 0) {
+      if (!age || !gender || !status || !edu || !majorField) { setErr("연령대·성별·신분·학력·전공 계열을 모두 선택해 주세요."); return; }
+    }
+    if (step === 2) {
+      if (partNames.length === 0) { setErr("파트를 하나 이상 선택해 주세요."); return; }
+      if (partNames.includes("기본지식") && directions.length === 0) { setErr("기본지식이 향할 방향을 1개 이상 선택해 주세요."); return; }
+    }
+    if (step === 4) {
+      if (hasJob && (!career || !lead)) { setErr("직무 경력과 리드 경험을 선택해 주세요."); return; }
+      if (hasBiz && !biz) { setErr("사업 경험을 선택해 주세요."); return; }
+      if (!output) { setErr("산출물 항목을 선택해 주세요."); return; }
+    }
+    setStep((s) => s + 1);
+  };
+
+  const start = () => {
+    const finalized = results.map((r) => {
+      const ach = [];
+      if (r.grade > 0) ach.push({ id: uid(), text: `캐릭터 생성 산정 — ${r.why}`, date: dstr(), grade: r.grade });
+      if (r.name === "기본지식" && certSel.length > 0)
+        ach.push({ id: uid(), text: `보유 자격: ${certSel.join(", ")}`, date: dstr(), grade: r.grade });
+      if (r.name === "어학" && examsOwned.length > 0)
+        ach.push({ id: uid(), text: `보유 성적: ${examsOwned.map((o) => `${o.famN} ${o.label}`).join(", ")}`, date: dstr(), grade: r.grade });
+      const part = { id: uid(), name: r.name, grade: r.grade, achievements: ach };
+      if (r.name === "기본지식") part.dir = directions;
+      return part;
+    });
+    /* 시험 상태 프리필 — 등록 순서대로 감쇠 락, 전문화 판정 */
+    const ex = { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION };
+    for (const o of examsOwned) {
+      const fam = EXAMS.find((e) => e.id === o.famId);
+      if (!fam) continue;
+      const r = calcExamPayout(ex, fam, { label: o.label, d: o.d, p: o.p });
+      ex.dim[fam.id] = r.mult;
+      ex.best[fam.id] = { label: o.label, d: o.d, p: o.p, ver: POINT_POLICY_VERSION, date: dstr() };
+    }
+    for (const lang of ["English", "Japanese", "Chinese"]) {
+      const highs = Object.entries(ex.best).filter(([id2, b]) => {
+        const e2 = EXAMS.find((e) => e.id === id2);
+        return e2 && e2.lang === lang && b.d >= 75;
+      });
+      if (highs.length >= 2) {
+        ex.spec[lang] = true;
+        const lp = finalized.find((x) => x.name === "어학");
+        if (lp && lp.grade < 5) {
+          lp.grade = 5;
+          lp.achievements.push({ id: uid(), text: `🎖 ${LANG_KO[lang]} 전문화 — 고난도 시험(D75+) 2종 보유`, date: dstr(), grade: 5 });
+        }
+      }
+    }
+    /* 단계형 자격 최고 기록 프리필 */
+    const cb = {};
+    for (const nm of certSel) {
+      const c = CERTS.find((x) => x.n === nm);
+      if (c?.sg) {
+        const p = certP(c.d);
+        if (!cb[c.sg] || p > cb[c.sg].p) cb[c.sg] = { p, name: c.n, d: c.d };
+      }
+    }
+    onStart({ parts: finalized, profile: { ...profile, startDate: dstr() }, exams: ex, certBest: cb });
+  };
+
+  const OptRow = ({ label, opts, val, set, getK = (o) => o.k, getT = (o) => o.t }) => (
+    <div>
+      <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {opts.map((o) => (
+          <Chip key={getK(o)} on={val === getK(o)} onClick={() => set(getK(o))}>{getT(o)}</Chip>
+        ))}
+      </div>
+    </div>
+  );
+
+  const Swatch = ({ label, colors, val, set }) => (
+    <div>
+      <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">{label}</div>
+      <div className="flex gap-2 flex-wrap">
+        {colors.map((c, i) => (
+          <button key={c} onClick={() => set(i)}
+            className={`w-7 h-7 rounded-full border-2 transition-transform ${val === i ? "border-cyan-400 scale-110" : "border-zinc-700"}`}
+            style={{ backgroundColor: c }} />
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="px-5 py-8 pb-16">
+      <div className="text-xs tracking-widest text-zinc-500 font-mono">CHARACTER CREATION</div>
+      {step === "title" && <h1 className="text-3xl font-black mt-1 mb-1">인생 <span className="text-cyan-400">상태창</span></h1>}
+
+      {step === "title" && (
+        <div className="pt-4 pb-6 text-center space-y-6">
+          <div className="w-full bg-zinc-950 rounded-2xl py-4 flex justify-center">
+            <OnboardingHeroSvg />
+          </div>
+          <p className="text-sm text-zinc-400">지금 위치를 숫자로 확인하세요. 평가는 시장 기준입니다.</p>
+          <button onClick={() => setStep(0)}
+            className="w-full py-4 rounded-2xl bg-amber-400 text-zinc-950 font-black text-base border-b-4 border-amber-600 active:border-b-0 active:translate-y-1 transition-all">
+            새 인생 시작하기 ▶
+          </button>
+          <button onClick={onDemo} className="w-full py-2 text-xs text-zinc-500 underline underline-offset-2">
+            먼저 화면만 볼래요 — 데모 데이터로 둘러보기
+          </button>
+        </div>
+      )}
+
+      {step !== "title" && (
+        <div className="flex gap-1 mb-5">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className={`h-1 flex-1 rounded-full ${i <= step ? "bg-cyan-400" : "bg-zinc-800"}`} />
+          ))}
+        </div>
+      )}
+
+      {step === 0 && (
+        <div className="space-y-4">
+          <div>
+            <span className="font-mono text-xs font-bold text-cyan-400">1 / 6</span><span className="text-lg font-black ml-1.5">기본 정보</span>
+            <p className="text-xs text-zinc-400 mt-1">선택만 하면 시작 등급이 자동 산정됩니다.</p>
+          </div>
+          <input value={nick} onChange={(e) => setNick(e.target.value)}
+            placeholder="닉네임 (선택)"
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-500" />
+          <OptRow label="연령대" opts={AGE_OPTS} val={age} set={setAge} getK={(o) => o} getT={(o) => o} />
+          <OptRow label="성별" opts={["남성", "여성", "선택 안 함"]} val={gender} set={setGender} getK={(o) => o} getT={(o) => o} />
+          <OptRow label="현재 신분" opts={STATUS_OPTS} val={status} set={setStatus} getK={(o) => o} getT={(o) => o} />
+          <OptRow label="최종 학력" opts={EDU_OPTS} val={edu} set={setEdu} />
+          <OptRow label="전공 계열" opts={MAJOR_FIELDS} val={majorField} set={setMajorField} getK={(o) => o} getT={(o) => o} />
+          <input value={majorName} onChange={(e) => setMajorName(e.target.value)}
+            placeholder="전공 이름 (선택, 예: 경영학)"
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-cyan-500" />
+        </div>
+      )}
+
+      {step === 1 && (
+        <div className="space-y-4">
+          <div><span className="font-mono text-xs font-bold text-cyan-400">2 / 6</span><span className="text-lg font-black ml-1.5">캐릭터 외형</span></div>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-center gap-4">
+            <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0">
+              <PortraitSprite look={look} gender={gender} size={84} />
+            </div>
+            <div className="flex flex-col gap-2 min-w-0 flex-1">
+              <div className="font-bold text-sm truncate">{nick.trim() || "플레이어"}</div>
+              <button onClick={randomLook}
+                className="px-3 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-medium self-start">🎲 랜덤</button>
+            </div>
+          </div>
+          <Swatch label="피부" colors={SKINS} val={look.skin} set={(v) => setL("skin", v)} />
+          <Swatch label="머리색" colors={HAIR_COLORS} val={look.hairColor} set={(v) => setL("hairColor", v)} />
+          <Swatch label="옷 색상" colors={OUTFITS} val={look.outfit} set={(v) => setL("outfit", v)} />
+          <OptRow label="헤어스타일" opts={HAIR_STYLES} val={HAIR_STYLES[look.hair]} set={(v) => setL("hair", HAIR_STYLES.indexOf(v))} getK={(o) => o} getT={(o) => o} />
+          <OptRow label="표정" opts={FACES} val={FACES[look.face]} set={(v) => setL("face", FACES.indexOf(v))} getK={(o) => o} getT={(o) => o} />
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="space-y-4">
+          <div><span className="font-mono text-xs font-bold text-cyan-400">3 / 6</span><span className="text-lg font-black ml-1.5">성장시킬 파트</span></div>
+          <div className="flex flex-wrap gap-1.5">
+            {PART_PRESETS.map((p) => (
+              <Chip key={p} on={selected.includes(p)} onClick={() => togglePreset(p)}>{p}</Chip>
+            ))}
+            {customs.map((c) => (
+              <Chip key={c} on onClick={() => setCustoms((s) => s.filter((x) => x !== c))}>{c} ✕</Chip>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input value={customInput} onChange={(e) => setCustomInput(e.target.value)}
+              placeholder="직접 추가 (선택)"
+              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-cyan-500" />
+            <button onClick={addCustom} className="px-3 rounded-xl border border-zinc-700 text-zinc-400"><Plus size={15} /></button>
+          </div>
+          <p className="text-xs text-zinc-600">직접 추가한 파트는 측정 항목이 없어 지망생부터 시작해요.</p>
+          {selected.includes("기본지식") && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+              <div className="text-xs text-zinc-400 mb-1 font-semibold">기본지식이 향할 방향 <span className="text-cyan-400">(1~3개)</span></div>
+              <p className="text-xs text-zinc-600 mb-2">지금 업무와 무관해도 돼요. 앞으로 나아갈 분야를 고르면 추천과 성장 방향이 여기에 맞춰집니다.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {KNOWLEDGE_FIELDS.map((d) => (
+                  <Chip key={d} on={directions.includes(d)} onClick={() => toggleDir(d)}>{d}</Chip>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-3">
+          <div><span className="font-mono text-xs font-bold text-cyan-400">4 / 6</span><span className="text-lg font-black ml-1.5">보유 자격·어학</span> <span className="text-xs text-zinc-500">({certSel.length}개 선택)</span></div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1.5 -mx-1 px-1">
+            {["전체", ...CERT_CATS].map((c) => (
+              <button key={c} onClick={() => setCat(c)}
+                className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${
+                  cat === c ? "bg-zinc-100 text-zinc-950 border-zinc-200" : "bg-zinc-950 text-zinc-500 border-zinc-800"}`}>
+                {c}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1.5">
+            {["전체", "A", "B", "C", "D", "E"].map((g) => (
+              <button key={g} onClick={() => setGradeF(g)}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-bold border ${
+                  gradeF === g ? "bg-zinc-100 text-zinc-950 border-zinc-200" : `bg-zinc-950 border-zinc-800 ${g === "전체" ? "text-zinc-500" : GRADE_TEXT[g]}`}`}>
+                {g}
+              </button>
+            ))}
+          </div>
+          <input value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="자격증 검색"
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-cyan-500" />
+          <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+            {filtered.map((c) => (
+              <button key={c.n} onClick={() => toggleCert(c.n)}
+                className={`w-full px-3 py-2 rounded-lg text-xs border text-left flex items-center gap-2 ${
+                  certSel.includes(c.n) ? "bg-cyan-500 text-zinc-950 border-cyan-400" : "bg-zinc-950 text-zinc-300 border-zinc-800"}`}>
+                <span className={`font-mono font-bold w-3 ${certSel.includes(c.n) ? "" : GRADE_TEXT[achGrade(c.d)]}`}>{achGrade(c.d)}</span>
+                <span className="flex-1 truncate font-semibold">{c.n}</span>
+                <span className={`text-xs ${certSel.includes(c.n) ? "text-zinc-800" : "text-zinc-600"}`}>{c.l}</span>
+                {certSel.includes(c.n) && <Check size={13} strokeWidth={3} />}
+              </button>
+            ))}
+            {filtered.length === 0 && <div className="text-xs text-zinc-600 py-3 text-center">검색 결과 없음</div>}
+          </div>
+          <p className="text-xs text-zinc-600">없으면 그냥 다음으로. 취득 예정인 건 나중에 자격증 퀘스트로 등록해요.</p>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3">
+            <div className="text-xs text-zinc-400 font-semibold mb-1.5">보유 시험 성적 <span className="text-cyan-400">({examsOwned.length})</span></div>
+            <div className="flex gap-1.5 overflow-x-auto pb-1.5 -mx-1 px-1">
+              {EXAMS.map((e) => (
+                <button key={e.id} onClick={() => setExamOwnFam(examOwnFam?.id === e.id ? null : e)}
+                  className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${
+                    examOwnFam?.id === e.id ? "bg-zinc-100 text-zinc-950 border-zinc-200" : "bg-zinc-950 text-zinc-500 border-zinc-800"}`}>
+                  {e.n}
+                </button>
+              ))}
+            </div>
+            {examOwnFam && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {examOwnFam.bands.map(([label, d, p]) => (
+                  <Chip key={label} on={examsOwned.some((o) => o.famId === examOwnFam.id && o.label === label)}
+                    onClick={() => setExamsOwned((prev) => [...prev.filter((o) => o.famId !== examOwnFam.id), { famId: examOwnFam.id, famN: examOwnFam.n, label, d, p }])}>
+                    {label}
+                  </Chip>
+                ))}
+              </div>
+            )}
+            {examsOwned.length > 0 && (
+              <div className="space-y-1 mt-2">
+                {examsOwned.map((o) => (
+                  <div key={o.famId} className="flex items-center justify-between text-xs bg-zinc-950 rounded-lg px-2.5 py-1.5">
+                    <span className="text-zinc-300">{o.famN} <b className="text-cyan-300">{o.label}</b> <span className="text-zinc-600">D{o.d}</span></span>
+                    <button onClick={() => setExamsOwned((p) => p.filter((x) => x.famId !== o.famId))} className="text-zinc-600"><X size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-zinc-600 mt-1.5">여기 등록한 성적은 시작 기록으로 저장되고, 이후 상향 시 차액만 지급돼요.</p>
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div className="space-y-4">
+          <div>
+            <span className="font-mono text-xs font-bold text-cyan-400">5 / 6</span><span className="text-lg font-black ml-1.5">경험</span>
+            <p className="text-xs text-zinc-400 mt-1">정직하게, 상향 없이.</p>
+          </div>
+          {hasJob && <OptRow label="직무 경력" opts={CAREER_OPTS} val={career} set={setCareer} />}
+          {hasJob && <OptRow label="리드 경험" opts={LEAD_OPTS} val={lead} set={setLead} />}
+          {hasBiz && <OptRow label="사업 경험" opts={BIZ_OPTS} val={biz} set={setBiz} />}
+          <OptRow label="산출물·포트폴리오" opts={OUTPUT_OPTS} val={output} set={setOutput} />
+        </div>
+      )}
+
+      {step === 5 && (
+        <div className="space-y-3">
+          <div><span className="font-mono text-xs font-bold text-cyan-400">6 / 6</span><span className="text-lg font-black ml-1.5">캐릭터 완성</span></div>
+          <div className="bg-zinc-900 border-2 border-cyan-500 border-opacity-30 rounded-2xl p-4 flex items-center gap-3">
+            <div className="rounded-xl overflow-hidden bg-zinc-950 border border-zinc-700 shrink-0">
+              <PortraitSprite look={look} gender={gender} size={60} />
+            </div>
+            <div className="min-w-0">
+              <div className="font-black text-base truncate">{nick.trim() || "플레이어"}</div>
+              <div className="text-xs text-zinc-500">{age} · {status}{directions.length ? ` · ${directions.join("·")}` : ""}</div>
+            </div>
+          </div>
+          {results.map((r) => (
+            <div key={r.name} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="font-bold text-sm">{r.name}{r.name === "기본지식" && directions.length ? <span className="text-zinc-500 font-normal"> · {directions.join("·")}</span> : null}</div>
+                <div className="text-cyan-300 font-black">{RANKS[r.grade].name}</div>
+              </div>
+              <Bar ratio={r.grade / (RANKS.length - 1)} color="bg-cyan-400" />
+              <div className="text-xs text-zinc-500 mt-2">근거: {r.why}</div>
+            </div>
+          ))}
+          <p className="text-xs text-zinc-600">선택지 조합으로 자동 산정된 시작점이에요. 이후 승급은 오직 관문 통과로만 가능합니다.</p>
+        </div>
+      )}
+
+      {err && <div className="text-xs text-rose-400 mt-3">{err}</div>}
+
+      {step !== "title" && (
+        <div className="flex gap-2 mt-5">
+          {step > 0 && (
+            <button onClick={() => { setErr(""); setStep((s) => s - 1); }}
+              className="flex-1 py-3 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-sm">이전</button>
+          )}
+          {step < 5 ? (
+            <button onClick={next} className="flex-1 py-3.5 rounded-xl bg-cyan-400 text-zinc-950 font-bold text-sm active:opacity-80 transition-all">다음</button>
+          ) : (
+            <button onClick={start} className="flex-1 py-3 rounded-xl bg-amber-400 text-zinc-950 font-black text-sm border-b-4 border-amber-600 active:border-b-0 active:translate-y-1 transition-all">이 인생으로 시작 ▶</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── 스와이프 선택 카드 (미연시 카드 UI) ── */
+
+/* ───────────────────────── 홈 — 오늘의 초점 ───────────────────────── */
+function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests }) {
+  const a = state.act;
+  const active = (state.goals || []).filter((g) => g.status === "active");
+  const focus = [...active].sort((x, y) => (x.deadline || "9999").localeCompare(y.deadline || "9999")).slice(0, 3);
+  const todayQuests = state.quests.filter((q) =>
+    q.type === "daily" ? !q.doneDates?.includes(today) : q.status !== "done"
+  );
+  const doneToday = state.quests.reduce(
+    (n, q) => n + (q.type === "daily" ? (q.doneDates?.includes(today) ? 1 : 0) : q.doneAt === today ? 1 : 0), 0);
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center gap-4">
+          <div className="relative rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-700 shrink-0">
+            <Portrait img={imgs?.profile} look={state.profile.look} gender={state.profile.gender} size={72} />
+            {imgs?.profile && (
+              <button onClick={() => onClearImg("profile")}
+                className="absolute top-1 right-1 w-5 h-5 rounded-md bg-zinc-950 bg-opacity-80 text-xs text-zinc-400 flex items-center justify-center">✕</button>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-black text-base truncate">{state.profile.nick}</div>
+            <div className="text-xs text-zinc-500 mt-0.5 truncate">{state.parts.map((p) => `${p.name} ${RANKS[Math.min(p.grade, RANKS.length - 1)].name}`).join(" · ")}</div>
+            <div className="flex items-center gap-2 mt-2">
+              <button onClick={() => onUpload("profile")}
+                className="flex items-center gap-1 bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium">
+                <Camera size={13} /> 업로드
+              </button>
+              <span className="text-xs text-zinc-500">오늘 {doneToday}건 완료</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between">
+          <SectionLabel tone="text-cyan-400">오늘의 초점</SectionLabel>
+          <button onClick={onGoGoals} className="text-xs text-zinc-500">전체 보기 ›</button>
+        </div>
+        {focus.length === 0 ? (
+          <div className="text-center py-4">
+            <EmptyGoalSvg />
+            <p className="text-sm text-zinc-500">목표 없음 — 진행률을 계산할 대상이 없습니다.</p>
+            <button onClick={onGoGoals} className="mt-2 text-xs font-bold text-cyan-300 border border-cyan-700 rounded-lg px-3 py-1.5">
+              첫 목표 세우기
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {focus.map((g) => {
+              const pc = paceOf(g, state);
+              return (
+                <button key={g.id} onClick={onGoGoals} className="w-full text-left bg-zinc-950 rounded-xl p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold truncate">{g.title}</span>
+                    <span className="text-xs font-mono font-bold text-zinc-400 shrink-0">{ddayStr(g.deadline)}</span>
+                  </div>
+                  <div className="mt-2"><Bar ratio={pc.p} color="bg-cyan-400" /></div>
+                  <div className="text-xs font-mono text-zinc-500 mt-1.5">
+                    진행 {Math.round(pc.p * 100)}%{pc.el != null && <> · 시간 경과 {Math.round(pc.el * 100)}%</>} · <span className={`font-bold ${pc.cls}`}>{pc.label}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between">
+          <SectionLabel tone="text-zinc-400">오늘 할 일</SectionLabel>
+          <button onClick={onGoQuests} className="text-xs text-zinc-500">관리 ›</button>
+        </div>
+        {todayQuests.length === 0 ? (
+          <p className="text-sm text-zinc-500 text-center py-3">오늘 예정된 할 일이 없습니다.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {todayQuests.slice(0, 5).map((q) => {
+              const part = state.parts.find((x) => x.id === q.partId);
+              const goal = q.goalId ? state.goals.find((g) => g.id === q.goalId) : null;
+              return (
+                <div key={q.id} className="flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5">
+                  <button onClick={() => onComplete(q)}
+                    className="w-5 h-5 rounded-md border border-zinc-700 flex items-center justify-center shrink-0 active:scale-90 transition-transform">
+                    <Check size={13} className="text-transparent" />
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold truncate">{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : q.kind === "meet" ? "🤝 " : ""}{q.title}</div>
+                    <div className="text-xs text-zinc-500 truncate">
+                      {part?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{!goal && <span className="text-zinc-600"> · 목표 연결 없음</span>}
+                    </div>
+                  </div>
+                  {q.isExam && <span className={`text-xs font-mono font-bold border bg-zinc-900 rounded-lg px-1.5 py-1 shrink-0 ${GRADE_TEXT[achGrade(q.band?.d ?? 0)]} ${GRADE_BORDER[achGrade(q.band?.d ?? 0)]}`}>시험 D{q.band?.d}</span>}
+                  {q.isCert && <span className={`text-xs font-mono font-bold border bg-zinc-900 rounded-lg px-1.5 py-1 shrink-0 ${GRADE_TEXT[achGrade(q.certD ?? 0)]} ${GRADE_BORDER[achGrade(q.certD ?? 0)]}`}>자격 D{q.certD}</span>}
+                  {!q.isExam && !q.isCert && <DiffBadge d={q.diff} />}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
+/* ───────────────────────── 목표 탭 (OKR) ───────────────────────── */
+function GoalsTab({ state, onAddGoal, onCheckin, onCertDone, onGoalStatus, onRemoveGoal, onAddQuestFor }) {
+  const groups = [
+    ["active", "진행 중"],
+    ["done", "달성"],
+  ];
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <SectionLabel tone="text-cyan-400">목표 (OKR)</SectionLabel>
+            <p className="text-xs text-zinc-500 mt-0.5">목표를 세우고, 핵심결과 수치로 진행을 측정해요.</p>
+          </div>
+          <button onClick={onAddGoal}
+            className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
+            <Plus size={14} /> 새 목표
+          </button>
+        </div>
+      </section>
+
+      {groups.map(([st, label]) => {
+        const list = (state.goals || []).filter((g) => g.status === st);
+        if (!list.length) return null;
+        return (
+          <div key={st} className="space-y-3">
+            <div className="flex items-center gap-2">
+              <SectionLabel tone={st === "active" ? "text-zinc-400" : "text-emerald-400"}>{label}</SectionLabel>
+              <span className="flex-1 h-px bg-zinc-800 mb-2" />
+            </div>
+            {list.map((g) => {
+              const pr = goalProgress(g, state);
+              const pc = paceOf(g, state);
+              const part = state.parts.find((p) => p.id === g.partId);
+              return (
+                <section key={g.id} className={`bg-zinc-900 border border-zinc-800 rounded-2xl p-4 ${st === "done" ? "opacity-75" : ""}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-black text-base">{g.title}</div>
+                      <div className="text-xs text-zinc-500 mt-0.5">
+                        {part?.name || "일반"} · {g.deadline ? `${g.deadline} (${ddayStr(g.deadline)})` : "기한 없음"}
+                      </div>
+                      {st === "active" && (
+                        <div className="text-xs mt-0.5 font-mono text-zinc-500">
+                          {pc.el != null ? <>진행 {Math.round(pc.p * 100)}% · 시간 경과 {Math.round(pc.el * 100)}% · <span className={`font-bold ${pc.cls}`}>{pc.label}</span></> : "기한 없음 — 페이스 계산 불가"}
+                        </div>
+                      )}
+                    </div>
+                    <span className={`text-2xl font-mono font-black shrink-0 ${st === "done" ? "text-emerald-400" : "text-cyan-300"}`}>{Math.round(pr * 100)}%</span>
+                  </div>
+                  <div className="mt-2"><Bar ratio={pr} color={st === "done" ? "bg-emerald-400" : "bg-cyan-400"} /></div>
+
+                  <div className="space-y-2 mt-3">
+                    {(g.krs || []).map((kr) => {
+                      const kp = krProgress(kr, g, state);
+                      return (
+                        <div key={kr.id} className="bg-zinc-950 rounded-xl p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <span className={`text-xs font-mono font-bold border rounded px-1 shrink-0 ${KR_CHIP[kr.type]?.[1] || "text-zinc-400 border-zinc-700"}`}>{KR_CHIP[kr.type]?.[0] || kr.type}</span>
+                              <span className="text-sm font-semibold truncate">{kr.title}</span>
+                            </span>
+                            <span className="text-xs font-mono text-zinc-500 shrink-0">{Math.round(kp * 100)}% · {krRemainText(kr, g, state)}</span>
+                          </div>
+                          <div className="mt-1.5"><Bar ratio={kp} color="bg-cyan-400" h="h-1.5" /></div>
+                          <div className="flex items-center justify-between gap-2 mt-2 text-xs">
+                            {kr.type === "metric" && (
+                              <>
+                                <span className="text-zinc-600 font-mono">{kr.start}{kr.unit} → 목표 {kr.target}{kr.unit}</span>
+                                <span className="flex items-center gap-1">
+                                  <input type="number" defaultValue={kr.current ?? kr.start} key={`${kr.id}-${kr.current}`}
+                                    onBlur={(e) => onCheckin(g.id, kr.id, Number(e.target.value))}
+                                    className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-right font-mono" />
+                                  <span className="text-zinc-600">{kr.unit}</span>
+                                </span>
+                              </>
+                            )}
+                            {kr.type === "exam" && (
+                              <span className="text-zinc-600">
+                                내 최고 <b className="text-cyan-300 font-mono">{state.exams?.best?.[kr.famId]?.label || "—"}</b>
+                                {" → 목표 "}<b className="text-zinc-300 font-mono">{kr.band?.label}</b>
+                                <span className="text-zinc-700"> · 시험 퀘스트로 자동 반영</span>
+                              </span>
+                            )}
+                            {kr.type === "exam" && !kr.done && (
+                              <button onClick={() => onAddQuestFor(g.id)} className="text-sky-300 text-xs font-medium shrink-0">등록 ›</button>
+                            )}
+                            {kr.type === "cert" && (
+                              <span className="text-zinc-600">
+                                {kr.certName} — {kr.done ? "취득 완료" : "마일스톤 퀘스트에서 합격증 제출로 완료"}
+                              </span>
+                            )}
+                            {kr.type === "cert" && (() => { const c = certByTitle(kr.certName); return c ? <CertBadge g={achGrade(c.d)} /> : null; })()}
+                            {kr.type === "count" && (
+                              <>
+                                <span className="text-zinc-600 font-mono">{krDoneCount(g, state)} / {kr.need}회 (연결 퀘스트)</span>
+                                <button onClick={() => onAddQuestFor(g.id)}
+                                  className="text-cyan-300 border border-cyan-800 rounded-lg px-2 py-1">퀘스트 추가</button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {st === "active" && (
+                    <div className="flex items-center gap-2 mt-3">
+                      <button onClick={() => onAddQuestFor(g.id)}
+                        className="flex-1 py-2.5 rounded-xl border border-dashed border-zinc-700 text-zinc-400 text-xs font-medium">＋ 퀘스트 연결</button>
+                      {pr >= 1 && (
+                        <button onClick={() => onGoalStatus(g.id, "done")}
+                          className="py-2 px-3 rounded-xl bg-emerald-500 bg-opacity-10 text-emerald-300 border border-emerald-700 text-xs font-bold">달성 처리</button>
+                      )}
+                    </div>
+                  )}
+                  {st === "done" && (
+                    <button onClick={() => onRemoveGoal(g.id)} className="mt-3 text-xs text-zinc-600">기록에서 제거</button>
+                  )}
+
+                </section>
+              );
+            })}
+          </div>
+        );
+      })}
+      {(state.goals || []).length === 0 && (
+        <div className="text-center py-6">
+          <EmptyGoalSvg />
+          <p className="text-sm text-zinc-600 mt-1">목표가 없습니다. 모든 진행 측정은 목표에서 시작됩니다.</p>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ── 새 목표 모달 (OKR 빌더) ── */
+function AddGoalModal({ parts, exams, onClose, onAdd }) {
+  const [title, setTitle] = useState("");
+  const [partId, setPartId] = useState(parts[0]?.id);
+  const [deadline, setDeadline] = useState("");
+  const [note, setNote] = useState("");
+  const [krs, setKrs] = useState([]);
+  const [krType, setKrType] = useState("metric");
+  const [mTitle, setMTitle] = useState(""); const [mStart, setMStart] = useState(""); const [mTarget, setMTarget] = useState(""); const [mUnit, setMUnit] = useState("");
+  const [cTitle, setCTitle] = useState(""); const [cNeed, setCNeed] = useState("");
+  const [exFam, setExFam] = useState(null); const [exBand, setExBand] = useState(null);
+  const [certQ, setCertQ] = useState("");
+  const [err, setErr] = useState("");
+
+  const addKr = () => {
+    setErr("");
+    if (krType === "metric") {
+      if (!mTitle.trim() || mStart === "" || mTarget === "") { setErr("지표명·시작값·목표값을 입력해 주세요."); return; }
+      setKrs([...krs, { id: uid(), type: "metric", title: mTitle.trim(), start: Number(mStart), target: Number(mTarget), current: Number(mStart), unit: mUnit.trim() }]);
+      setMTitle(""); setMStart(""); setMTarget(""); setMUnit("");
+    } else if (krType === "count") {
+      if (!cTitle.trim() || !cNeed) { setErr("행동명과 목표 횟수를 입력해 주세요."); return; }
+      setKrs([...krs, { id: uid(), type: "count", title: cTitle.trim(), need: Number(cNeed) }]);
+      setCTitle(""); setCNeed("");
+    } else if (krType === "exam") {
+      if (!exFam || !exBand) { setErr("시험과 목표 밴드를 선택해 주세요."); return; }
+      setKrs([...krs, { id: uid(), type: "exam", title: `${exFam.n} ${exBand.label} 달성`, famId: exFam.id, band: exBand }]);
+      setExFam(null); setExBand(null);
+    } else if (krType === "cert") {
+      if (!certQ.trim()) { setErr("자격증 이름을 입력해 주세요."); return; }
+      setKrs([...krs, { id: uid(), type: "cert", title: `${certQ.trim()} 취득`, certName: certQ.trim() }]);
+      setCertQ("");
+    }
+  };
+  const submit = () => {
+    if (!title.trim()) { setErr("목표 이름을 입력해 주세요."); return; }
+    onAdd({ id: uid(), title: title.trim(), partId, deadline: deadline || null, note: note.trim(), status: "active", createdAt: dstr(), krs });
+  };
+  const certHits = certQ.trim() ? CERTS.filter((c) => c.n.includes(certQ.trim())).slice(0, 5) : [];
+
+  return (
+    <Modal title="새 목표 (OKR)" onClose={onClose}>
+      <div className="space-y-3">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="목표 — 예: 영어 실전 수준 만들기"
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        <div className="flex gap-2">
+          <select value={partId} onChange={(e) => setPartId(e.target.value)}
+            className="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm">
+            {parts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)}
+            className="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm" />
+        </div>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="메모 (선택) — 왜 이 목표인가"
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+
+        <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+          <div className="text-xs font-bold text-zinc-400 mb-2">핵심결과(KR) 추가 — {krs.length}개</div>
+          <div className="flex gap-1.5 mb-2">
+            {[["metric", "수치"], ["count", "횟수"], ["exam", "시험"], ["cert", "자격"]].map(([k, t]) => (
+              <Chip key={k} on={krType === k} onClick={() => { setKrType(k); setErr(""); }}>{t}</Chip>
+            ))}
+          </div>
+          {krType === "metric" && (
+            <div className="space-y-1.5">
+              <input value={mTitle} onChange={(e) => setMTitle(e.target.value)} placeholder="지표명 — 예: 체지방률"
+                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
+              <div className="flex gap-1.5">
+                <input value={mStart} onChange={(e) => setMStart(e.target.value)} type="number" placeholder="시작"
+                  className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm font-mono" />
+                <input value={mTarget} onChange={(e) => setMTarget(e.target.value)} type="number" placeholder="목표"
+                  className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm font-mono" />
+                <input value={mUnit} onChange={(e) => setMUnit(e.target.value)} placeholder="단위"
+                  className="w-16 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
+              </div>
+            </div>
+          )}
+          {krType === "count" && (
+            <div className="flex gap-1.5">
+              <input value={cTitle} onChange={(e) => setCTitle(e.target.value)} placeholder="행동 — 예: 스터디 참석"
+                className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
+              <input value={cNeed} onChange={(e) => setCNeed(e.target.value)} type="number" placeholder="횟수"
+                className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm font-mono" />
+            </div>
+          )}
+          {krType === "exam" && (
+            <div>
+              <div className="flex gap-1.5 overflow-x-auto pb-1.5">
+                {EXAMS.map((e) => (
+                  <button key={e.id} onClick={() => { setExFam(e); setExBand(null); }}
+                    className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${exFam?.id === e.id ? "bg-zinc-100 text-zinc-950 border-zinc-200" : "bg-zinc-900 text-zinc-500 border-zinc-700"}`}>
+                    {e.n}
+                  </button>
+                ))}
+              </div>
+              {exFam && (
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {exFam.bands.map(([label, d, p, conf]) => (
+                    <Chip key={label} on={exBand?.label === label}
+                      onClick={() => setExBand({ label, d, p, conf })}>{label}</Chip>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-zinc-600 mt-1.5">달성 여부는 시험 퀘스트 완료 기록에서 자동 계산돼요.</p>
+            </div>
+          )}
+          {krType === "cert" && (
+            <div>
+              <input value={certQ} onChange={(e) => setCertQ(e.target.value)} placeholder="자격증 검색 — 예: 정보처리기사"
+                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
+              {certHits.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {certHits.map((c) => <Chip key={c.n} on={certQ === c.n} onClick={() => setCertQ(c.n)}>{c.n}</Chip>)}
+                </div>
+              )}
+            </div>
+          )}
+          <button onClick={addKr} className="w-full mt-2 py-2 rounded-lg border border-cyan-700 text-cyan-300 text-xs font-bold">＋ 이 핵심결과 추가</button>
+          {krs.length > 0 && (
+            <div className="space-y-1 mt-2">
+              {krs.map((kr) => (
+                <div key={kr.id} className="flex items-center justify-between text-xs bg-zinc-900 rounded-lg px-2.5 py-1.5">
+                  <span className="text-zinc-300 truncate">{kr.title}</span>
+                  <button onClick={() => setKrs(krs.filter((x) => x.id !== kr.id))} className="text-zinc-600"><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          목표 만들기
+        </button>
+        <p className="text-xs text-zinc-600">KR이 없으면 진행률은 0%로 고정됩니다 — 측정할 수 없는 목표는 관리되지 않습니다.</p>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── 지표 체크인 모달 ── */
+function MetricsModal({ metrics, onClose, onSave }) {
+  const [v, setV] = useState({ ...metrics });
+  return (
+    <Modal title="인생 지표 체크인" onClose={onClose}>
+      <div className="space-y-4">
+        {METRICS_META.map((m) => (
+          <div key={m.k}>
+            <div className="flex justify-between text-sm mb-1">
+              <span className="font-bold">{m.n}</span>
+              <span className="font-mono text-zinc-400">{v[m.k]}</span>
+            </div>
+            <input type="range" min="0" max="100" value={v[m.k]}
+              onChange={(e) => setV({ ...v, [m.k]: Number(e.target.value) })} className="w-full" />
+            <p className="text-xs text-zinc-600 mt-0.5">{m.d}</p>
+          </div>
+        ))}
+        <button onClick={() => onSave(v)} className="w-full py-3 rounded-xl bg-violet-500 text-zinc-950 font-black text-sm">저장</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── 성취 도감 — 자격·시험 실지급 P 조회 ── */
+function CatalogModal({ state, initialCat, onClose }) {
+  const [mode, setMode] = useState("cert");
+  const [cat, setCat] = useState(initialCat || "전체");
+  const [q, setQ] = useState("");
+  const [fam, setFam] = useState(EXAMS[0]);
+  const list = CERTS
+    .filter((c) => (cat === "전체" || c.c === cat) && (!q.trim() || c.n.toLowerCase().includes(q.trim().toLowerCase())))
+    .slice(0, 40);
+  return (
+    <Modal title="성취 도감" onClose={onClose}>
+      <div className="flex gap-1.5 mb-3">
+        <Chip on={mode === "cert"} onClick={() => setMode("cert")}>자격증 {CERTS.length}</Chip>
+        <Chip on={mode === "exam"} onClick={() => setMode("exam")}>시험 {EXAMS.length}</Chip>
+      </div>
+      {mode === "cert" ? (<>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="자격증 검색"
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm mb-2" />
+        <div className="flex gap-1.5 overflow-x-auto pb-2">
+          {["전체", ...CERT_CATS].map((c) => (
+            <button key={c} onClick={() => setCat(c)}
+              className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${cat === c ? "bg-zinc-100 text-zinc-950 border-zinc-200" : "bg-zinc-950 text-zinc-500 border-zinc-700"}`}>
+              {c}
+            </button>
+          ))}
+        </div>
+        <div className="space-y-1.5 mt-1">
+          {list.map((c) => {
+            const gain = certGainOf(state, c);
+            const base = certP(c.d);
+            const owned = state.quests.some((x) => x.isCert && x.status === "done" && x.title === c.n);
+            return (
+              <div key={c.n} className="flex items-center justify-between gap-2 bg-zinc-950 rounded-xl px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate">{c.n}</div>
+                  <div className="text-xs text-zinc-600">{c.c} · {c.l}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-xs font-mono text-zinc-400">D{c.d} <CertBadge g={achGrade(c.d)} /></div>
+                  <div className={`text-xs font-mono ${owned ? "text-emerald-400" : gain > 0 ? "text-amber-300" : "text-zinc-600"}`}>
+                    {owned ? "취득 완료" : gain > 0 ? `+${gain.toLocaleString()}P${gain < base ? " 차액" : ""}` : "0P · 보유 단계 이하"}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {list.length === 0 && <p className="text-xs text-zinc-600 text-center py-3">검색 결과 없음</p>}
+        </div>
+      </>) : (<>
+        <div className="flex gap-1.5 overflow-x-auto pb-2">
+          {EXAMS.map((e) => (
+            <button key={e.id} onClick={() => setFam(e)}
+              className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${fam?.id === e.id ? "bg-zinc-100 text-zinc-950 border-zinc-200" : "bg-zinc-950 text-zinc-500 border-zinc-700"}`}>
+              {e.n}
+            </button>
+          ))}
+        </div>
+        <div className="text-xs text-zinc-600 mb-2">{fam.cat} · 내 최고: <b className="text-cyan-300 font-mono">{state.exams?.best?.[fam.id]?.label || "없음"}</b></div>
+        <div className="space-y-1.5">
+          {fam.bands.map((b) => {
+            const { band, payout, mult } = examBandGain(state, fam, b);
+            const owned = (state.exams?.best?.[fam.id]?.p || 0) >= band.p;
+            return (
+              <div key={band.label} className="flex items-center justify-between gap-2 bg-zinc-950 rounded-xl px-3 py-2">
+                <span className="text-sm font-semibold w-14">{band.label}</span>
+                <span className="text-xs font-mono text-zinc-500">D{band.d}</span>
+                <span className={`text-xs font-mono ${owned ? "text-zinc-600" : "text-amber-300"}`}>
+                  {owned ? "보유" : `+${payout.toLocaleString()}P${mult < 1 ? ` ×${mult}` : ""}`}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </>)}
+      <p className="text-xs text-zinc-600 mt-3">표시된 P는 내 기록 기준 실지급액입니다(차액·감쇠 반영). 자격은 완료 시 등록 파트의 직무 가중(S/A/B = ×1.0/0.8/0.5, C 무관 = 지급 0)이 곱해집니다. 등록은 목표에 자격·시험 KR을 추가한 뒤, 퀘스트 모달의 원클릭 연결로 합니다.</p>
+    </Modal>
+  );
+}
+
+/* ── 롤모델 방향 제안 ── */
+function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
+  const rg = roleGap(state);
+  const gaps = (rg?.items || []).filter((i) => i.gap > 0);
+  return (
+    <Modal title={`방향 제안 — ${rg?.name || "롤모델"}`} onClose={onClose}>
+      {gaps.length === 0 ? (
+        <p className="text-sm text-zinc-400">모든 요구 파트를 충족했습니다. 근접도 {rg?.match}%.</p>
+      ) : (
+        <div className="space-y-3">
+          {gaps.map((i) => {
+            const h = partCatHints(state, i.part);
+            const recs = CERTS
+              .filter((c) => h.cats.includes(c.c))
+              .map((c) => {
+                const jw = jobWeightForCert(state, i.part.id, c);
+                const base = certGainOf(state, c);
+                return { c, jw, gain: jw ? Math.round(base * jw.mult / 10) * 10 : base };
+              })
+              .filter((r) => r.gain > 0)
+              .sort((a, b) => (b.jw?.mult ?? 1) - (a.jw?.mult ?? 1) || a.c.d - b.c.d)
+              .slice(0, 4);
+            const examRecs = h.exam
+              ? EXAMS.map((e) => {
+                  const mineP = state.exams?.best?.[e.id]?.p || 0;
+                  const nb = e.bands.find((b) => b[2] > mineP);
+                  return nb ? { e, ...examBandGain(state, e, nb) } : null;
+                }).filter(Boolean).slice(0, 3)
+              : [];
+            return (
+              <div key={i.part.id} className="bg-zinc-950 rounded-xl p-3">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="font-bold">{i.part.name}</span>
+                  <span className="font-mono text-xs text-rose-400 shrink-0">{RANKS[i.have].name} → {RANKS[i.need].name} · {i.gap}단계</span>
+                </div>
+                <div className="text-xs text-zinc-600 mt-1">다음 관문: {RANKS[i.have + 1].name} 승급 — 이 파트의 성취·증거가 필요합니다.</div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {JOB_FIELDS.map((d) => {
+                    const on = normDirs(i.part).includes(d);
+                    return (
+                      <button key={d}
+                        onClick={() => onSetDir(i.part.id, on ? (i.part.dir || []).filter((x) => x !== d && DIR_ALIAS[x] !== d) : [...(i.part.dir || []), d])}
+                        className={`px-2 py-0.5 rounded text-xs border ${on ? "bg-cyan-500 text-zinc-950 border-cyan-400" : "bg-zinc-900 text-zinc-500 border-zinc-800"}`}>
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-zinc-700 mt-1">복수 선택 시 교집합으로 평가합니다 — 지정한 모든 직무에서 통하는 자격이 상위에 옵니다.</p>
+                {recs.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {recs.map(({ c, jw, gain }) => (
+                      <div key={c.n} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-zinc-300 truncate">
+                          {jw && <span className={`mr-1 font-mono font-bold ${TIER_CLS[jw.tier]}`}>{jw.tier}</span>}{c.n}
+                        </span>
+                        <span className="font-mono text-zinc-500 shrink-0">D{c.d} · <span className="text-amber-300">+{gain.toLocaleString()}P</span></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {examRecs.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {examRecs.map(({ e, band, payout }) => (
+                      <div key={e.id} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-zinc-300 truncate">{e.n} {band.label} — 다음 밴드</span>
+                        <span className="font-mono text-zinc-500 shrink-0">D{band.d} · <span className="text-amber-300">+{payout.toLocaleString()}P</span></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {recs.length === 0 && examRecs.length === 0 && (
+                  <p className="text-xs text-zinc-600 mt-2">매칭되는 표준 성취가 없습니다 — 이 파트는 프로젝트·실적 증거로 승급을 진행하세요.</p>
+                )}
+                {h.cats.length > 0 && (
+                  <button onClick={() => onOpenCatalog(i.part.dir?.length === 1 ? h.cats[0] : null)} className="mt-2 text-xs text-cyan-300">도감에서 더 보기 ›</button>
+                )}
+              </div>
+            );
+          })}
+          <p className="text-xs text-zinc-600">추천은 직무 분야 매칭과 직무 가중 기준입니다.</p>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ───────────────────────── 퀘스트 탭 — 목표별 실행 ───────────────────────── */
+function QuestTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onAddFor }) {
+  const active = (state.goals || []).filter((g) => g.status === "active");
+  const orphan = state.quests.filter((q) => !q.goalId || !(state.goals || []).find((g) => g.id === q.goalId));
+  const isMile = (q) => q.isCert || q.isExam || q.isStudy;
+  const row = (q) => {
+    const part = state.parts.find((x) => x.id === q.partId);
+    const goal = q.goalId ? state.goals.find((g) => g.id === q.goalId) : null;
+    const doneToday = q.type === "daily" ? q.doneDates?.includes(today) : q.status === "done";
+    const ev = needsEvidence(q);
+    const jw = q.isCert ? jobWeightForCert(state, q.partId, certByTitle(q.title)) : null;
+    return (
+      <div key={q.id} className={`flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 ${doneToday ? "opacity-50" : ""}`}>
+        {isMile(q) && !doneToday ? (
+          <button onClick={() => onComplete(q)} className="shrink-0 p-0.5 active:scale-90 transition-transform">
+            <Lock size={15} className="text-zinc-500" />
+          </button>
+        ) : (
+          <button onClick={() => !doneToday && onComplete(q)} disabled={doneToday}
+            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-transform ${
+              doneToday ? "border-emerald-400 bg-emerald-400" : "border-zinc-700 active:scale-90"}`}>
+            <Check size={13} className={doneToday ? "text-zinc-950" : "text-transparent"} />
+          </button>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-semibold truncate ${doneToday ? "line-through" : ""}`}>{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : q.kind === "meet" ? "🤝 " : ""}{q.title}</div>
+          <div className="text-xs text-zinc-500 truncate">
+            {doneToday ? <>완료{q.evidence ? " · 증거 저장됨" : ""}</>
+              : q.isCert ? <span className="font-mono">{jw ? <>직무 적합 <b className={TIER_CLS[jw.tier]}>{jw.tier}</b> · </> : null}{q.certD != null ? `D${q.certD} · ` : ""}<span className="text-violet-300">증거 필요</span></span>
+              : q.isExam ? <span className="font-mono">D{q.band?.d} · <span className="text-sky-300">성적표 사진 필수</span></span>
+              : <>{part?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{q.isStudy ? " · 📖 산출물검증" : ev ? " · 증거 필요" : ""}{!goal && <span className="text-zinc-600"> · 목표 기여 없음</span>}</>}
+          </div>
+        </div>
+        {q.isExam ? <span className="text-xs font-mono font-bold text-sky-300 border border-sky-700 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">시험</span>
+          : q.isCert ? (
+            <span className="flex items-center gap-1 shrink-0">
+              <CertBadge g={q.certD != null ? achGrade(q.certD) : legacyCertGrade(q.pts ?? 0)} />
+            </span>
+          )
+          : <DiffBadge d={q.diff} />}
+        <button onClick={() => onRemove(q.id)} className="text-zinc-700 shrink-0"><X size={14} /></button>
+      </div>
+    );
+  };
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <SectionLabel tone="text-zinc-400">퀘스트 — 목표별 실행</SectionLabel>
+            <p className="text-xs text-zinc-600 mt-0.5">퀘스트는 목표에서만 생성되고, 하루분량으로만 등록됩니다.</p>
+          </div>
+          <button onClick={onCatalog}
+            className="shrink-0 px-3 py-2 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">도감</button>
+        </div>
+      </section>
+
+      {active.length === 0 && orphan.length === 0 && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+          <EmptyQuestSvg />
+          <p className="text-sm text-zinc-500">퀘스트는 목표의 실행 단위입니다 — 목표가 먼저예요.</p>
+          <button onClick={onGoGoals} className="mt-3 px-4 py-2 rounded-xl bg-cyan-500 text-zinc-950 text-xs font-black">목표 먼저 세우기 ›</button>
+        </section>
+      )}
+
+      {active.map((g) => {
+        const qs = state.quests.filter((q) => q.goalId === g.id);
+        const dailyQ = qs.filter((q) => !isMile(q));
+        const mile = qs.filter(isMile);
+        const pr = goalProgress(g, state);
+        return (
+          <section key={g.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-black truncate">🎯 {g.title}</span>
+              <span className="text-xs font-mono text-cyan-300 shrink-0">{Math.round(pr * 100)}%</span>
+            </div>
+            {dailyQ.length > 0 && <div className="space-y-1.5 mt-2.5">{dailyQ.map(row)}</div>}
+            {mile.length > 0 && (
+              <>
+                <div className="flex items-center gap-2 mt-3 mb-1.5">
+                  <span className="flex-1 h-px bg-zinc-800" />
+                  <span className="text-xs text-zinc-500 text-center">마일스톤 — 자격·시험·학습 (하루분량 예외 · 증거로만 완료)</span>
+                  <span className="flex-1 h-px bg-zinc-800" />
+                </div>
+                <div className="space-y-1.5">{mile.map(row)}</div>
+              </>
+            )}
+            {qs.length === 0 && <p className="text-xs text-zinc-600 mt-2.5">연결된 퀘스트가 아직 없습니다.</p>}
+            <button onClick={() => onAddFor(g.id)}
+              className="w-full mt-2.5 py-2.5 rounded-xl border border-dashed border-zinc-700 text-zinc-400 text-xs font-medium active:translate-y-0.5">
+              ＋ 이 목표에 퀘스트
+            </button>
+          </section>
+        );
+      })}
+
+      {orphan.length > 0 && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 opacity-60">
+          <SectionLabel tone="text-zinc-500">미분류 — 목표 연결 전 항목</SectionLabel>
+          <p className="text-xs text-zinc-600 mb-2">완료·삭제는 가능하지만, 새 퀘스트는 목표에서만 만들 수 있어요.</p>
+          <div className="space-y-1.5">{orphan.map(row)}</div>
+        </section>
+      )}
+    </>
+  );
+}
+
+function AddQuestModal({ parts, exams, certBest, quests, goalId, goal, onClose, onAdd }) {
+  const [mode, setMode] = useState("normal");
+  const [title, setTitle] = useState("");
+  const [kind, setKind] = useState("");
+  const [diff, setDiff] = useState("D");
+  const [type, setType] = useState("daily");
+  const [sDiff, setSDiff] = useState("D");
+  const [sScope, setSScope] = useState("");
+  const [err, setErr] = useState("");
+  const partId = goal?.partId || parts[0]?.id;
+  const partName = parts.find((p) => p.id === partId)?.name || "—";
+  const gk = goalKinds(goal);
+  const hasExamQ = (famId, label) => (quests || []).some((q) => q.goalId === goalId && q.isExam && q.famId === famId && q.band?.label === label);
+  const hasCertQ = (name) => (quests || []).some((q) => q.isCert && q.title.includes(name));
+
+  const addExamKR = (kr) => {
+    const fam = EXAMS.find((e) => e.id === kr.famId);
+    onAdd({ goalId, title: `${fam?.n || "시험"} ${kr.band.label} 달성`, partId, diff: scoreTier(kr.band.p), pts: kr.band.p, type: "once", isExam: true, famId: kr.famId, band: kr.band });
+  };
+  const addCertKR = (c) => {
+    onAdd({ goalId, title: `${c.n} 취득`, partId, diff: scoreTier(certP(c.d)), pts: certP(c.d), certD: c.d, ...(c.sg ? { sg: c.sg } : {}), type: "once", isCert: true });
+  };
+  const fillCount = (kr) => {
+    setMode("normal"); setTitle(kr.title);
+    setKind(detectKind(kr.title)); setDiff("E"); setType("daily"); setErr("");
+  };
+  const submitNormal = () => {
+    setErr("");
+    if (!title.trim()) { setErr("퀘스트 이름을 입력해 주세요."); return; }
+    const dk = detectKind(title);
+    const nm = { book: "📚 독서", fit: "💪 운동", meet: "🤝 미팅" };
+    if (dk && kind && dk !== kind) { setErr(`제목은 ${nm[dk]} 활동으로 보이는데 유형이 ${nm[kind]}(으)로 선택돼 있어요 — 맞춰 주세요.`); return; }
+    const ek = kind || dk;
+    onAdd({ goalId, ...(ek ? { kind: ek } : {}), title: title.trim(), partId, diff, pts: DIFFS[diff].pts, type });
+  };
+  const submitStudy = () => {
+    setErr("");
+    if (!title.trim()) { setErr("책·논문·강의명을 입력해 주세요."); return; }
+    onAdd({ goalId, title: title.trim(), partId, diff: sDiff, pts: DIFFS[sDiff].pts, type: "once", isStudy: true, source: title.trim(), scope: sScope.trim() || undefined });
+  };
+
+  return (
+    <Modal title="퀘스트 추가" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="bg-zinc-950 border border-cyan-900 rounded-xl px-3 py-2.5">
+          <div className="text-sm font-bold text-cyan-300 truncate">🎯 {goal?.title || "목표"}</div>
+          <div className="text-xs text-zinc-500 mt-0.5">파트: {partName} (목표에서 상속)</div>
+        </div>
+
+        {goal?.krs?.length > 0 && (
+          <div className="bg-zinc-950 rounded-xl p-3">
+            <div className="text-xs font-bold tracking-widest text-zinc-500 mb-2">이 목표의 핵심결과 — 클릭해서 바로 연결</div>
+            <div className="space-y-1.5">
+              {goal.krs.map((kr) => {
+                if (kr.type === "exam") {
+                  const fam = EXAMS.find((e) => e.id === kr.famId);
+                  const achieved = (exams?.best?.[kr.famId]?.p || 0) >= (kr.band?.p || 0);
+                  const reg = hasExamQ(kr.famId, kr.band?.label);
+                  return (
+                    <button key={kr.id} disabled={achieved || reg} onClick={() => addExamKR(kr)}
+                      className={`w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs border ${
+                        achieved || reg ? "border-zinc-800 text-zinc-600" : "border-zinc-800 text-zinc-300 active:translate-y-0.5"}`}>
+                      <span className="truncate">🎓 {fam?.n} {kr.band?.label} — 시험 마일스톤 · <span className="font-mono">D{kr.band?.d}</span></span>
+                      <span className={`font-mono font-bold shrink-0 ${achieved || reg ? "text-zinc-600" : "text-sky-300"}`}>{achieved ? "달성" : reg ? "등록됨" : "등록 ›"}</span>
+                    </button>
+                  );
+                }
+                if (kr.type === "cert") {
+                  const c = CERTS.find((x) => x.n === kr.certName) || certByTitle(kr.certName);
+                  if (!c) return <div key={kr.id} className="text-xs text-zinc-600 px-1">📜 {kr.certName} — 도감에 없는 명칭이라 자동 연결 불가(KR 이름을 표준 명칭으로 맞춰 주세요)</div>;
+                  const reg = hasCertQ(kr.certName);
+                  const jw = jobWeightForCert({ parts }, partId, c);
+                  const gain = Math.round(certGainOf({ certBest }, c) * (jw?.mult ?? 1) / 10) * 10;
+                  return (
+                    <button key={kr.id} disabled={kr.done || reg} onClick={() => addCertKR(c)}
+                      className={`w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs border ${
+                        kr.done || reg ? "border-zinc-800 text-zinc-600" : "border-zinc-800 text-zinc-300 active:translate-y-0.5"}`}>
+                      <span className="truncate">📜 {c.n} — 자격 마일스톤{jw ? <> · 적합 <b className={kr.done || reg ? "" : TIER_CLS[jw.tier]}>{jw.tier}</b></> : null} · <span className="font-mono">+{gain.toLocaleString()}P</span></span>
+                      <span className={`font-mono font-bold shrink-0 ${kr.done || reg ? "text-zinc-600" : "text-violet-300"}`}>{kr.done ? "취득" : reg ? "등록됨" : "등록 ›"}</span>
+                    </button>
+                  );
+                }
+                if (kr.type === "count") {
+                  return (
+                    <button key={kr.id} onClick={() => fillCount(kr)}
+                      className="w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs border border-zinc-800 text-zinc-300 active:translate-y-0.5">
+                      <span className="truncate">🔁 {kr.title} — 일일 실행으로 채우기 · <span className="font-mono">{krDoneCount(goal, { quests: quests || [] })}/{kr.need}</span></span>
+                      <span className="font-mono font-bold text-cyan-300 shrink-0">채우기 ›</span>
+                    </button>
+                  );
+                }
+                return (
+                  <div key={kr.id} className="flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-xs text-zinc-400 opacity-60">📈 {kr.title} — 목표 탭 체크인으로 관리 (운동 기록의 측정값도 자동 반영)</div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {gk.study && (
+          <div className="flex gap-1.5">
+            <button onClick={() => { setMode("normal"); setErr(""); }}
+              className={`flex-1 py-2 rounded-lg text-xs ${mode === "normal" ? "bg-cyan-400 text-zinc-950 font-bold" : "bg-zinc-950 border border-zinc-700 text-zinc-400 font-medium"}`}>일일 실행</button>
+            <button onClick={() => { setMode("study"); setTitle(""); setErr(""); }}
+              className={`flex-1 py-2 rounded-lg text-xs ${mode === "study" ? "bg-violet-500 text-zinc-950 font-bold" : "bg-zinc-950 border border-zinc-700 text-violet-300 font-medium"}`}>학습 (하루분량)</button>
+          </div>
+        )}
+
+        {mode === "normal" && (<>
+          {QUEST_TEMPLATES.some((tp) => tp.kind && gk.kinds.has(tp.kind)) && (
+            <div className="flex flex-wrap gap-1.5">
+              {QUEST_TEMPLATES.filter((tp) => tp.kind && gk.kinds.has(tp.kind)).map((tp) => (
+                <Chip key={tp.t} tone="amber" on={title === tp.t}
+                  onClick={() => { setTitle(tp.t); setKind(tp.kind); setDiff(tp.diff); setType(tp.type); setErr(""); }}>
+                  {tp.t}
+                </Chip>
+              ))}
+            </div>
+          )}
+          <input value={title} onChange={(e) => setTitle(e.target.value)}
+            placeholder="무엇을 하나요? — 하루 안에 끝나는 크기로"
+            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-400" />
+          {gk.kinds.size > 1 && (
+          <div>
+            <div className="text-xs text-zinc-500 mb-1.5">활동 유형 — 이 목표와 관련된 것만</div>
+            <div className="flex gap-1.5">
+              {[["", "기타"], ["book", "📚 독서"], ["fit", "💪 운동"], ["meet", "🤝 미팅"]]
+                .filter(([k]) => !k || gk.kinds.has(k))
+                .map(([k, t]) => (
+                  <Chip key={k || "etc"} on={kind === k} onClick={() => setKind(k)}>{t}</Chip>
+                ))}
+            </div>
+            {kind && (
+              <p className="text-xs text-zinc-600 mt-1.5">
+                {kind === "book" ? "완료 시 독후감(별점·한 줄 감상) 기록 — 교양 독서용. 실력 목적 독서는 '학습'으로."
+                  : kind === "fit" ? "완료 시 운동·측정 기록(선택). 체중·골격근량은 이 목표의 같은 이름 수치 KR에 자동 반영돼요."
+                  : "완료 시 회의록 기록. 액션 아이템은 팔로업 퀘스트로 전환할 수 있어요."}
+              </p>
+            )}
+          </div>
+          )}
+          <div>
+            <div className="text-xs text-zinc-500 mb-1.5">
+              난이도 — <span className={`font-mono font-bold ${DIFF_PT_TEXT[diff] || "text-zinc-300"}`}>{DIFFS[diff].pts}pt</span> <span className="text-zinc-600">· 하루분량 상한 C</span>
+            </div>
+            <div className="flex gap-1.5">
+              {["E", "D", "C"].map((d) => (
+                <button key={d} onClick={() => setDiff(d)}
+                  className={`flex-1 py-2 rounded-lg text-sm font-mono font-bold bg-zinc-900 ${
+                    diff === d ? `border-2 ${DIFF_SEL[d]}` : `border ${DIFF_TONE[d]}`}`}>
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-1.5">
+            <Chip on={type === "daily"} onClick={() => setType("daily")}>매일 반복</Chip>
+            <Chip on={type === "once"} onClick={() => setType("once")}>오늘 1회</Chip>
+          </div>
+          {err && <p className="text-xs text-rose-400">{err}</p>}
+          <button onClick={submitNormal}
+            className="w-full py-3 rounded-xl bg-cyan-400 text-zinc-950 font-black text-sm active:translate-y-0.5 transition-all">
+            등록
+          </button>
+        </>)}
+
+        {mode === "study" && (<>
+          <input value={title} onChange={(e) => setTitle(e.target.value)}
+            placeholder="책·논문·강의명"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-violet-400" />
+          <input value={sScope} onChange={(e) => setSScope(e.target.value)} placeholder="오늘 범위 — 예: 3장, 강의 5강"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+          <div>
+            <div className="text-xs text-zinc-500 mb-1">분량 등급 — <span className={`font-mono font-bold ${DIFF_PT_TEXT[sDiff] || "text-zinc-300"}`}>{DIFFS[sDiff].pts}pt</span></div>
+            <div className="flex gap-1.5">
+              {["E", "D"].map((d) => <Chip key={d} on={sDiff === d} onClick={() => setSDiff(d)}>{d}</Chip>)}
+            </div>
+            <p className="text-xs text-zinc-600 mt-1">하루 학습 분량만: 아티클 E · 챕터/강의 1개 D. 책 한 권은 매일 챕터(D)로 쪼개고, 완독은 목표의 횟수 KR로 측정하세요.</p>
+          </div>
+          <p className="text-xs text-zinc-500">완료 검증: E = 요약·새 지식 기재 · D = 기재 + 산출물 1건(정리 사진/링크).</p>
+          {err && <p className="text-xs text-rose-400">{err}</p>}
+          <button onClick={submitStudy}
+            className="w-full py-3 rounded-xl bg-violet-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+            학습 퀘스트 추가 (산출물 검증)
+          </button>
+        </>)}
+      </div>
+    </Modal>
+  );
+}
+
+function EvidenceModal({ quest, onClose, onSubmit }) {
+  const [sel, setSel] = useState([]);
+  const [memo, setMemo] = useState("");
+  const [img, setImg] = useState(null);
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
+  const needPhoto = quest.isCert || quest.isExam;
+  const docName = quest.isExam ? "성적표" : "합격증";
+  const onFile = async (e) => {
+    const fl = e.target.files?.[0]; e.target.value = "";
+    if (!fl) return;
+    try { setImg(await resizeImage(fl)); setErr(""); } catch { setErr("이미지를 읽지 못했어요."); }
+  };
+  const submit = () => {
+    if (needPhoto && !img) { setErr(`${docName} 사진을 첨부해야 완료할 수 있어요.`); return; }
+    if (!needPhoto && !sel.length) { setErr("증거 항목을 하나 이상 선택해 주세요."); return; }
+    if (img) store.set(`liferpg-img-ev-${quest.id}`, img);
+    const bits = [];
+    if (img) bits.push(`📎 ${needPhoto ? docName : "사진"} 첨부`);
+    if (sel.length) bits.push(sel.join(" · "));
+    onSubmit(bits.join(" · ") + (memo.trim() ? ` — ${memo.trim()}` : ""));
+  };
+  return (
+    <Modal title={quest.isExam ? "시험 성적 — 성적표 제출" : quest.isCert ? "자격증 취득 — 합격증 제출" : `${quest.diff}급 완료 — 증거 선택`} onClose={onClose}>
+      <p className="text-sm text-zinc-400 mb-3">
+        {needPhoto
+          ? `「${quest.title}」 — ${docName} 사진을 첨부해야만 완료됩니다. 텍스트만으로는 인정되지 않아요.`
+          : `「${quest.title}」 — 이 등급은 증거 없이는 완료되지 않아요. 해당하는 항목을 골라 주세요.`}
+      </p>
+      {needPhoto && (
+        <div className="mb-3">
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+          {img ? (
+            <div>
+              <div className="relative rounded-xl overflow-hidden border border-emerald-700">
+                <img src={img} alt="증거" className="w-full max-h-48 object-contain bg-zinc-950" />
+                <button onClick={() => setImg(null)}
+                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-zinc-950 bg-opacity-80 text-xs text-zinc-300">✕</button>
+              </div>
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-500 bg-opacity-10 px-3 py-2">
+                <Check size={14} className="text-emerald-400 shrink-0" />
+                <span className="text-xs font-medium text-emerald-300">첨부 완료 — 제출 시 기록에 저장됩니다</span>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => fileRef.current?.click()}
+              className="w-full py-7 rounded-xl border-2 border-dashed border-zinc-700 flex flex-col items-center gap-1.5 active:border-cyan-600">
+              <Paperclip size={20} className="text-zinc-500" />
+              <span className="text-xs font-medium text-zinc-400">📎 {docName} 사진 첨부 (필수)</span>
+              <span className="text-xs text-zinc-600">JPG·PNG · 기록에 원본 저장</span>
+            </button>
+          )}
+        </div>
+      )}
+      <EvidencePicker
+        chips={QUEST_EV_CHIPS}
+        selected={sel}
+        onToggle={(c) => setSel((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]))}
+        memo={memo} setMemo={setMemo}
+      />
+      {err && <div className="text-xs text-rose-400 mt-2">{err}</div>}
+      <button onClick={submit} disabled={needPhoto && !img}
+        className={`w-full py-3 rounded-xl font-black text-sm mt-3 ${needPhoto ? (img ? "bg-emerald-400 text-zinc-950" : "bg-zinc-800 bg-opacity-50 text-zinc-600") : "bg-cyan-500 text-zinc-950"}`}>
+        {needPhoto && !img ? "제출하고 완료 — 첨부 필요" : "제출하고 완료"}
+      </button>
+    </Modal>
+  );
+}
+
+/* ── 일상 활동 기록 모달 — 독서·운동·미팅 ── */
+function ActivityLogModal({ quest, onClose, onDone, onSpawn }) {
+  const k = quest.kind;
+  const [rating, setRating] = useState(0);
+  const [review, setReview] = useState("");
+  const [quote, setQuote] = useState("");
+  const [workout, setWorkout] = useState("");
+  const [weight, setWeight] = useState("");
+  const [muscle, setMuscle] = useState("");
+  const [withWho, setWithWho] = useState("");
+  const [agenda, setAgenda] = useState("");
+  const [decision, setDecision] = useState("");
+  const [actions, setActions] = useState("");
+  const [spawned, setSpawned] = useState(0);
+  const [err, setErr] = useState("");
+  const actionList = actions.split("\n").map((s) => s.trim()).filter(Boolean);
+  const doSpawn = () => {
+    actionList.forEach((t) => onSpawn(t));
+    setSpawned(actionList.length);
+  };
+  const submit = () => {
+    setErr("");
+    if (k === "book") {
+      if (!rating) { setErr("별점을 선택해 주세요."); return; }
+      if (review.trim().length < 15) { setErr("한 줄 감상을 15자 이상 적어 주세요."); return; }
+      onDone(`독후감 ★${rating} · ${review.trim().slice(0, 60)}${quote.trim() ? ` · "${quote.trim().slice(0, 40)}"` : ""}`, null);
+    } else if (k === "fit") {
+      const w = Number(weight), m = Number(muscle);
+      const ms = {};
+      if (weight !== "" && Number.isFinite(w)) ms["체중"] = w;
+      if (muscle !== "" && Number.isFinite(m)) ms["골격근량"] = m;
+      const bits = [];
+      if (workout.trim()) bits.push(workout.trim().slice(0, 40));
+      if (ms["체중"] != null) bits.push(`체중 ${ms["체중"]}kg`);
+      if (ms["골격근량"] != null) bits.push(`골격근량 ${ms["골격근량"]}kg`);
+      onDone(bits.length ? `운동 기록 · ${bits.join(" · ")}` : null, Object.keys(ms).length ? ms : null);
+    } else {
+      if (!withWho.trim()) { setErr("미팅 상대를 적어 주세요."); return; }
+      if (agenda.trim().length < 10) { setErr("안건을 구체적으로 적어 주세요."); return; }
+      onDone(`회의록 · ${withWho.trim()} — 안건: ${agenda.trim().slice(0, 40)}${decision.trim() ? ` · 결정: ${decision.trim().slice(0, 40)}` : ""}${actionList.length ? ` · 액션 ${actionList.length}건${spawned ? `(퀘스트 ${spawned}건 생성)` : ""}` : ""}`, null);
+    }
+  };
+  return (
+    <Modal title={k === "book" ? `독후감 — ${quest.title}` : k === "fit" ? `운동 기록 — ${quest.title}` : `회의록 — ${quest.title}`} onClose={onClose}>
+      <div className="space-y-3">
+        {k === "book" && (<>
+          <div>
+            <div className="text-xs text-zinc-500 mb-1">별점</div>
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button key={n} onClick={() => setRating(n)} className={`text-xl ${n <= rating ? "" : "opacity-25"}`}>⭐</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-zinc-500 mb-1">한 줄 감상 (15자 이상)</div>
+            <textarea value={review} onChange={(e) => setReview(e.target.value)} rows={3}
+              placeholder="어떤 책이었고, 무엇이 남았는지"
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
+          </div>
+          <input value={quote} onChange={(e) => setQuote(e.target.value)} placeholder="기억에 남는 문장 (선택)"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        </>)}
+        {k === "fit" && (<>
+          <p className="text-xs text-zinc-500">기록은 전부 선택입니다 — 측정한 날만 적으세요. 수치는 활성 목표의 같은 이름 수치 KR("체중"·"골격근량")에 자동 반영돼요.</p>
+          <input value={workout} onChange={(e) => setWorkout(e.target.value)} placeholder="오늘 운동 — 예: 하체 + 유산소 40분"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+          <div className="flex gap-2">
+            <input value={weight} onChange={(e) => setWeight(e.target.value)} type="number" step="0.1" placeholder="체중 kg"
+              className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+            <input value={muscle} onChange={(e) => setMuscle(e.target.value)} type="number" step="0.1" placeholder="골격근량 kg"
+              className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+          </div>
+        </>)}
+        {k === "meet" && (<>
+          <input value={withWho} onChange={(e) => setWithWho(e.target.value)} placeholder="미팅 상대 — 예: ○○상사 김부장"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+          <textarea value={agenda} onChange={(e) => setAgenda(e.target.value)} rows={2} placeholder="안건"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
+          <textarea value={decision} onChange={(e) => setDecision(e.target.value)} rows={2} placeholder="결정사항 (선택)"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
+          <div>
+            <textarea value={actions} onChange={(e) => setActions(e.target.value)} rows={3}
+              placeholder={"액션 아이템 — 줄바꿈으로 여러 개\n견적서 수정본 송부\n계약서 초안 검토"}
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
+            {actionList.length > 0 && (
+              <button onClick={doSpawn} disabled={spawned > 0}
+                className={`w-full mt-1.5 py-2 rounded-lg border text-xs font-bold ${spawned ? "border-emerald-800 text-emerald-400" : "border-cyan-700 text-cyan-300"}`}>
+                {spawned ? `✓ 팔로업 퀘스트 ${spawned}건 생성됨` : `액션 ${actionList.length}건을 팔로업 퀘스트로 생성`}
+              </button>
+            )}
+          </div>
+        </>)}
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          {k === "fit" ? "완료 (기록은 선택)" : "기록하고 완료"}
+        </button>
+        {k === "fit" && <p className="text-xs text-zinc-600">이후의 일일 완료는 원탭이에요. 측정 갱신은 목표 탭의 수치 KR 체크인으로 언제든 가능합니다.</p>}
+      </div>
+    </Modal>
+  );
+}
+
+/* ── 학습 검증 모달 — 등급별 산출물 증거 (확정 2026-08-29) ── */
+const STUDY_REQ = {
+  E: { sum: 30, art: 0, crit: false, label: "요약·새 지식 기재" },
+  D: { sum: 30, art: 1, crit: false, label: "기재 + 산출물 1건" },
+  C: { sum: 60, art: 1, crit: false, label: "요약 강화(60자+) + 산출물 1건" },
+  B: { sum: 100, art: 2, crit: true, label: "요약 강화(100자+) + 한계·비판 + 산출물 2건" },
+};
+function StudyVerifyModal({ quest, onClose, onDone }) {
+  const req = STUDY_REQ[quest.diff] || STUDY_REQ.D;
+  const [summary, setSummary] = useState("");
+  const [insight, setInsight] = useState("");
+  const [crit, setCrit] = useState("");
+  const [photos, setPhotos] = useState([]);
+  const [links, setLinks] = useState("");
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
+  const [showLinks, setShowLinks] = useState(false);
+  const srcName = quest.source || quest.title;
+  const linkList = links.split("\n").map((s) => s.trim()).filter((s) => /^https?:\/\/\S+$/.test(s));
+  const artCount = photos.length + linkList.length;
+  const onFile = async (e) => {
+    const fl = e.target.files?.[0]; e.target.value = "";
+    if (!fl || photos.length >= 2) return;
+    try {
+      const url = await resizeImage(fl);
+      setPhotos((p) => [...p, url]);
+      setErr("");
+    } catch { setErr("이미지를 읽지 못했어요."); }
+  };
+  const submit = () => {
+    if (summary.trim().length < req.sum) { setErr(`요약을 ${req.sum}자 이상으로 적어 주세요 (${quest.diff}급 기준).`); return; }
+    if (insight.trim().length < 10) { setErr("'새로 알게 된 것'을 구체적으로 적어 주세요."); return; }
+    if (req.crit && crit.trim().length < 15) { setErr("B급은 한계·비판 1줄(15자 이상)이 필요해요."); return; }
+    if (artCount < req.art) { setErr(`${quest.diff}급은 산출물 ${req.art}건이 필요해요 — 정리 사진 또는 정리 링크. (현재 ${artCount}건)`); return; }
+    photos.forEach((img, idx) => store.set(`liferpg-img-study-${quest.id}-${idx + 1}`, img));
+    const bits = ["요약·새 지식 기재", `새 지식: ${insight.trim().slice(0, 40)}`];
+    if (req.crit) bits.push(`한계: ${crit.trim().slice(0, 30)}`);
+    if (photos.length) bits.push(`📎 정리 사진 ${photos.length}장`);
+    if (linkList.length) bits.push(...linkList.map((l) => `🔗 ${l}`));
+    onDone(bits.join(" · ") + ` · ${quest.diff}급 산출물 검증 통과`);
+  };
+  return (
+    <Modal title={`학습 검증 — ${srcName}`} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="text-xs bg-violet-500 bg-opacity-10 border border-violet-700 rounded-xl px-3 py-2">
+          <span className="font-bold text-violet-300">{quest.diff}급 기준</span>
+          <span className="text-violet-300"> — {req.label}</span>
+        </div>
+        <div>
+          <div className="flex items-baseline justify-between text-xs text-zinc-400 font-bold mb-1">
+            <span>핵심 요약 ({req.sum}자 이상)</span>
+            <span className={`font-mono font-bold ${summary.trim().length < req.sum ? "text-rose-400" : "text-emerald-400"}`}>{summary.trim().length}/{req.sum}</span>
+          </div>
+          <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={4}
+            placeholder="이 자료의 핵심 주장·내용을 자기 말로"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
+        </div>
+        <div>
+          <div className="text-xs text-zinc-500 mb-1">새로 알게 된 것 1가지</div>
+          <textarea value={insight} onChange={(e) => setInsight(e.target.value)} rows={2}
+            placeholder="읽기 전엔 몰랐던 것"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
+        </div>
+        {req.crit && (
+          <div>
+            <div className="text-xs text-zinc-500 mb-1">한계·비판 1줄 (B급 필수)</div>
+            <input value={crit} onChange={(e) => setCrit(e.target.value)}
+              placeholder="이 자료의 한계, 또는 동의하지 않는 지점"
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+          </div>
+        )}
+        {req.art > 0 && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+            <div className={`text-xs font-bold mb-2 ${artCount >= req.art ? "text-emerald-400" : "text-rose-400"}`}>
+              산출물 {req.art}건 필수 — 현재 {artCount}건
+            </div>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+            <div className="flex gap-2 mb-2">
+              {photos.map((img, idx) => (
+                <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-emerald-700">
+                  <img src={img} alt="" className="w-full h-full object-cover" />
+                  <button onClick={() => setPhotos((p) => p.filter((_, x) => x !== idx))}
+                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded bg-zinc-950 bg-opacity-80 text-xs text-zinc-300">✕</button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mb-2">
+              <button onClick={() => fileRef.current?.click()} disabled={photos.length >= 2}
+                className="flex-1 py-3 rounded-lg border-2 border-dashed border-zinc-700 flex items-center justify-center gap-1.5 text-xs text-zinc-400 disabled:opacity-30">
+                <Paperclip size={13} /> 사진
+              </button>
+              <button onClick={() => setShowLinks((v) => !v)}
+                className={`flex-1 py-3 rounded-lg border-2 border-dashed flex items-center justify-center gap-1.5 text-xs ${showLinks ? "border-zinc-500 text-zinc-300" : "border-zinc-700 text-zinc-400"}`}>
+                <LinkIcon size={13} /> 링크 입력
+              </button>
+            </div>
+            {(showLinks || links.trim().length > 0) && (
+            <textarea value={links} onChange={(e) => setLinks(e.target.value)} rows={2}
+              placeholder={"정리 링크 (블로그·노션·발표자료, 줄바꿈으로 여러 개)\nhttps://..."}
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-xs font-mono resize-none" />
+            )}
+            <p className="text-xs text-zinc-600 mt-1.5">인정: 손필기·정리 사진, 블로그/노션 정리 글, 발표자료. 사진은 기기에, 링크는 기록에 원문 보존.</p>
+          </div>
+        )}
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-violet-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          검증 제출하고 완료
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ───────────────────────── 성장 탭 ───────────────────────── */
+
+function GrowthTab({ state, roleMatch, onPromote, onRoleModel, onRoleAdvice, onReset, onMetrics }) {
+  const rg = roleGap(state);
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+          <SectionLabel tone="text-amber-400">성취의 벽</SectionLabel>
+          {state.room.trophies.length === 0 && Object.keys(state.exams?.best || {}).length === 0 && (
+            <div className="text-center py-3">
+              <EmptyWallSvg />
+              <p className="text-xs text-zinc-600 mt-2">아직 검증된 성취가 없습니다 — 완료는 증거로만 기록됩니다.</p>
+            </div>
+          )}
+          {state.room.trophies.length > 0 && (
+            <div className="relative bg-zinc-950 rounded-xl overflow-hidden px-2.5 pt-3 pb-2 mb-2">
+              <WallFrame />
+              <div className="relative flex flex-wrap gap-2 justify-center items-end">
+                {state.room.trophies.slice(-10).map((t) => (
+                  <div key={t.id} title={t.label} className="flex flex-col items-center w-12">
+                    <TrophySvg kind={t.kind} tier={t.tier} size={26} />
+                    <div className="text-xs text-zinc-600 truncate w-full text-center">{t.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {Object.entries(state.exams?.spec || {}).filter(([, v]) => v).map(([l]) => (
+            <div key={l} className="text-xs text-amber-300 font-bold mb-1.5">🎖 {LANG_KO[l] || l} 전문화 — 고난도 감쇠 하한 70%</div>
+          ))}
+          {Object.entries(state.exams?.best || {}).length > 0 && (
+            <div className="space-y-1.5">
+              {Object.entries(state.exams.best).map(([id, b]) => {
+                const fam = EXAMS.find((e) => e.id === id);
+                return (
+                  <div key={id} className="flex justify-between text-xs bg-zinc-950 rounded-lg px-3 py-2">
+                    <span className="text-zinc-300">{fam?.n} <b className="text-cyan-300">{b.label}</b></span>
+                    <span className="font-mono text-zinc-500">D{b.d} · 누적 {b.p.toLocaleString()}P</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+      </section>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between">
+          <SectionLabel tone="text-violet-400">인생 지표</SectionLabel>
+          <button onClick={onMetrics} className="text-xs text-violet-300 border border-violet-800 rounded-lg px-2 py-1">체크인</button>
+        </div>
+        <div className="space-y-2.5 mt-1">
+          {METRICS_META.map((m) => (
+            <div key={m.k} className="flex items-center gap-2.5 text-xs">
+              <span className="w-11 shrink-0 text-zinc-400">{m.n}</span>
+              <div className="flex-1"><Bar ratio={(state.metrics?.[m.k] ?? 0) / 100} color={m.c} /></div>
+              <span className={`font-mono font-bold w-6 text-right ${m.tc}`} title={`${state.metrics?.[m.k] ?? 0} / 100`}>{state.metrics?.[m.k] ?? 0}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-zinc-600 mt-2">성취·승급 시 자동 반영되고, 체크인으로 직접 보정할 수 있어요.</p>
+      </section>
+
+      <SectionLabel tone="text-cyan-400">실력 트랙 — 파트별 승급 관문</SectionLabel>
+      {state.parts.map((p) => {
+        const cur = RANKS[p.grade];
+        const next = RANKS[p.grade + 1];
+        return (
+          <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-8 h-8 shrink-0 rounded-lg border border-zinc-700 bg-zinc-950 flex items-center justify-center font-mono font-bold text-sm text-cyan-300">{p.grade}</span>
+                <div className="min-w-0">
+                  <div className="font-bold text-sm truncate">{p.name}{p.dir?.length ? <span className="text-zinc-500 font-normal text-xs"> · {p.dir.join("·")}</span> : null}</div>
+                  <div className="text-xs text-zinc-500 truncate">등급 <span className="text-cyan-300 font-bold">{cur.name}</span> · {cur.gate}</div>
+                </div>
+              </div>
+              <span className="text-xs font-mono text-zinc-600 shrink-0">{p.grade}/9</span>
+            </div>
+            {next ? (
+              <div className="bg-zinc-950 rounded-xl p-3">
+                <div className="text-xs text-zinc-300 font-medium mb-1 flex items-center gap-1.5">
+                  <Lock size={13} className="text-zinc-500 shrink-0" /> <span>다음 관문 — <span className="text-cyan-400 font-semibold">{next.name}</span> · {next.gate}</span>
+                </div>
+                <div className="text-xs text-zinc-500 mt-1">필요 증거: {next.req}</div>
+                <button onClick={() => onPromote(p)}
+                  className="w-full mt-2.5 py-2 rounded-lg bg-cyan-400 text-zinc-950 text-xs font-bold active:translate-y-0.5">
+                  관문 증명하기
+                </button>
+              </div>
+            ) : (
+              <div className="text-xs text-amber-300 flex items-center gap-1"><Trophy size={13} /> 정점 도달</div>
+            )}
+            {p.achievements.length > 0 && (
+              <div className="pt-1">
+                <div className="text-xs text-zinc-600 mb-1.5">검증된 성취 {p.achievements.length}건</div>
+                <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                  {[...p.achievements].reverse().map((ac) => (
+                    <div key={ac.id} className="text-xs bg-zinc-950 rounded-lg px-2.5 py-2 flex gap-2">
+                      <Star size={11} className="text-cyan-500 shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <div className="text-zinc-300 break-words">{ac.text}</div>
+                        <div className="text-zinc-600 font-mono">{ac.date} · {RANKS[ac.grade].name} 인정</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-2">
+          <SectionLabel tone="text-zinc-400">롤모델</SectionLabel>
+          {roleMatch !== null && (
+            <div className="text-right">
+              <div className="text-xs text-zinc-500">근접도</div>
+              <div className="font-mono font-black text-2xl text-cyan-300">{roleMatch}%</div>
+            </div>
+          )}
+        </div>
+        {state.role && rg ? (
+          <div className="mb-2">
+            <div className="text-sm font-bold text-zinc-100">「{state.role.name}」 <span className="font-normal text-zinc-500">검증 기준 근접도</span></div>
+            <div className="space-y-2 mt-2">
+              {rg.items.map((i) => (
+                <div key={i.part.id} className="bg-zinc-950 rounded-xl p-3">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-zinc-100 font-medium">{i.part.name}</span>
+                    <span className={`font-mono text-right ${i.gap === 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {RANKS[i.have].name} / 요구 {RANKS[i.need].name}{i.gap > 0 ? ` · ${i.gap}단계 부족` : " · 충족"}
+                    </span>
+                  </div>
+                  <div className="flex h-3.5 gap-0.5 mt-2">
+                    {Array.from({ length: i.need }, (_, k) => {
+                      const w = (Math.pow((k + 1) / i.need, 2) - Math.pow(k / i.need, 2)) * 100;
+                      return (
+                        <div key={k} style={{ width: `${w}%` }}
+                          className={`rounded border ${k < Math.min(i.have, i.need) ? "bg-cyan-400 border-cyan-300" : "bg-zinc-900 border-zinc-800"}`} />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-zinc-600 mt-2">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 파트의 활동은 반영되지 않습니다.</p>
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500 mb-2">목표 인물상의 파트별 요구 등급을 정하면, 검증된 등급으로만 근접도를 계산합니다.</p>
+        )}
+        <div className="flex gap-2">
+          <button onClick={onRoleModel} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">
+            {state.role ? "롤모델 수정" : "롤모델 설정"}
+          </button>
+          {state.role && rg && (
+            <button onClick={onRoleAdvice} className="flex-1 py-2.5 rounded-xl border border-cyan-700 text-cyan-300 text-xs font-bold">
+              방향 제안
+            </button>
+          )}
+        </div>
+      </section>
+
+      <button onClick={onReset} className="w-full py-2.5 text-xs text-rose-400 border border-rose-400/30 rounded-xl flex items-center justify-center gap-1.5">
+        <RotateCcw size={12} /> 데이터 초기화
+      </button>
+    </>
+  );
+}
+
+/* ───────────────────────── 승급 모달 (클릭형) ───────────────────────── */
+
+function PromoteModal({ part, onClose, onSubmit }) {
+  const next = RANKS[part.grade + 1];
+  const [sel, setSel] = useState([]);
+  const [memo, setMemo] = useState("");
+  const [err, setErr] = useState("");
+  if (!next) return null;
+  const chips = GATE_CHIPS[part.grade + 1] || [];
+  return (
+    <Modal title={`승급 심사 — ${next.name}`} onClose={onClose}>
+      <div className="bg-zinc-950 rounded-xl p-3 mb-3">
+        <div className="text-xs text-zinc-500">'{part.name}' 파트 · {RANKS[part.grade].name} → <span className="text-cyan-300 font-bold">{next.name}</span></div>
+        <div className="text-sm text-zinc-200 mt-1">{next.gate}</div>
+      </div>
+      <div className="text-xs text-zinc-500 mb-2">해당하는 증거를 선택하세요 (1개 이상)</div>
+      <EvidencePicker
+        chips={chips}
+        selected={sel}
+        onToggle={(c) => setSel((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]))}
+        memo={memo} setMemo={setMemo}
+      />
+      <p className="text-xs text-zinc-600 mt-2">스스로에게 정직하게. 여기서의 상향은 결국 나를 속이는 일이에요.</p>
+      {err && <div className="text-xs text-rose-400 mt-2">{err}</div>}
+      <button
+        onClick={() => { if (!sel.length) { setErr("해당하는 증거가 없다면 아직 이 등급이 아닌 거예요."); return; } onSubmit(composeEvidence(sel, memo)); }}
+        className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm mt-3">
+        증거 제출 · 승급
+      </button>
+    </Modal>
+  );
+}
+
+function RoleModelModal({ state, onClose, onSave }) {
+  const [name, setName] = useState(state.role?.name || "");
+  const [targets, setTargets] = useState(state.role?.targets || {});
+  return (
+    <Modal title="롤모델 설정" onClose={onClose}>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {ROLE_PRESETS.map((r) => (
+          <Chip key={r} on={name === r} onClick={() => setName(r)}>{r}</Chip>
+        ))}
+      </div>
+      <input value={name} onChange={(e) => setName(e.target.value)}
+        placeholder="직접 입력 (예: 연 매출 1억 1인 사업가)"
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-500 mb-4" />
+      <div className="space-y-3">
+        {state.parts.map((p) => (
+          <div key={p.id}>
+            <div className="text-xs text-zinc-500 mb-1.5">{p.name} — 요구 등급 {targets[p.id] ? `: ${RANKS[targets[p.id]].name}` : "(제외)"}</div>
+            <div className="flex flex-wrap gap-1">
+              <button onClick={() => setTargets((t) => ({ ...t, [p.id]: 0 }))}
+                className={`px-2 py-1 rounded text-xs border ${!targets[p.id] ? "bg-zinc-700 text-zinc-200 border-zinc-600" : "bg-zinc-950 text-zinc-500 border-zinc-800"}`}>
+                제외
+              </button>
+              {RANKS.slice(1, 9).map((r, i) => (
+                <button key={r.name} onClick={() => setTargets((t) => ({ ...t, [p.id]: i + 1 }))}
+                  className={`px-2 py-1 rounded text-xs border ${
+                    targets[p.id] === i + 1 ? "bg-cyan-500 text-zinc-950 border-cyan-400" : "bg-zinc-950 text-zinc-500 border-zinc-800"}`}>
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={() => onSave({ name: name.trim() || "롤모델", targets })}
+        className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm mt-4">
+        저장
+      </button>
+    </Modal>
+  );
+}
+
+/* ───────────────────────── 오버레이 연출 ───────────────────────── */
+
+function Overlay({ data, onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 2400);
+    return () => clearTimeout(t);
+  }, [data, onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-6" onClick={onClose}>
+      {data.type === "gradeup" && (
+        <div className="anim-bigpop text-center bg-zinc-900 border-2 border-cyan-500 rounded-3xl px-8 py-8 max-w-xs shadow-2xl shadow-cyan-500/25">
+          <div className="text-xs tracking-widest text-zinc-500 font-mono">RANK UP</div>
+          <div className="flex justify-center my-3"><div className="rounded-xl overflow-hidden border border-zinc-800"><PortraitSprite look={data.look} gender={data.gender} size={64} /></div></div>
+          <div className="text-sm text-zinc-400">{data.part}</div>
+          <div className="text-2xl font-black text-cyan-300 mt-1">{data.rank}</div>
+          {data.roleTo != null && (
+            data.roleTo !== data.roleFrom ? (
+              <div className="text-xs font-mono text-cyan-300 mt-3">롤모델 근접도 {data.roleFrom}% → {data.roleTo}%</div>
+            ) : (
+              <div className="text-xs text-zinc-600 mt-3">
+                {data.roleTargeted ? "롤모델 근접도 변화 없음 — 이미 요구를 충족한 파트" : "롤모델 요구 외 파트 — 근접도 변화 없음"}
+              </div>
+            )
+          )}
+          <p className="text-xs text-zinc-500 mt-3">증거로 증명된 승급입니다.</p>
+        </div>
+      )}
+      {data.type === "achieve" && (
+        <div className="anim-bigpop text-center bg-zinc-900 border-2 border-amber-500 rounded-3xl px-8 py-8 max-w-xs shadow-2xl shadow-amber-500/20">
+          <div className="text-xs tracking-widest text-zinc-500 font-mono">ACHIEVEMENT</div>
+          <div className="flex justify-center my-3"><TrophySvg kind={data.kind || "boss"} tier={data.tier} size={34} /></div>
+          <div className="text-lg font-black text-amber-300">{data.name}</div>
+          {data.p != null && <div className="text-sm text-zinc-300 font-mono font-bold mt-1.5">{data.d != null ? `D${data.d} · ` : ""}+{(data.p || 0).toLocaleString()}P</div>}
+          {data.jwTier && (
+            <div className={`text-xs font-mono mt-1 ${TIER_CLS[data.jwTier]}`}>직무 적합 {data.jwTier} · {data.jwField}{data.jwInter ? " 기준(교집합)" : ""} ×{data.jwMult}</div>
+          )}
+          {data.deltas?.length > 0 ? (
+            <div className="mt-3 space-y-1">
+              {data.deltas.map((d) => (
+                <div key={d.id} className="text-xs font-mono text-cyan-300">🎯 {d.title} {d.from}% → {d.to}%</div>
+              ))}
+            </div>
+          ) : data.deltas ? (
+            <div className="mt-3 text-xs text-zinc-600">연결된 목표 없음 — 목표 진행에 기여하지 않은 성취입니다</div>
+          ) : null}
+          <p className="text-xs text-zinc-500 mt-3">기록에 남았습니다.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ───────────────────────── 앱 루트 ───────────────────────── */
+export default function LifeRPG() {
+  const [phase, setPhase] = useState("loading");
+  const [state, setState] = useState(null);
+  const [tab, setTab] = useState("home");
+  const [modal, setModal] = useState(null);
+  const [overlay, setOverlay] = useState(null);
+  const [toast, setToast] = useState(null);
+  const readyRef = useRef(false);
+  const [imgs, setImgs] = useState({});
+  const fileRef = useRef(null);
+  const slotRef = useRef(null);
+  const today = dstr();
+
+  const showToast = (t) => { setToast(t); setTimeout(() => setToast((c) => (c === t ? null : c)), 2600); };
+
+  useEffect(() => {
+    (async () => {
+      const saved = await store.get(KEY).catch(() => null);
+      const m = saved ? migrate(saved) : null;
+      if (m) { setState(applyDailyTick(m)); setPhase("main"); }
+      else setPhase("onboard");
+      readyRef.current = true;
+      const p = await store.get("liferpg-img-profile").catch(() => null);
+      setImgs({ profile: p || null });
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!readyRef.current || !state) return;
+    store.set(KEY, state);
+  }, [state]);
+
+  /* 사진 */
+  const askUpload = (slot) => { slotRef.current = slot; fileRef.current?.click(); };
+  const onFile = async (e) => {
+    const fl = e.target.files?.[0];
+    e.target.value = "";
+    if (!fl || !slotRef.current) return;
+    try {
+      const url = await resizeImage(fl);
+      const slot = slotRef.current;
+      setImgs((p) => ({ ...p, [slot]: url }));
+      store.set(`liferpg-img-${slot}`, url);
+      showToast({ msg: "📷 사진이 등록됐어요" });
+    } catch { showToast({ msg: "이미지를 읽지 못했어요" }); }
+  };
+  const clearImg = (slot) => { setImgs((p) => ({ ...p, [slot]: null })); store.del(`liferpg-img-${slot}`); };
+
+  /* 퀘스트 */
+  const addQuest = (q) => {
+    if (q.isCert && state.quests.some((x) => x.isCert && x.title === q.title)) {
+      setModal(null);
+      showToast({ msg: `${q.title} — 이미 등록된 자격입니다. 자격 지급은 파트와 무관하게 1회입니다.` });
+      return;
+    }
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.quests = [{ status: "todo", doneDates: [], createdAt: dstr(), ...q, id: uid() }, ...s.quests];
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "퀘스트가 추가됐어요" });
+  };
+  const removeQuest = (id) => setState((prev) => ({ ...prev, quests: prev.quests.filter((q) => q.id !== id) }));
+
+  const spawnQuest = (t, base) => {
+    setState((prev) => ({
+      ...prev,
+      quests: [{ id: uid(), title: t, partId: base.partId, goalId: base.goalId, diff: "D", type: "once", status: "todo", doneDates: [], createdAt: dstr() }, ...prev.quests],
+    }));
+  };
+  const applyMeasures = (ms) => {
+    if (!ms) return;
+    for (const [label, value] of Object.entries(ms)) {
+      if (!Number.isFinite(value)) continue;
+      outer: for (const g of state.goals || []) {
+        if (g.status !== "active") continue;
+        for (const kr of g.krs || []) {
+          if (kr.type === "metric" && kr.title.includes(label)) { checkinKR(g.id, kr.id, value); break outer; }
+        }
+      }
+    }
+  };
+
+  const tryComplete = (q) => {
+    if (q.isStudy && !q.evidence) { setModal({ type: "study", quest: q }); return; }
+    if (q.kind && !q.evidence) { setModal({ type: "activity", quest: q }); return; }
+    if (needsEvidence(q) && !q.evidence) { setModal({ type: "evidence", quest: q }); return; }
+    completeQuest(q.id, null);
+  };
+
+  const metricsGain = (s, dVal, partName) => {
+    const g = Math.max(1, Math.round(dVal / 10));
+    const aG = partName === "사업" ? g : partName === "직업·커리어" ? Math.ceil(g * 0.6) : Math.ceil(g * 0.3);
+    const iG = partName === "사업" || partName === "직업·커리어" ? Math.ceil(g * 0.6) : Math.ceil(g * 0.8);
+    s.metrics.asset = statClamp(s.metrics.asset + aG);
+    s.metrics.infl = statClamp(s.metrics.infl + iG);
+    return { aG, iG };
+  };
+
+  const completeQuest = (id, evidence) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const beforeP = Object.fromEntries((prev.goals || []).filter((g) => g.status === "active").map((g) => [g.id, goalProgress(g, prev)]));
+      const q = s.quests.find((x) => x.id === id);
+      if (!q) return prev;
+      if (q.type === "daily") {
+        if (q.doneDates?.includes(today)) return prev;
+        q.doneDates = [...(q.doneDates || []), today];
+      } else {
+        if (q.status === "done") return prev;
+        q.status = "done"; q.doneAt = today;
+      }
+      if (evidence) q.evidence = evidence;
+
+      /* 스트릭 (실드 자동 소모) */
+      const a = s.act;
+      let shield = false;
+      if (a.lastActive !== today) {
+        if (a.lastActive === shiftDay(today, -1)) a.streak += 1;
+        else if (a.lastActive === shiftDay(today, -2) && a.shieldsLeft > 0) { a.shieldsLeft -= 1; a.streak += 1; shield = true; }
+        else a.streak = 1;
+        a.lastActive = today;
+      }
+
+      const part = s.parts.find((x) => x.id === q.partId);
+      let ach = null;
+      let specGain = null;
+
+      if (q.isExam) {
+        const fam = EXAMS.find((e) => e.id === q.famId);
+        const r = calcExamPayout(s.exams, fam, q.band);
+        if (s.exams.dim[q.famId] === undefined) s.exams.dim[q.famId] = r.mult;
+        const prevBest = s.exams.best[q.famId];
+        if (!prevBest || q.band.p > prevBest.p) {
+          s.exams.best[q.famId] = { label: q.band.label, d: q.band.d, p: q.band.p, ver: POINT_POLICY_VERSION, date: today };
+        }
+        if (part) part.achievements = [...part.achievements, {
+          id: uid(), grade: part.grade, date: today,
+          text: `${fam.n} ${q.band.label} — D${q.band.d} · +${r.payout.toLocaleString()}P${r.mult < 1 ? ` (감쇠 ×${r.mult})` : ""}`,
+        }];
+        s.room.trophies = [...s.room.trophies, { id: uid(), kind: "boss", label: `${fam.n} ${q.band.label}`, tier: examGrade(q.band.d), date: today }];
+        const lang = fam.lang;
+        if (lang !== "Academic" && !s.exams.spec[lang]) {
+          const highs = Object.entries(s.exams.best).filter(([fid, b]) => {
+            const e2 = EXAMS.find((e) => e.id === fid);
+            return e2 && e2.lang === lang && b.d >= 75;
+          });
+          if (highs.length >= 2) {
+            s.exams.spec[lang] = true;
+            specGain = LANG_KO[lang];
+            s.room.trophies = [...s.room.trophies, { id: uid(), kind: "spec", label: `${specGain} 전문화`, date: today }];
+            const lp = s.parts.find((x) => x.name === "어학");
+            if (lp && lp.grade < 5) {
+              lp.grade = 5;
+              lp.achievements = [...lp.achievements, { id: uid(), text: `🎖 ${specGain} 전문화 — 고난도 시험(D75+) 2종 달성`, date: today, grade: 5 }];
+            }
+          }
+        }
+        metricsGain(s, q.band.d, part?.name);
+        ach = { name: `${fam.n} ${q.band.label}`, d: q.band.d, p: r.payout, tier: examGrade(q.band.d), kind: "boss" };
+      } else if (q.isCert) {
+        const cp = q.certD != null ? certP(q.certD) : (q.pts ?? 0);
+        const prevP = q.sg ? (s.certBest?.[q.sg]?.p || 0) : 0;
+        const jw = jobWeightForCert(s, q.partId, certByTitle(q.title));
+        const basePay = Math.max(0, cp - prevP);
+        const pay = jw ? Math.round(basePay * jw.mult / 10) * 10 : basePay;
+        if (q.sg && (!s.certBest[q.sg] || cp > s.certBest[q.sg].p)) s.certBest[q.sg] = { p: cp, name: q.title, d: q.certD ?? null };
+        if (part) part.achievements = [...part.achievements, {
+          id: uid(), grade: part.grade, date: today,
+          text: `${q.title} — ${q.certD != null ? `D${q.certD} · ` : ""}+${pay.toLocaleString()}P${prevP > 0 ? " (단계 차액)" : ""}${jw ? ` · 직무 ${jw.tier} ×${jw.mult} (${jw.field}${jw.inter ? " 기준·교집합" : ""})` : ""}`,
+        }];
+        const tier = q.certD != null ? achGrade(q.certD) : legacyCertGrade(cp);
+        s.room.trophies = [...s.room.trophies, { id: uid(), kind: "boss", label: q.title, tier, date: today }];
+        for (const g of s.goals || []) for (const kr of g.krs || []) {
+          if (kr.type === "cert" && !kr.done && kr.certName && q.title.includes(kr.certName)) kr.done = true;
+        }
+        const wD = Math.round((q.certD ?? Math.round(Math.sqrt(cp * 5))) * (jw?.mult ?? 1));
+        if (wD > 0) metricsGain(s, wD, part?.name);
+        ach = { name: q.title, d: q.certD, p: pay, tier, kind: "boss", jwTier: jw?.tier, jwField: jw?.field, jwMult: jw?.mult, jwInter: jw?.inter };
+      } else if (q.isStudy) {
+        const pts = q.pts ?? DIFFS[q.diff].pts;
+        if (part) part.achievements = [...part.achievements, {
+          id: uid(), grade: part.grade, date: today,
+          text: `📖 ${q.title}${q.scope ? ` (${q.scope})` : ""} — ${evidence || "학습 검증"}`,
+        }];
+        if (pts >= EVIDENCE_MIN) {
+          s.room.trophies = [...s.room.trophies, { id: uid(), kind: "spec", label: `📖 ${q.title}`, date: today }];
+          metricsGain(s, Math.min(100, Math.round(Math.sqrt(pts * 5))), part?.name);
+        }
+        ach = { name: q.title, p: pts, kind: "spec" };
+      } else if (q.kind) {
+        if (evidence && part) {
+          const icon = q.kind === "book" ? "📚" : q.kind === "fit" ? "💪" : "🤝";
+          part.achievements = [...part.achievements, { id: uid(), grade: part.grade, date: today, text: `${icon} ${q.title} — ${evidence}` }];
+        }
+      } else if ((q.pts ?? DIFFS[q.diff].pts) >= EVIDENCE_MIN) {
+        const pts = q.pts ?? DIFFS[q.diff].pts;
+        if (part) part.achievements = [...part.achievements, { id: uid(), grade: part.grade, date: today, text: `${q.title} — 증거와 함께 완료`, }];
+        const tier = legacyCertGrade(pts);
+        s.room.trophies = [...s.room.trophies, { id: uid(), kind: "boss", label: q.title, tier, date: today }];
+        metricsGain(s, Math.min(100, Math.round(Math.sqrt(pts * 5))), part?.name);
+        ach = { name: q.title, p: pts, tier, kind: "boss" };
+      }
+
+      const deltas = (s.goals || [])
+        .filter((g) => g.status === "active" && beforeP[g.id] !== undefined)
+        .map((g) => ({ id: g.id, title: g.title, from: Math.round(beforeP[g.id] * 100), to: Math.round(goalProgress(g, s) * 100) }))
+        .filter((d) => d.to !== d.from);
+      queueMicrotask(() => {
+        if (ach) setOverlay({ type: "achieve", ...ach, deltas });
+        else if (deltas.length) showToast({ msg: `완료 · 🎯 ${deltas.map((d) => `${d.title} ${d.from}→${d.to}%`).join(" · ")}${shield ? " · 실드 사용" : ""}` });
+        else showToast({ msg: `완료 · 목표 기여 없음 · 🔥 ${a.streak}일${shield ? " · 실드 사용" : ""}` });
+        if (specGain) setTimeout(() => showToast({ msg: `🎖 ${specGain} 전문화 — 고난도 감쇠 하한 70% 적용` }), 2700);
+      });
+      return s;
+    });
+    setModal(null);
+  };
+
+  /* 승급 */
+  const promotePart = (partId, evidenceText) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const rBefore = roleGap(prev)?.match ?? null;
+      const p = s.parts.find((x) => x.id === partId);
+      if (!p || p.grade >= RANKS.length - 1) return prev;
+      p.grade += 1;
+      p.achievements = [...p.achievements, { id: uid(), text: evidenceText, date: dstr(), grade: p.grade }];
+      s.room.trophies = [...s.room.trophies, { id: uid(), kind: "rank", label: `${p.name} ${RANKS[p.grade].name}`, date: dstr() }];
+      s.metrics.infl = statClamp(s.metrics.infl + 3);
+      const rAfter = roleGap(s)?.match ?? null;
+      const roleTargeted = (prev.role?.targets?.[partId] || 0) > 0;
+      queueMicrotask(() => setOverlay({ type: "gradeup", part: p.name, rank: RANKS[p.grade].name, look: s.profile?.look, gender: s.profile?.gender, roleFrom: rBefore, roleTo: rAfter, roleTargeted }));
+      return s;
+    });
+    setModal(null);
+  };
+
+  /* 목표 */
+  const addGoal = (g) => {
+    setState((prev) => {
+      const p0 = Math.round(goalProgress(g, prev) * 100);
+      queueMicrotask(() => showToast({ msg: `목표 생성 · 시작 진행률 ${p0}%${g.deadline ? ` · ${ddayStr(g.deadline)}` : " · 기한 없음"}` }));
+      return { ...prev, goals: [g, ...(prev.goals || [])] };
+    });
+    setModal(null);
+  };
+  const removeGoal = (id) => setState((prev) => ({ ...prev, goals: prev.goals.filter((g) => g.id !== id) }));
+  const goalStatus = (id, status) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const g = s.goals.find((x) => x.id === id);
+      if (g) g.status = status;
+      if (status === "done" && g) {
+        s.metrics.infl = statClamp(s.metrics.infl + 4);
+        s.metrics.asset = statClamp(s.metrics.asset + 2);
+        queueMicrotask(() => setOverlay({ type: "achieve", name: g.title, tier: "A", kind: "rank" }));
+      }
+      return s;
+    });
+  };
+  const checkinKR = (goalId, krId, value) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const g = s.goals.find((x) => x.id === goalId);
+      const kr = g?.krs.find((k) => k.id === krId);
+      if (!(kr && kr.type === "metric" && Number.isFinite(value)) || kr.current === value) return prev;
+      const from = Math.round(goalProgress(g, prev) * 100);
+      kr.current = value;
+      const to = Math.round(goalProgress(g, s) * 100);
+      if (to !== from) queueMicrotask(() => showToast({ msg: `체크인 · 🎯 ${g.title} ${from}% → ${to}%` }));
+      return s;
+    });
+  };
+  const certKrDone = (goalId, krId) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const kr = s.goals.find((g) => g.id === goalId)?.krs.find((k) => k.id === krId);
+      if (kr) kr.done = true;
+      return s;
+    });
+    showToast({ msg: "취득 완료로 기록했어요" });
+  };
+  const saveMetrics = (v) => {
+    setState((prev) => ({ ...prev, metrics: { asset: statClamp(v.asset), infl: statClamp(v.infl), body: statClamp(v.body) } }));
+    setModal(null);
+    showToast({ msg: "지표를 갱신했어요" });
+  };
+
+  const setPartDir = (partId, dirs) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const p = s.parts.find((x) => x.id === partId);
+      if (p) p.dir = dirs;
+      return s;
+    });
+  };
+
+  const resetAll = async () => {
+    await store.del(KEY);
+    setState(null); setPhase("onboard"); setTab("home");
+  };
+
+  if (phase === "loading") return <Shell><div className="p-10 text-center text-zinc-600 text-sm">불러오는 중...</div></Shell>;
+  if (phase === "onboard" || !state?.profile) {
+    return (
+      <Onboarding
+        onStart={({ parts, profile, exams, certBest }) => {
+          const s = freshState(parts);
+          s.profile = profile;
+          if (exams) s.exams = exams;
+          if (certBest) s.certBest = certBest;
+          setState(s); setPhase("main");
+        }}
+        onDemo={() => { setState(demoState()); setPhase("main"); }}
+      />
+    );
+  }
+
+  const rg = roleGap(state);
+
+  const NAV = [
+    ["home", "홈", Flag],
+    ["goals", "목표", Target],
+    ["quests", "퀘스트", ClipboardList],
+    ["growth", "성장", TrendingUp],
+  ];
+
+  return (
+    <Shell>
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+      <header className="px-5 pt-5 pb-3 flex items-center justify-between">
+        <div>
+          <div className="text-xs tracking-widest text-cyan-400 font-mono font-bold">LIFE MANAGER</div>
+          <div className="font-black">{state.profile.nick}<span className="text-zinc-600 text-xs font-normal"> · {state.profile.status}</span></div>
+        </div>
+        <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono font-bold">
+          <span className="text-amber-300">🔥 {state.act.streak}일</span>
+          <span className="w-px h-3 bg-zinc-700" />
+          <span className="text-zinc-300">🛡 {state.act.shieldsLeft}</span>
+        </div>
+      </header>
+
+      <main className="px-4 pb-24 space-y-4">
+        {tab === "home" && (
+          <HomeTab state={state} today={today} imgs={imgs} onUpload={askUpload} onClearImg={clearImg}
+            onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("quests")} />
+        )}
+        {tab === "goals" && (
+          <GoalsTab state={state}
+            onAddGoal={() => setModal({ type: "addGoal" })}
+            onCheckin={checkinKR} onCertDone={certKrDone}
+            onGoalStatus={goalStatus} onRemoveGoal={removeGoal}
+            onAddQuestFor={(gid) => setModal({ type: "addQuest", goalId: gid })} />
+        )}
+        {tab === "quests" && (
+          <QuestTab state={state} today={today}
+            onComplete={tryComplete} onRemove={removeQuest}
+            onCatalog={() => setModal({ type: "catalog" })}
+            onGoGoals={() => setTab("goals")}
+            onAddFor={(gid) => setModal({ type: "addQuest", goalId: gid })} />
+        )}
+        {tab === "growth" && (
+          <GrowthTab state={state} roleMatch={rg?.match ?? null}
+            onPromote={(part) => setModal({ type: "promote", part })}
+            onRoleModel={() => setModal({ type: "role" })}
+            onRoleAdvice={() => setModal({ type: "roleAdvice" })}
+            onReset={resetAll}
+            onMetrics={() => setModal({ type: "metrics" })} />
+        )}
+      </main>
+
+      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-4 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
+        {NAV.map(([k, label, Icon]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
+            <Icon size={18} /> {label}
+          </button>
+        ))}
+      </nav>
+
+      {modal?.type === "addQuest" && (
+        <AddQuestModal parts={state.parts} exams={state.exams} certBest={state.certBest} quests={state.quests}
+          goalId={modal.goalId} goal={state.goals.find((g) => g.id === modal.goalId)}
+          onClose={() => setModal(null)} onAdd={addQuest} />
+      )}
+      {modal?.type === "addGoal" && (
+        <AddGoalModal parts={state.parts} exams={state.exams} onClose={() => setModal(null)} onAdd={addGoal} />
+      )}
+      {modal?.type === "evidence" && (
+        <EvidenceModal quest={modal.quest} onClose={() => setModal(null)}
+          onSubmit={(ev) => completeQuest(modal.quest.id, ev)} />
+      )}
+      {modal?.type === "promote" && (
+        <PromoteModal part={modal.part} onClose={() => setModal(null)}
+          onSubmit={(ev) => promotePart(modal.part.id, ev)} />
+      )}
+      {modal?.type === "role" && (
+        <RoleModelModal state={state} onClose={() => setModal(null)}
+          onSave={(rm) => { setState((prev) => ({ ...prev, role: rm })); setModal(null); showToast({ msg: "롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다" }); }} />
+      )}
+      {modal?.type === "activity" && (
+        <ActivityLogModal quest={modal.quest} onClose={() => setModal(null)}
+          onSpawn={(t) => spawnQuest(t, modal.quest)}
+          onDone={(ev, measures) => { completeQuest(modal.quest.id, ev); applyMeasures(measures); }} />
+      )}
+      {modal?.type === "study" && (
+        <StudyVerifyModal quest={modal.quest} onClose={() => setModal(null)}
+          onDone={(ev) => completeQuest(modal.quest.id, ev)} />
+      )}
+      {modal?.type === "catalog" && (
+        <CatalogModal state={state} initialCat={modal.cat} onClose={() => setModal(null)} />
+      )}
+      {modal?.type === "roleAdvice" && (
+        <RoleAdviceModal state={state} onClose={() => setModal(null)}
+          onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setPartDir} />
+      )}
+      {modal?.type === "metrics" && (
+        <MetricsModal metrics={state.metrics} onClose={() => setModal(null)} onSave={saveMetrics} />
+      )}
+
+      {overlay && <Overlay data={overlay} onClose={() => setOverlay(null)} />}
+      {toast && (
+        <div className="fixed bottom-16 inset-x-0 flex justify-center px-4 z-50 pointer-events-none">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-full px-4 py-2 text-xs font-medium text-zinc-300 shadow-lg anim-pop max-w-sm text-center">
+            {toast.msg}
+          </div>
+        </div>
+      )}
+    </Shell>
+  );
+}
