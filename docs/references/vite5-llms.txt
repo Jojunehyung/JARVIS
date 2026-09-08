@@ -1,0 +1,31 @@
+# Vite 5 — curated notes for this repo
+Source: https://vite.dev/guide/ and https://vite.dev/config/ (retrieved 2026-09-08)
+Scope: dev server, production build, preview, and the single-file demo build (`vite.demo.config.js`).
+
+## Commands (root package.json)
+- `npm run dev` → `vite` — dev server with HMR on http://localhost:5173 (uses `index.html` as entry).
+- `npm run build` → `vite build` — Rollup production build into `dist/` (hashed assets, CSS extracted, `public/` copied verbatim).
+- `npm run preview` → `vite preview` — serves `dist/` statically. `tools/harness/verify.js` runs it with `--port <free> --strictPort` and polls for HTTP 200 before launching E2E.
+- `npm run build:demo` → `vite build --config vite.demo.config.js` — single-file HTML in `release/` (gitignored).
+
+## Requirements
+- Node 18+ (20+ recommended). Root `package.json` has `"type": "module"`, so `.js` files at the root are ESM; CommonJS tools need their own `package.json` with `"type": "commonjs"` (done for `tools/harness/` and `tools/e2e/`).
+- `@vitejs/plugin-react` provides JSX transform + Fast Refresh. Only files imported from `src/main.jsx` are bundled.
+
+## Config keys in use
+`vite.config.js` is the two-line default (`plugins: [react()]`). `vite.demo.config.js` sets:
+- `base: "./"` — relative asset URLs (needed for `file://`); `publicDir: false` — nothing from `public/` is copied (the icon is already a data URI in `index.html`).
+- `build.outDir: "release"`, `emptyOutDir: false`, `target: "es2020"`.
+- `build.cssCodeSplit: false` — one CSS asset; `assetsInlineLimit: 100_000_000` — every asset becomes a data URI.
+- `build.modulePreload: { polyfill: false }` — no preload polyfill in the bundle.
+- `build.rollupOptions.output`: `format: "iife"`, `inlineDynamicImports: true` — one classic script; IIFE output cannot use `import.meta`, so nothing in `src/` may reference `import.meta.env`.
+- Plugin `singleFileDemo` (`enforce: "post"`, `generateBundle` hook): replaces the `<script type="module">` tag with the chunk code placed just before `</body>` (classic scripts have no `defer`, so they must follow `#root`), inlines the CSS asset as `<style>`, strips `<link rel="manifest">`/`modulepreload`, warns if any non-`data:` `src`/`href` remains, and emits `life-demo.html`. Works from `file://` in Chrome/Edge on desktop and Android; iOS refuses script execution from `file://` → needs hosting.
+
+## `index.html` conventions
+- Entry `<script type="module" src="/src/main.jsx">`. Favicon/manifest as data URIs (`public/icon.svg` + inline) so the single-file demo has no external requests.
+- `import.meta.env.MODE` / `import.meta.env.DEV` are compile-time constants; do not reference them in the demo IIFE bundle.
+
+## Debugging build issues
+- `vite build --debug` for plugin timing; `--mode` to select `.env.<mode>`.
+- `vite preview --strictPort` fails instead of falling back to another port — the verify script relies on that to know which port it got.
+- Rollup warnings about chunk size are informational; the app is a single ~4.5k-line module by design (file split is a separate exec plan).

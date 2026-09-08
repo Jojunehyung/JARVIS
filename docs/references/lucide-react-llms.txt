@@ -1,0 +1,28 @@
+# lucide-react — curated notes for this repo
+Source: https://lucide.dev/guide/packages/lucide-react (retrieved 2026-09-08)
+Scope: icon usage in `src/LifeManager.jsx`; the only icon dependency.
+
+## Usage
+```jsx
+import {
+  Trophy, Target, Plus, X, Lock, RotateCcw, TrendingUp, Check, Star,
+  Flag, ClipboardList, Camera, Paperclip, Link as LinkIcon,
+} from "lucide-react";                       // the 14 icons the app imports today
+<Check size={16} strokeWidth={2.5} className="text-emerald-400" />
+```
+- Every icon is a React component rendering an inline `<svg>`; names are PascalCase (`ChevronRight`, `Trash2`, `BookOpen`). Search names at https://lucide.dev/icons.
+- Props: `size` (number | string, default 24 — sets width/height), `color` (default `currentColor`, so Tailwind `text-*` classes colour it), `strokeWidth` (default 2), `absoluteStrokeWidth`, plus any SVG attribute (`className`, `aria-hidden`, `style`).
+- Icons carry no `aria-*` attributes: add `aria-hidden="true"` on decorative icons and put the label on the surrounding button.
+
+## Tree-shaking and the finish scan
+- Named imports are tree-shaken by Vite/Rollup; unused imported icons still count as unused symbols in `tools/harness/finish-check.js` and block the Stop hook. Remove them.
+- Do not import the whole package (`import * as icons`) — that pulls ~1,500 icons into the bundle.
+- Renaming an import (`Link as LinkIcon`) is used where the icon name collides with a local identifier. `LinkIcon` was once removed while still referenced — the E2E run caught it; the finish scan now counts references to the alias.
+
+## Dynamic icons
+- `import { icons } from "lucide-react"; const Icon = icons[name]` for name-driven icons — not used; the app's icon set is the fixed named import above, and task kinds/grades are shown with text badges rather than icons.
+- `createLucideIcon(name, iconNode)` builds a custom icon from path data — the project draws its bespoke art (`PortraitSprite`, `TrophySvg`, empty-state illustrations) as plain SVG components instead.
+
+## Version notes
+- Icon names can change between releases (e.g. some `*2` variants renamed). Pin the version in package.json and check the changelog before bumping; a missing export fails at build time, not at runtime.
+- Package is ESM + CJS; Vite resolves the ESM build.

@@ -2037,6 +2037,32 @@ const jobWeightForCert = (state, areaId, cert) => {
 };
 
 /* ── 상태 수명 ── */
+/**
+ * @schema v14 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
+ * {
+ *   v: 14,
+ *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
+ *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
+ *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
+ *             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
+ *             isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?,
+ *             kind?("book"|"fit"|"meet"), createdAt }],
+ *   goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
+ *             krs: [{ id, type:"metric", title, start, target, current, unit }
+ *                 | { id, type:"count",  title, need }
+ *                 | { id, type:"exam",   title, famId, band{label,d,p,conf} }
+ *                 | { id, type:"cert",   title, certName, done? }] }],
+ *   act: { streak, lastActive, shieldMonth, shieldsLeft },   // shields: 2 per month, one consumed per missed day
+ *   metrics: { asset, infl, body },                           // 0-100; body = appearance (exercise/care), self-assessed only
+ *   exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
+ *   certBest: { sg: { p, name, d } },
+ *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
+ *   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
+ *   lastTick, dModel
+ * }
+ * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`).
+ */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
   if (typeof s.v !== "number") s = { ...s, v: 0 }; // v 도입 이전 세이브: 모든 블록을 건너뛰고 미변환 상태로 진입하던 문제 방어

@@ -1,42 +1,275 @@
 {
-  "_doc": "Source-coverage contract for the Korean → English doc migration. Every id must appear as an HTML comment marker <!-- src: ID --> in its destination file(s). status: pending | migrated | dropped(reason).",
+  "_doc": "Source-coverage contract for the Korean → English doc migration. Every id must appear as an HTML comment marker <!-- src: ID --> in its destination file(s). status: pending | partial (…) | migrated | generated | dropped(reason).",
   "sources": {
-    "CL-1":  { "from": "CLAUDE.md §1 concept",            "to": ["docs/PRODUCT_SENSE.md"],                                   "status": "pending" },
-    "CL-2":  { "from": "CLAUDE.md §2 status",             "to": ["ARCHITECTURE.md"],                                          "status": "pending" },
-    "CL-3":  { "from": "CLAUDE.md §3 storage shim / no AI","to": ["ARCHITECTURE.md", "docs/PRODUCT_SENSE.md"],                "status": "pending" },
-    "CL-4":  { "from": "CLAUDE.md §4 symbol map",         "to": ["ARCHITECTURE.md"],                                          "status": "pending" },
-    "CL-5":  { "from": "CLAUDE.md §5 rules 1–19",         "to": ["docs/design-docs/core-beliefs.md"],                         "status": "pending" },
-    "CL-6":  { "from": "CLAUDE.md §6 schema",             "to": ["docs/generated/db-schema.md (via @schema block)"],           "status": "pending" },
-    "CL-7":  { "from": "CLAUDE.md §7 backlog",            "to": ["docs/exec-plans/backlog.md"],                               "status": "pending" },
-    "CL-8":  { "from": "CLAUDE.md §8 conventions",        "to": ["docs/FRONTEND.md"],                                         "status": "pending" },
-    "PL":    { "from": "PLANNING.md",                     "to": ["docs/PRODUCT_SENSE.md", "docs/product-specs/scenario-harness-engineer.md"], "status": "pending" },
-    "KP":    { "from": "KICKOFF_PROMPT.md example prompts","to": ["docs/PLANS.md"],                                            "status": "pending" },
-    "KD":    { "from": "클로드디자인_프롬프트.txt",          "to": ["docs/DESIGN.md"],                                           "status": "pending" },
-    "E2E":   { "from": "tools/e2e/README.md",             "to": ["docs/RELIABILITY.md"],                                      "status": "pending" },
-    "SPEC-0":  { "from": "spec ch0 doc info + revision log",   "to": ["docs/design-docs/decision-log.md"],                    "status": "pending" },
-    "SPEC-1":  { "from": "spec ch1 product overview",        "to": ["docs/PRODUCT_SENSE.md"],                                 "status": "pending" },
-    "SPEC-2":  { "from": "spec ch2 target users + scenario", "to": ["docs/product-specs/scenario-harness-engineer.md"],       "status": "pending" },
-    "SPEC-3":  { "from": "spec ch3 information architecture","to": ["docs/design-docs/information-architecture.md", "docs/product-specs/index.md"], "status": "pending" },
-    "SPEC-4-1":{ "from": "spec 4-1 onboarding",              "to": ["docs/product-specs/new-user-onboarding.md"],             "status": "pending" },
-    "SPEC-4-2":{ "from": "spec 4-2 home",                    "to": ["docs/product-specs/home.md"],                            "status": "pending" },
-    "SPEC-4-3":{ "from": "spec 4-3 goals",                   "to": ["docs/product-specs/goals.md"],                           "status": "pending" },
-    "SPEC-4-4":{ "from": "spec 4-4 tasks + catalog",         "to": ["docs/product-specs/tasks.md"],                           "status": "pending" },
-    "SPEC-4-5":{ "from": "spec 4-5 growth",                  "to": ["docs/product-specs/growth.md"],                          "status": "pending" },
-    "SPEC-4-6":{ "from": "spec 4-6 evidence/activity/study modals", "to": ["docs/product-specs/evidence-modals.md"],        "status": "pending" },
-    "SPEC-4-7":{ "from": "spec 4-7 overlays/toast",          "to": ["docs/product-specs/feedback-overlays.md"],               "status": "pending" },
-    "SPEC-5":  { "from": "spec ch5 engine specs",            "to": ["docs/design-docs/scoring-engine.md", "docs/design-docs/job-weighting.md", "docs/design-docs/goal-engine.md", "docs/design-docs/evidence-and-promotion.md", "docs/design-docs/metrics-and-role-model.md"], "status": "pending" },
-    "SPEC-6":  { "from": "spec ch6 data model",              "to": ["docs/design-docs/state-lifecycle.md", "docs/generated/db-schema.md"], "status": "pending" },
-    "SPEC-7":  { "from": "spec ch7 demo data",               "to": ["docs/design-docs/demo-data.md"],                          "status": "pending" },
-    "SPEC-8":  { "from": "spec ch8 design + tone",           "to": ["docs/DESIGN.md"],                                         "status": "pending" },
-    "SPEC-9":  { "from": "spec ch9 rule verdicts",           "to": ["docs/QUALITY_SCORE.md"],                                  "status": "pending" },
-    "SPEC-10": { "from": "spec ch10 tech architecture",      "to": ["ARCHITECTURE.md", "docs/FRONTEND.md", "docs/RELIABILITY.md"], "status": "pending" },
-    "SPEC-11": { "from": "spec ch11 current issues",         "to": ["docs/exec-plans/tech-debt-tracker.md"],                   "status": "pending" },
-    "SPEC-12": { "from": "spec ch12 roadmap",                "to": ["docs/exec-plans/backlog.md", "docs/PLANS.md"],            "status": "pending" },
-    "SPEC-13": { "from": "spec ch13 decision history",       "to": ["docs/design-docs/decision-log.md"],                       "status": "pending" },
-    "SPEC-A":  { "from": "spec appendix A symbol index",     "to": ["docs/generated/symbol-index.md"],                         "status": "generated" },
-    "SPEC-B":  { "from": "spec appendix B CERTS table",      "to": ["docs/generated/cert-table.md"],                           "status": "generated" },
-    "SPEC-C":  { "from": "spec appendix C EXAMS",            "to": ["docs/generated/exam-table.md"],                           "status": "generated" },
-    "SPEC-D":  { "from": "spec appendix D weight matrix",    "to": ["docs/generated/weight-matrix.md"],                        "status": "generated" },
-    "SPEC-E":  { "from": "spec appendix E onboarding tables","to": ["docs/generated/onboarding-tables.md"],                    "status": "generated" }
+    "CL-1": {
+      "from": "CLAUDE.md §1 concept",
+      "to": [
+        "docs/PRODUCT_SENSE.md"
+      ],
+      "status": "migrated"
+    },
+    "CL-2": {
+      "from": "CLAUDE.md §2 status",
+      "to": [
+        "ARCHITECTURE.md"
+      ],
+      "status": "migrated"
+    },
+    "CL-3": {
+      "from": "CLAUDE.md §3 storage shim / no AI",
+      "to": [
+        "ARCHITECTURE.md",
+        "docs/PRODUCT_SENSE.md"
+      ],
+      "status": "migrated"
+    },
+    "CL-4": {
+      "from": "CLAUDE.md §4 symbol map",
+      "to": [
+        "ARCHITECTURE.md"
+      ],
+      "status": "migrated"
+    },
+    "CL-5": {
+      "from": "CLAUDE.md §5 rules 1–19",
+      "to": [
+        "docs/design-docs/core-beliefs.md"
+      ],
+      "status": "migrated"
+    },
+    "CL-6": {
+      "from": "CLAUDE.md §6 schema",
+      "to": [
+        "docs/generated/db-schema.md (via @schema block)"
+      ],
+      "status": "migrated"
+    },
+    "CL-7": {
+      "from": "CLAUDE.md §7 backlog",
+      "to": [
+        "docs/exec-plans/backlog.md"
+      ],
+      "status": "migrated"
+    },
+    "CL-8": {
+      "from": "CLAUDE.md §8 conventions",
+      "to": [
+        "docs/FRONTEND.md"
+      ],
+      "status": "migrated"
+    },
+    "PL": {
+      "from": "PLANNING.md",
+      "to": [
+        "docs/PRODUCT_SENSE.md",
+        "docs/product-specs/scenario-harness-engineer.md"
+      ],
+      "status": "migrated"
+    },
+    "KP": {
+      "from": "KICKOFF_PROMPT.md example prompts",
+      "to": [
+        "docs/PLANS.md"
+      ],
+      "status": "migrated"
+    },
+    "KD": {
+      "from": "클로드디자인_프롬프트.txt",
+      "to": [
+        "docs/DESIGN.md"
+      ],
+      "status": "migrated"
+    },
+    "E2E": {
+      "from": "tools/e2e/README.md",
+      "to": [
+        "docs/RELIABILITY.md"
+      ],
+      "status": "migrated"
+    },
+    "SPEC-0": {
+      "from": "spec ch0 doc info + revision log",
+      "to": [
+        "docs/design-docs/decision-log.md"
+      ],
+      "status": "migrated"
+    },
+    "SPEC-1": {
+      "from": "spec ch1 product overview",
+      "to": [
+        "docs/PRODUCT_SENSE.md"
+      ],
+      "status": "migrated"
+    },
+    "SPEC-2": {
+      "from": "spec ch2 target users + scenario",
+      "to": [
+        "docs/product-specs/scenario-harness-engineer.md"
+      ],
+      "status": "migrated"
+    },
+    "SPEC-3": {
+      "from": "spec ch3 information architecture",
+      "to": [
+        "docs/design-docs/information-architecture.md",
+        "docs/product-specs/index.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-4-1": {
+      "from": "spec 4-1 onboarding",
+      "to": [
+        "docs/product-specs/new-user-onboarding.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-4-2": {
+      "from": "spec 4-2 home",
+      "to": [
+        "docs/product-specs/home.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-4-3": {
+      "from": "spec 4-3 goals",
+      "to": [
+        "docs/product-specs/goals.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-4-4": {
+      "from": "spec 4-4 tasks + catalog",
+      "to": [
+        "docs/product-specs/tasks.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-4-5": {
+      "from": "spec 4-5 growth",
+      "to": [
+        "docs/product-specs/growth.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-4-6": {
+      "from": "spec 4-6 evidence/activity/study modals",
+      "to": [
+        "docs/product-specs/evidence-modals.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-4-7": {
+      "from": "spec 4-7 overlays/toast",
+      "to": [
+        "docs/product-specs/feedback-overlays.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-5": {
+      "from": "spec ch5 engine specs",
+      "to": [
+        "docs/design-docs/scoring-engine.md",
+        "docs/design-docs/job-weighting.md",
+        "docs/design-docs/goal-engine.md",
+        "docs/design-docs/evidence-and-promotion.md",
+        "docs/design-docs/metrics-and-role-model.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-6": {
+      "from": "spec ch6 data model",
+      "to": [
+        "docs/design-docs/state-lifecycle.md",
+        "docs/generated/db-schema.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-7": {
+      "from": "spec ch7 demo data",
+      "to": [
+        "docs/design-docs/demo-data.md"
+      ],
+      "status": "pending"
+    },
+    "SPEC-8": {
+      "from": "spec ch8 design + tone",
+      "to": [
+        "docs/DESIGN.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-9": {
+      "from": "spec ch9 rule verdicts",
+      "to": [
+        "docs/QUALITY_SCORE.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-10": {
+      "from": "spec ch10 tech architecture",
+      "to": [
+        "ARCHITECTURE.md",
+        "docs/FRONTEND.md",
+        "docs/RELIABILITY.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-11": {
+      "from": "spec ch11 current issues",
+      "to": [
+        "docs/exec-plans/tech-debt-tracker.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-12": {
+      "from": "spec ch12 roadmap",
+      "to": [
+        "docs/exec-plans/backlog.md",
+        "docs/PLANS.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-13": {
+      "from": "spec ch13 decision history",
+      "to": [
+        "docs/design-docs/decision-log.md"
+      ],
+      "status": "partial (Phase 4 completes)"
+    },
+    "SPEC-A": {
+      "from": "spec appendix A symbol index",
+      "to": [
+        "docs/generated/symbol-index.md"
+      ],
+      "status": "generated"
+    },
+    "SPEC-B": {
+      "from": "spec appendix B CERTS table",
+      "to": [
+        "docs/generated/cert-table.md"
+      ],
+      "status": "generated"
+    },
+    "SPEC-C": {
+      "from": "spec appendix C EXAMS",
+      "to": [
+        "docs/generated/exam-table.md"
+      ],
+      "status": "generated"
+    },
+    "SPEC-D": {
+      "from": "spec appendix D weight matrix",
+      "to": [
+        "docs/generated/weight-matrix.md"
+      ],
+      "status": "generated"
+    },
+    "SPEC-E": {
+      "from": "spec appendix E onboarding tables",
+      "to": [
+        "docs/generated/onboarding-tables.md"
+      ],
+      "status": "generated"
+    }
   }
 }

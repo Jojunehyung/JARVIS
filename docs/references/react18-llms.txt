@@ -1,0 +1,38 @@
+# React 18 — curated notes for this repo
+Source: https://react.dev/reference/react (retrieved 2026-09-08)
+Scope: the hooks and patterns `src/LifeManager.jsx` relies on; see docs/FRONTEND.md for project conventions.
+
+## Entry
+- `import { createRoot } from "react-dom/client"; createRoot(document.getElementById("root")).render(<StrictMode><App /></StrictMode>)` (src/main.jsx).
+- StrictMode (dev only) mounts → unmounts → remounts components and double-invokes render/state-updater functions to surface impure code. Effects that load `store` therefore run twice in dev; they must be idempotent (they are — load is read-only, writes are keyed).
+
+## State
+- `useState`; updates from the functional form `setState(prev => …)`. The project pattern: `setState(prev => { const s = structuredClone(prev); …mutate s…; return s; })` — never mutate `prev`.
+- Automatic batching (React 18): multiple `setState` calls in the same tick (event handlers, timeouts, promises) produce one render. Do not rely on intermediate renders between sequential `setState` calls.
+- To run follow-up UI (toast, overlay) after a state change the code queues it (`queueMicrotask`, `setTimeout`) rather than reading state right after `setState`.
+- `structuredClone` is a browser global (Chrome 98+, Safari 15.4+); the demo targets current mobile browsers.
+
+## Effects
+- `useEffect(fn, deps)` — runs after paint; return a cleanup. Effects for persistence: `useEffect(() => { if (phase === "main") store.set(KEY, state); }, [state])`.
+- Effects that set timers must clear them in cleanup; overlays auto-dismiss this way.
+- `useLayoutEffect` is not used (no measurement-dependent layout).
+
+## Hooks in use
+`useState`, `useEffect`, `useMemo`, `useRef`, `useId`, `forwardRef`, `useImperativeHandle` (see the import line at the top of `src/LifeManager.jsx`). Not used: `useCallback`, `useLayoutEffect`, `useContext`, `useReducer`.
+- `useMemo(() => expensive(list, filter), [list, filter])` — filtered catalogue lists and per-goal task groups; the dependency array must list every value read.
+- `useDeferredValue`/`useTransition` were tried for the catalogue search and removed: interleaved A/B measurement showed no gain, and the row cap (60) solved the DOM cost.
+- `useId()` — stable unique ids for SVG gradient/clip ids (`PortraitSprite`) so multiple instances do not collide.
+- `forwardRef` + `useImperativeHandle` — a parent triggers a child's imperative action (open/focus) without lifting its state.
+
+## Lists and keys
+- Keys must be stable ids (`uid()`), never array indices, for tasks/goals/KRs — reordering and deletion rely on it.
+- Conditional rendering with `&&` must guard numbers: `{count > 0 && …}` not `{count && …}` (renders "0").
+
+## Events and forms
+- Synthetic events are pooled no more (React 17+); async access is safe.
+- File inputs are uncontrolled: read `e.target.files[0]`, then `resizeImage` (`Image` + `URL.createObjectURL` → canvas cover-crop to 256×320 → `toDataURL("image/jpeg", 0.82)`) → data URL stored via `store` under a `liferpg-img-*` key.
+- If Enter-to-submit is ever added to a text input, check `e.nativeEvent.isComposing` first — Korean IME composition fires a synthetic Enter in some browsers.
+
+## Common pitfalls
+- Reading state inside a `setTimeout` closure gives the value at scheduling time; use the functional updater or a ref.
+- `JSON.stringify` of state for persistence drops `undefined` fields — the schema treats optional fields as absent, never `undefined`-significant.

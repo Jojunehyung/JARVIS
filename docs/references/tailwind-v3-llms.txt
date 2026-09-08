@@ -1,0 +1,24 @@
+# Tailwind CSS v3 — curated notes for this repo
+Source: https://v3.tailwindcss.com/docs (retrieved 2026-09-08)
+Scope: why the project is pinned to v3 and which utility families the UI uses. Rule: core utilities only, no arbitrary-value syntax (`w-[13px]`), no plugins.
+
+## Setup (PostCSS)
+- `tailwind.config.js`: `content: ["./index.html", "./src/**/*.{js,jsx}"]` — classes are discovered by scanning these files as text. Classes built by string concatenation at runtime are NOT discovered; always write full class names in the source (a lookup table of complete strings is fine).
+- `postcss.config.js`: `tailwindcss` + `autoprefixer`. `src/index.css` contains `@tailwind base; @tailwind components; @tailwind utilities;` plus one rule (`html, body { background: #09090b }`). `theme.extend` is empty and `plugins: []` — the default palette and scale are used unchanged.
+- JIT is the only mode in v3: every utility, every variant, on demand.
+
+## Why not v4
+- The app uses `bg-opacity-*` / `text-opacity-*` / `border-opacity-*` utilities. v4 removed them in favour of the `bg-black/50` slash syntax and dropped several core defaults (border colour, ring width). Migrating is a visual audit of every screen — deferred; see the tech-debt tracker. Do not run the v4 upgrade tool.
+
+## Utility families in use
+- Layout: `flex`, `grid grid-cols-N`, `gap-N`, `items-*`, `justify-*`, `flex-1`, `shrink-0`, `min-w-0`, `truncate`, `overflow-hidden`, `overflow-y-auto`, `fixed/absolute/relative`, `inset-0`, `z-N`.
+- Spacing/size: `p-N px-N py-N`, `m-N`, `w-N h-N`, `w-full`, `max-w-md`, `max-h-96` — pick the nearest scale step; arbitrary values (`max-h-[70vh]`) are forbidden by project rule.
+- Typography: `text-xs … text-2xl`, `font-medium/semibold/bold`, `tracking-tight`, `leading-snug`, `tabular-nums`, `whitespace-pre-line`.
+- Colour: palette utilities (`bg-slate-900`, `text-emerald-400`) with `bg-opacity-10/50/80` and `border-opacity-30` for translucency (11 occurrences — the v4 blocker). The v3 slash syntax (`bg-white/10`) is also valid but not used; keep one style per file.
+- Effects: `rounded-*`, `shadow-*`, `ring-N ring-color`, `backdrop-blur-sm`, `opacity-N`, `transition`, `duration-N`, `animate-pulse`, `animate-spin`.
+- State/variants: `hover:`, `active:`, `disabled:`, `focus:`, `group`/`group-hover:`, `first:`, `last:`, `sm:`/`md:` breakpoints (mobile-first; the app is designed for a 390–430 px phone width).
+
+## Conventions (see docs/FRONTEND.md)
+- Class order: layout → spacing → typography → colour → effects → variants (readability only; no linter enforces it).
+- Conditional classes via template strings with complete class names: ``className={`px-3 py-2 ${on ? "bg-emerald-500" : "bg-slate-700"}`}``.
+- Design tokens (colours, radii, type scale) are described in docs/DESIGN.md as Tailwind class names, so the design doc and the code share one vocabulary.

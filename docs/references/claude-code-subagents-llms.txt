@@ -1,0 +1,41 @@
+# Claude Code subagents — curated notes for this repo
+Source: https://docs.claude.com/en/docs/claude-code/sub-agents (retrieved 2026-09-08)
+Scope: the mechanics `.claude/agents/*.md` and `AGENTS.md` §3 rely on.
+
+## Definition files
+- Project agents: `.claude/agents/<name>.md` (committed, highest priority). User agents: `~/.claude/agents/`. A project agent shadows a user agent with the same name.
+- Markdown with YAML frontmatter, body = system prompt:
+  ```
+  ---
+  name: cleanup
+  description: Mandatory last step after any code change. Use PROACTIVELY ...
+  tools: Read, Edit, Grep, Glob, Bash
+  model: sonnet
+  ---
+  <system prompt>
+  ```
+- `name`: lowercase, hyphens. `description`: when to use it — Claude reads this to auto-delegate, so phrase it as a routing rule ("Use FIRST when ...", "MUST BE USED after ..."). `tools`: comma-separated allowlist; omit to inherit every tool of the main session (including MCP tools). `model`: `sonnet` | `opus` | `haiku` | `inherit` (default inherit).
+
+## Runtime facts
+- Each subagent runs in its own context window with its own system prompt; it does not see the main conversation. Everything it needs must be in the delegation prompt (file paths, plan path, rule numbers).
+- Only the subagent's final message returns to the caller. Intermediate tool output is not shown to the user — the caller must relay what matters.
+- Subagents cannot spawn subagents. Chains (planner → implementer → cleanup → verifier) are orchestrated by the main agent, which is why `AGENTS.md` §3 lists the "must end with" column.
+- Invocation: automatic (Claude matches the task to `description`) or explicit ("use the verifier subagent to ..."). `/agents` lists, creates and edits them interactively.
+- Tool permissions inside a subagent follow the same permission rules as the main session (`.claude/settings.json` `permissions.allow`).
+- Hooks fire for subagent tool calls too (PreToolUse/PostToolUse); `SubagentStop` exists but this repo does not use it. The `Stop` hook fires only for the main agent.
+
+## This repo's agents (`AGENTS.md` §3 is canonical)
+| name | role | model |
+|---|---|---|
+| planner | writes the program-specific prompt + exec plan before any edit | inherit |
+| implementer | executes an approved exec plan | inherit |
+| verifier | `npm run verify` (build → preview → E2E → smoke), reports only | sonnet |
+| cleanup | dead/duplicate-code pass until `npm run finish` exits 0 | sonnet |
+| reviewer | read-only review against the 19 rules; translation fidelity | inherit |
+| data-curator | sole editor of CERTS/EXAMS/WEIGHT_MATRIX/CERT_W_EXC/DIR_* (sets `HARNESS_DATA_EDIT=1`) | inherit |
+| docs-syncer | regenerates `docs/generated/*`, moves plans active → completed | sonnet |
+
+## Writing a good delegation prompt
+1. Name the exec plan file and the rule numbers it touches.
+2. State the hard limits (no data-table edits, no UI copy changes, no `store` call-site changes).
+3. Ask for a specific output shape (list of files changed, failing step names, proposed commit message).

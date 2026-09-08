@@ -1,0 +1,37 @@
+# puppeteer-core — curated notes for this repo
+Source: https://pptr.dev/api (retrieved 2026-09-08)
+Scope: the API surface used by tools/e2e (run.js, bench-lib.js, ab.js, flow*.js). `puppeteer-core` ships no browser; we launch the installed Chrome or Edge.
+
+## Launch
+```js
+const puppeteer = require("puppeteer-core");
+const browser = await puppeteer.launch({          // tools/e2e/run.js
+  executablePath: CHROME,    // required for puppeteer-core (no bundled browser)
+  headless: !HEADFUL,        // --headful shows the window
+  args: ["--no-sandbox", "--window-size=430,932"],
+  defaultViewport: { width: 430, height: 932, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
+});
+```
+- Windows candidates: `C:\Program Files\Google\Chrome\Application\chrome.exe`, `C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`, `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe` (E2E probes these in order; `--chrome <path>` overrides).
+- No `userDataDir` → Puppeteer creates a temporary profile per launch, so `localStorage` starts empty on every run.
+- Always `browser.close()` in `finally`; the verify script additionally kills the preview server.
+
+## Page basics
+- `page.goto(url, { waitUntil: "networkidle2", timeout: 60000 })`; `page.reload({ waitUntil: "networkidle2" })` for the persistence step (coverage is stashed before and restarted after a reload).
+- `page.waitForSelector(sel, { visible: true, timeout })`; `page.waitForFunction(fn, opts, ...args)` for text-based waits.
+- `page.$(sel)`, `page.$$(sel)`, `page.$eval(sel, el => …)`, `page.$$eval(sel, els => …)`, `page.evaluate(fn, ...args)` — args must be serialisable; return values too.
+- `page.click(sel)`, `elementHandle.click()`, `page.type(sel, text, { delay })`, `page.keyboard.press("Enter")`, `page.select()`.
+- Text-based targeting: there is no `:contains`. The harness finds elements by `textContent` inside `page.evaluate` and clicks the returned handle (`clickTab`, `clickInModal`, `clickInModalExact`), so selectors are Korean UI strings — never translate them.
+- File upload: `const input = await page.$('input[type=file]'); await input.uploadFile(path)` — used for evidence photos (`submitPhotoEvidence`). Puppeteer sets the files and dispatches `change`.
+
+## Diagnostics
+- `page.on("console", msg => …)` (`msg.type()`, `msg.text()`), `page.on("pageerror", err => …)`, `page.on("requestfailed", …)` — the run fails on any console error.
+- `page.screenshot({ path, fullPage })` per failed step into `tools/e2e/out/`.
+- Coverage: `await page.coverage.startJSCoverage({ resetOnNavigation: false, includeRawScriptCoverage: true })` → `stopJSCoverage()` returns `[{ url, text, ranges, rawScriptCoverage }]`; see `tools/e2e/README.md` for how the harness turns ranges into the reported percentage.
+- Performance: `page.emulateCPUThrottling(4)`, `page.metrics()`, `performance.now()` inside `evaluate`. Measure A/B builds interleaved in the same process (`ab.js`) — single runs drift ±50 % with machine load.
+- `page.setDefaultTimeout(ms)` sets one timeout for all waits.
+
+## Gotchas
+- `headless: true` maps to the new headless in Puppeteer ≥ 22; older versions need `"new"` explicitly.
+- Puppeteer's bundled Chrome revision does not matter for `puppeteer-core`, but a very new Chrome with a very old puppeteer-core can break the CDP protocol — keep the package current.
+- `localStorage` is per origin: the preview port changes each verify run, so state never leaks between runs; the demo file uses the `file://` origin.

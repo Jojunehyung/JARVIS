@@ -10,7 +10,32 @@
 
 ## Field reference
 
-_No `/** @schema */` block found above `migrate` — add one (Phase 2) to document fields here._
+```js
+@schema v14 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+`tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
+{
+  v: 14,
+  profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
+  areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
+  tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
+            type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
+            isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?,
+            kind?("book"|"fit"|"meet"), createdAt }],
+  goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
+            krs: [{ id, type:"metric", title, start, target, current, unit }
+                | { id, type:"count",  title, need }
+                | { id, type:"exam",   title, famId, band{label,d,p,conf} }
+                | { id, type:"cert",   title, certName, done? }] }],
+  act: { streak, lastActive, shieldMonth, shieldsLeft },   // shields: 2 per month, one consumed per missed day
+  metrics: { asset, infl, body },                           // 0-100; body = appearance (exercise/care), self-assessed only
+  exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
+  certBest: { sg: { p, name, d } },
+  room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
+  role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
+  lastTick, dModel
+}
+Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`).
+```
 
 ## Fresh-state defaults (`freshState`)
 
@@ -95,13 +120,13 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1225 | 저장소 (localStorage + 메모리 폴백) — §3-1 시밍 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3013 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
-| `liferpg-img-study-${task.id}-1` | 3013 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
-| `liferpg-img-study-${task.id}-2` | 3013 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
-| `liferpg-img-profile` | 4126 | 앱 루트 |
-| `liferpg-img-${slot}` | 4146 | 앱 루트 |
-| `liferpg-img-ev-${id}` | 4169 | 앱 루트 |
-| `liferpg-img-ev-${t.id}` | 4403 | 앱 루트 |
+| `liferpg-img-ev-${task.id}` | 3039 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
+| `liferpg-img-study-${task.id}-1` | 3039 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
+| `liferpg-img-study-${task.id}-2` | 3039 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
+| `liferpg-img-profile` | 4152 | 앱 루트 |
+| `liferpg-img-${slot}` | 4172 | 앱 루트 |
+| `liferpg-img-ev-${id}` | 4195 | 앱 루트 |
+| `liferpg-img-ev-${t.id}` | 4429 | 앱 루트 |
 
 ## Demo data (`demoState`)
 

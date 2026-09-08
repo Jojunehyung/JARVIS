@@ -1,0 +1,41 @@
+# Claude Code hooks — curated notes for this repo
+Source: https://docs.claude.com/en/docs/claude-code/hooks (retrieved 2026-09-08)
+Scope: only what tools/harness/*.js and .claude/settings.json rely on. Verify against upstream before depending on anything not listed here.
+
+## Where hooks live
+- `.claude/settings.json` (project, committed) — this repo. Also `~/.claude/settings.json` (user) and `.claude/settings.local.json` (personal, gitignored).
+- Structure: `"hooks": { "<Event>": [ { "matcher": "<regex over tool name>", "hooks": [ { "type": "command", "command": "<shell>", "timeout": <seconds> } ] } ] }`.
+- `matcher` applies to tool events only (PreToolUse/PostToolUse). Omit it for UserPromptSubmit/Stop. `"Edit|Write|MultiEdit"` is a regex alternation.
+- Commands run through the user's shell (Git Bash on this Windows machine). `$CLAUDE_PROJECT_DIR` expands to the project root; quote it because the path contains non-ASCII characters.
+
+## Events used here
+| Event | When | Our hook |
+|---|---|---|
+| `UserPromptSubmit` | before Claude sees the prompt | `prompt-first.js` — injects the prompt-first protocol when the prompt matches a request pattern |
+| `PreToolUse` | before a tool call runs | `data-guard.js` (Edit\|MultiEdit) — denies edits to frozen data rows unless `HARNESS_DATA_EDIT=1` |
+| `PostToolUse` | after a tool call succeeds | `lang-check.js --hook` (Edit\|Write\|MultiEdit) — warns about Korean comments in `src/` and `tools/` |
+| `Stop` | when the main agent is about to finish its turn | `finish-check.js --hook` — blocks until the dead/duplicate scan is clean (capped) |
+
+Other events (not used): `SubagentStop`, `Notification`, `SessionStart`, `SessionEnd`, `PreCompact`.
+
+## Input (stdin JSON)
+Common: `session_id`, `transcript_path`, `cwd`, `hook_event_name`.
+- UserPromptSubmit: `prompt`.
+- PreToolUse: `tool_name`, `tool_input` (for Edit: `file_path`, `old_string`, `new_string`).
+- PostToolUse: `tool_name`, `tool_input`, `tool_response`.
+- Stop: `stop_hook_active` — true when Claude is already continuing because of a Stop hook. Check it to avoid infinite loops.
+
+## Output contract
+- Exit 0: stdout is shown (UserPromptSubmit/SessionStart stdout is added as context), or parsed as JSON when it is valid JSON.
+- Exit 2: blocking error; stderr is fed back to Claude. Any other non-zero exit: non-blocking, stderr shown to the user.
+- JSON fields (exit 0): `continue` (false stops Claude entirely), `stopReason`, `suppressOutput`, `decision` (`"block"` for Stop/PostToolUse) + `reason`, and `hookSpecificOutput`:
+  - UserPromptSubmit: `{ "hookEventName": "UserPromptSubmit", "additionalContext": "..." }`
+  - PreToolUse: `{ "hookEventName": "PreToolUse", "permissionDecision": "allow" | "deny" | "ask", "permissionDecisionReason": "..." }`
+  - PostToolUse: `{ "hookEventName": "PostToolUse", "additionalContext": "..." }`
+- Stop + `{"decision":"block","reason":"..."}` makes Claude keep working with `reason` as the instruction. Our finish-check blocks at most twice per session (`.claude/harness-state/finish-<session>.json`), then writes `tools/harness/out/finish-report.md` and exits 0 so the session can never be trapped.
+
+## Behaviour notes
+- Hooks are snapshotted at session start; editing `settings.json` needs a new session (or `/hooks`) to take effect.
+- Timeouts: per-hook `timeout` in seconds (default 60). Parallel hooks for the same event run concurrently.
+- Any internal error in our scripts exits 0 on purpose — a broken hook must degrade to "no-op", never to "session stuck".
+- Manual test commands (Git Bash): `echo '{"prompt":"메뉴 고쳐줘"}' | node tools/harness/prompt-first.js`; `echo '{"session_id":"t","stop_hook_active":false}' | node tools/harness/finish-check.js --hook`.
