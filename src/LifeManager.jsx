@@ -2054,6 +2054,34 @@ const jobWeightForCert = (state, areaId, cert) => {
 };
 
 /* ───────────────────────── Daily assistant — agenda · briefing · bridge ───────────────────────── */
+// Standard achievements that would close each role-model gap. Shared by RoleAdviceModal and the briefing;
+// the tiering and payout logic is unchanged (rules 14, 15).
+const roleRecommendations = (state) => {
+  const rg = roleGap(state);
+  const gaps = (rg?.items || []).filter((i) => i.gap > 0).map((i) => {
+    const h = areaCatHints(state, i.area);
+    const recs = h.cats
+      .flatMap((k) => CERTS_BY_CAT[k] || [])
+      .map((c) => {
+        const jw = jobWeightForCert(state, i.area.id, c);
+        const base = certGainOf(state, c);
+        return { c, jw, gain: jw ? Math.round(base * jw.mult / 10) * 10 : base };
+      })
+      .filter((r) => r.gain > 0)
+      .sort((a, b) => (b.jw?.mult ?? 1) - (a.jw?.mult ?? 1) || a.c.d - b.c.d)
+      .slice(0, 4);
+    const examRecs = h.exam
+      ? EXAMS.map((e) => {
+          const mineP = state.exams?.best?.[e.id]?.p || 0;
+          const nb = e.bands.find((b) => b[2] > mineP);
+          return nb ? { e, ...examBandGain(state, e, nb) } : null;
+        }).filter(Boolean).slice(0, 3)
+      : [];
+    return { ...i, h, recs, examRecs };
+  });
+  return { rg, gaps };
+};
+
 // Buckets the open tasks by date. Pure: derived at render, never stored (rule 9).
 const agendaOf = (state, today) => {
   const open = (state.tasks || []).filter((q) => (q.type === "daily" ? !q.doneDates?.includes(today) : q.status !== "done"));
@@ -2065,6 +2093,131 @@ const agendaOf = (state, today) => {
   const picked = new Set([...overdue, ...dueToday, ...daily, ...week].map((q) => q.id));
   const later = open.filter((q) => !picked.has(q.id));
   return { overdue, dueToday, daily, week, later, all: [...overdue, ...dueToday, ...daily, ...week, ...later] };
+};
+
+const lastDoneDate = (q) => (q.type === "daily" ? (q.doneDates || []).slice(-1)[0] || null : q.doneAt || null);
+const KIND_LABEL = { book: "📚 독서", fit: "💪 운동", meet: "🤝 미팅" };
+const CHECKIN_STALE_DAYS = 7;
+const AREA_STALE_DAYS = 30;
+const ACTIVITY_GAP_DAYS = 7;
+const CAP = 5;
+
+// The daily briefing: what the saved state says about today. Pure — computed at render, never stored (rule 9).
+// Every line states a fact with a number and never softens it (rule 13).
+const buildBriefing = (state, today) => {
+  const ag = agendaOf(state, today);
+  const act = state.act || {};
+  const sections = [];
+  const add = (key, title, items) => sections.push({ key, title, items: items.slice(0, CAP) });
+
+  /* Today's tasks */
+  const todayItems = [
+    ...ag.overdue.map((q) => ({ kind: "task", severity: 3, text: `${q.title} — 기한 ${q.due} 지남 (${ddayStr(q.due)})`, action: { type: "task", id: q.id } })),
+    ...ag.dueToday.map((q) => ({ kind: "task", severity: 3, text: `${q.title} — 오늘 기한`, action: { type: "task", id: q.id } })),
+    ...ag.daily.map((q) => ({ kind: "task", severity: 1, text: `${q.title} — 매일 · 미완료`, action: { type: "task", id: q.id } })),
+  ];
+  add("today", "오늘 할 일", todayItems.length ? todayItems : [{ kind: "none", severity: 1, text: "해당 없음" }]);
+
+  /* Streak — mirrors the rule completeTask applies */
+  const streakItem = act.lastActive === today
+    ? { severity: 1, text: `오늘 완료 기록 있음 · 🔥 ${act.streak}일` }
+    : act.lastActive === shiftDay(today, -1)
+      ? { severity: 3, text: `오늘 완료 0건 — 오늘 1건을 완료하지 않으면 연속 ${act.streak}일이 끊겨요.` }
+      : act.lastActive === shiftDay(today, -2) && act.shieldsLeft > 0
+        ? { severity: 3, text: `어제 완료 0건 — 오늘 완료하면 보호권 1개가 소모돼요 (남은 보호권 ${act.shieldsLeft}).` }
+        : { severity: 2, text: `마지막 완료 ${act.lastActive || "없음"} · 다음 완료 시 연속 1일로 초기화돼요.` };
+  add("streak", "연속 기록", [{ kind: "streak", ...streakItem }]);
+
+  /* Goal pace and deadlines */
+  const active = (state.goals || []).filter((g) => g.status === "active");
+  const goalItems = [...active]
+    .sort((x, y) => (x.deadline || "9999").localeCompare(y.deadline || "9999"))
+    .map((g) => {
+      const pc = paceOf(g, state);
+      const left = g.deadline ? daysBetween(today, g.deadline) : null;
+      const behind = pc.gap != null && pc.gap <= -5;
+      const soon = left != null && left >= 0 && left <= 7 && pc.p < 1;
+      const past = left != null && left < 0 && pc.p < 1;
+      const miss = (soon || past) ? (g.krs || []).filter((kr) => krProgress(kr, g, state) < 1).map((kr) => `${kr.title} ${krRemainText(kr, g, state)}`).slice(0, 2) : [];
+      return {
+        kind: "goal", severity: behind || soon || past ? 3 : 1,
+        text: `${g.title} — ${g.deadline ? ddayStr(g.deadline) : "기한 없음"} · 진행 ${Math.round(pc.p * 100)}% · ${pc.label}${miss.length ? ` · 미달 KR: ${miss.join(" · ")}` : ""}`,
+        action: { type: "goals" },
+      };
+    });
+  add("goals", "목표 페이스", goalItems.length ? goalItems : [{ kind: "none", severity: 1, text: "활성 목표 없음" }]);
+
+  /* Metrics check-in, stagnant areas, activity gaps */
+  const m = state.metrics || {};
+  const metricItems = [];
+  const ci = act.lastCheckin;
+  const ciDays = ci ? daysBetween(ci, today) : null;
+  if (!ci || ciDays >= CHECKIN_STALE_DAYS) {
+    metricItems.push({
+      kind: "checkin", severity: 2, action: { type: "metrics" },
+      text: `${ci ? `지표 체크인 ${ciDays}일 경과 (마지막 ${ci})` : "지표 체크인 기록 없음"} · 자산 ${m.asset} · 영향력 ${m.infl} · 외형 ${m.body}`,
+    });
+  }
+  const targeted = state.role?.targets || {};
+  const stale = [...(state.areas || [])]
+    .sort((a, b) => ((targeted[b.id] || 0) > 0) - ((targeted[a.id] || 0) > 0))
+    .map((p) => {
+      const last = (p.achievements || []).map((a) => a.date).sort().slice(-1)[0] || null;
+      return { p, last, days: last ? daysBetween(last, today) : null };
+    })
+    .filter((x) => x.days == null || x.days >= AREA_STALE_DAYS)
+    .slice(0, 3)
+    .map((x) => ({ kind: "area", severity: 2, text: `${x.p.name} — 최근 ${AREA_STALE_DAYS}일 성취 기록 0건 (마지막 ${x.last || "없음"})`, action: { type: "growth" } }));
+  const drops = [];
+  for (const g of active) {
+    const kinds = new Set((state.tasks || []).filter((q) => q.goalId === g.id && q.kind).map((q) => q.kind));
+    for (const k of kinds) {
+      const done = (state.tasks || []).filter((q) => q.goalId === g.id && q.kind === k).map(lastDoneDate).filter(Boolean).sort().slice(-1)[0] || null;
+      if (!done || daysBetween(done, today) >= ACTIVITY_GAP_DAYS) {
+        drops.push({ kind: "activity", severity: 2, text: `${g.title} — ${KIND_LABEL[k]} 최근 ${ACTIVITY_GAP_DAYS}일 완료 0건 (마지막 ${done || "없음"})`, action: { type: "goals" } });
+      }
+    }
+  }
+  const metricsAll = [...metricItems, ...stale, ...drops.slice(0, 3)];
+  add("metrics", "지표·영역", metricsAll.length ? metricsAll : [{ kind: "none", severity: 1, text: `지표 체크인 최신 (${ci}) · 정체 영역 없음` }]);
+
+  /* Next step — the same recommendation the direction advice screen shows */
+  const { rg, gaps } = roleRecommendations(state);
+  let nextItem;
+  if (!rg) nextItem = { kind: "next", severity: 2, text: "롤모델 미설정 — 근접도 계산 대상 없음", action: { type: "growth" } };
+  else if (!gaps.length) nextItem = { kind: "next", severity: 1, text: `모든 요구 영역 충족 · 근접도 ${rg.match}%`, action: { type: "roleAdvice" } };
+  else {
+    const g0 = gaps[0];
+    const r = g0.recs[0];
+    const e = g0.examRecs[0];
+    const tail = r ? `추천: ${r.jw?.tier || "—"} ${r.c.n} D${r.c.d} +${r.gain.toLocaleString()}P`
+      : e ? `추천: ${e.e.n} ${e.band?.[0] ?? ""} D${e.band?.[1] ?? ""} +${(e.payout || 0).toLocaleString()}P`
+        : "매칭되는 표준 성취 없음 — 도감에서 직접 찾아요";
+    nextItem = { kind: "next", severity: 2, text: `${g0.area.name} ${RANKS[g0.have].name}→${RANKS[g0.need].name} · ${tail}`, action: { type: "roleAdvice" } };
+  }
+  add("next", "다음 단계", [nextItem]);
+
+  /* Weekly review */
+  const wk = mondayOf(today);
+  const thisWeek = (state.reviews || []).find((r) => r.weekOf === wk);
+  add("review", "주간 리뷰", [thisWeek
+    ? { kind: "review", severity: 1, text: `이번 주 리뷰 완료 (${thisWeek.date})`, action: { type: "review" } }
+    : { kind: "review", severity: 2, text: `이번 주 리뷰 없음 (마지막 ${act.lastReview || "없음"})`, action: { type: "review" } }]);
+
+  /* Journal */
+  const je = (state.journal || []).find((x) => x.date === today);
+  add("journal", "일지", [{
+    kind: "journal", severity: 1, action: { type: "journal" },
+    text: `${je && je.text.trim() ? `오늘 일지 ${je.text.trim().length}자` : "오늘 일지 없음"}${je?.ai ? ` · AI 답변 ${je.aiDate}` : ""}`,
+  }]);
+
+  return {
+    counts: {
+      overdue: ag.overdue.length, dueToday: ag.dueToday.length, dailyOpen: ag.daily.length,
+      behind: goalItems.filter((g) => g.severity === 3).length,
+    },
+    sections,
+  };
 };
 
 /* ── State lifecycle ── */
@@ -2660,8 +2813,10 @@ function Onboarding({ onStart, onDemo }) {
 }
 
 /* ───────────────────────── Home — today's focus ───────────────────────── */
-function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests }) {
+function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onBriefing, onJournal }) {
   const a = state.act;
+  const brief = buildBriefing(state, today);
+  const firstAlert = brief.sections.flatMap((s) => s.items).find((it) => it.severity === 3);
   const active = (state.goals || []).filter((g) => g.status === "active");
   const focus = [...active].sort((x, y) => (x.deadline || "9999").localeCompare(y.deadline || "9999")).slice(0, 3);
   const todayQuests = agendaOf(state, today).all;
@@ -2688,6 +2843,18 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
               <span className="text-xs text-zinc-500">오늘 {doneToday}건 완료</span>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <SectionLabel tone="text-amber-300">오늘 브리핑</SectionLabel>
+        <div className="text-xs font-mono text-zinc-400 mt-1.5">
+          기한 지남 {brief.counts.overdue} · 오늘 기한 {brief.counts.dueToday} · 매일 남음 {brief.counts.dailyOpen} · 뒤처짐 {brief.counts.behind}
+        </div>
+        {firstAlert && <div className="text-xs text-rose-400 mt-1 truncate">{firstAlert.text}</div>}
+        <div className="flex gap-1.5 mt-2.5">
+          <button onClick={onBriefing} className="flex-1 py-2 rounded-xl bg-amber-400 text-zinc-950 font-black text-xs">브리핑 열기 ›</button>
+          <button onClick={onJournal} className="flex-1 py-2 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">일지 쓰기</button>
         </div>
       </section>
 
@@ -3062,6 +3229,80 @@ function MetricsModal({ metrics, onClose, onSave }) {
   );
 }
 
+/* ── Daily briefing — what the saved state says about today (rules 9, 13) ── */
+const SEV_CLS = { 3: "text-rose-400", 2: "text-amber-300", 1: "text-zinc-300" };
+function BriefingModal({ state, today, onClose, onAction }) {
+  const { sections } = buildBriefing(state, today);
+  return (
+    <Modal title={`오늘 브리핑 — ${today}`} onClose={onClose}>
+      <div className="space-y-3">
+        {sections.map((s) => (
+          <div key={s.key} className="bg-zinc-950 rounded-xl p-3">
+            <SectionLabel tone="text-zinc-400">{s.title}</SectionLabel>
+            <div className="space-y-1 mt-1.5">
+              {s.items.map((it, n) => (it.action ? (
+                <button key={n} onClick={() => onAction(it.action)}
+                  className={`w-full text-left text-xs ${SEV_CLS[it.severity]} active:opacity-70`}>
+                  {it.text} ›
+                </button>
+              ) : (
+                <div key={n} className={`text-xs ${SEV_CLS[it.severity]}`}>{it.text}</div>
+              )))}
+            </div>
+          </div>
+        ))}
+        <div className="flex gap-1.5">
+          <button onClick={() => onAction({ type: "journal" })}
+            className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">일지 쓰기</button>
+          <button onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs">닫기</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Journal — a free-text record per day; the assistant reply is stored beside it ── */
+function JournalModal({ state, today, onClose, onSave }) {
+  const entries = [...(state.journal || [])].sort((a, b) => b.date.localeCompare(a.date));
+  const mine = entries.find((e) => e.date === today);
+  const [text, setText] = useState(mine?.text || "");
+  const [open, setOpen] = useState(null);
+  const close = () => { if (text.trim() !== (mine?.text || "").trim()) onSave(text, true); onClose(); };
+  return (
+    <Modal title={`일지 — ${today}`} onClose={close}>
+      <div className="space-y-3">
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={5}
+          placeholder="오늘 한 일 · 수치 · 막힌 것 — 사실만 적어요"
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        {mine?.ai && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+            <div className="text-xs text-zinc-500 mb-1">AI 답변 · {mine.aiDate}</div>
+            <p className="text-xs text-zinc-300 whitespace-pre-wrap break-words">{mine.ai}</p>
+          </div>
+        )}
+        <button onClick={() => onSave(text)} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">저장</button>
+        <div>
+          <SectionLabel tone="text-zinc-400">최근 7일</SectionLabel>
+          {entries.filter((e) => e.date !== today).length === 0 ? (
+            <p className="text-xs text-zinc-600 mt-1.5">일지 기록 없음</p>
+          ) : (
+            <div className="space-y-1 mt-1.5">
+              {entries.filter((e) => e.date !== today).slice(0, 7).map((e) => (
+                <button key={e.id} onClick={() => setOpen(open === e.id ? null : e.id)}
+                  className="w-full text-left bg-zinc-950 rounded-lg px-3 py-2">
+                  <div className="text-xs text-zinc-400 truncate">{e.date} · {open === e.id ? "" : e.text.slice(0, 40)}</div>
+                  {open === e.id && <p className="text-xs text-zinc-300 mt-1 whitespace-pre-wrap break-words">{e.text}{e.ai ? `\n\nAI 답변 · ${e.aiDate}\n${e.ai}` : ""}</p>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ── Toast — separate component with its own state. Showing and expiring never re-render App ── */
 const ToastHost = forwardRef(function ToastHost(_, ref) {
   const [toast, setToast] = useState(null);
@@ -3211,8 +3452,7 @@ function CatalogModal({ state, initialCat, onClose }) {
 
 /* ── Role-model direction advice ── */
 function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
-  const rg = roleGap(state);
-  const gaps = (rg?.items || []).filter((i) => i.gap > 0);
+  const { rg, gaps } = roleRecommendations(state);
   return (
     <Modal title={`방향 제안 — ${rg?.name || "롤모델"}`} onClose={onClose}>
       {gaps.length === 0 ? (
@@ -3220,24 +3460,7 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
       ) : (
         <div className="space-y-3">
           {gaps.map((i) => {
-            const h = areaCatHints(state, i.area);
-            const recs = h.cats
-              .flatMap((k) => CERTS_BY_CAT[k] || [])
-              .map((c) => {
-                const jw = jobWeightForCert(state, i.area.id, c);
-                const base = certGainOf(state, c);
-                return { c, jw, gain: jw ? Math.round(base * jw.mult / 10) * 10 : base };
-              })
-              .filter((r) => r.gain > 0)
-              .sort((a, b) => (b.jw?.mult ?? 1) - (a.jw?.mult ?? 1) || a.c.d - b.c.d)
-              .slice(0, 4);
-            const examRecs = h.exam
-              ? EXAMS.map((e) => {
-                  const mineP = state.exams?.best?.[e.id]?.p || 0;
-                  const nb = e.bands.find((b) => b[2] > mineP);
-                  return nb ? { e, ...examBandGain(state, e, nb) } : null;
-                }).filter(Boolean).slice(0, 3)
-              : [];
+            const { h, recs, examRecs } = i;
             return (
               <div key={i.area.id} className="bg-zinc-950 rounded-xl p-3">
                 <div className="flex items-center justify-between gap-2 text-sm">
@@ -3956,7 +4179,7 @@ function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMet
             </div>
           ))}
         </div>
-        <p className="text-xs text-zinc-600 mt-2">성취·승급 시 자동 반영되고, 체크인으로 직접 보정할 수 있어요.</p>
+        <p className="text-xs text-zinc-600 mt-2">성취·승급 시 자동 반영되고, 체크인으로 직접 보정할 수 있어요. · 마지막 체크인 {state.act?.lastCheckin || "없음"}</p>
       </section>
 
       <SectionLabel tone="text-cyan-400">실력 트랙 — 영역별 승급 관문</SectionLabel>
@@ -4206,7 +4429,9 @@ export default function LifeManager() {
   const [imgs, setImgs] = useState({});
   const fileRef = useRef(null);
   const slotRef = useRef(null);
-  const today = dstr();
+  const [day, setDay] = useState(dstr());
+  const dayRef = useRef(null);
+  const today = day;
 
   const showToast = (t) => toastRef.current?.show(t);
 
@@ -4214,13 +4439,34 @@ export default function LifeManager() {
     (async () => {
       const saved = await store.get(KEY).catch(() => null);
       const m = saved ? migrate(saved) : null;
-      if (m) { setState(applyDailyTick(m)); setPhase("main"); }
+      if (m) {
+        setState(applyDailyTick(m));
+        setPhase("main");
+        if (m.act?.briefingSeen !== dstr()) setModal({ type: "briefing" });
+      }
       else setPhase("onboard");
       readyRef.current = true;
       const p = await store.get("liferpg-img-profile").catch(() => null);
       setImgs({ profile: p || null });
     })();
   }, []);
+
+  // The app can stay open past midnight; re-read the date on focus and on a slow tick so `today` stays real.
+  useEffect(() => {
+    const check = () => setDay((d) => (dstr() === d ? d : dstr()));
+    const id = setInterval(check, 60000);
+    window.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => { clearInterval(id); window.removeEventListener("visibilitychange", check); window.removeEventListener("focus", check); };
+  }, []);
+
+  // A new day opens the briefing once, the same way boot does.
+  useEffect(() => {
+    if (!dayRef.current) { dayRef.current = day; return; }
+    if (dayRef.current === day) return;
+    dayRef.current = day;
+    if (state && state.act?.briefingSeen !== day) setModal({ type: "briefing" });
+  }, [day, state]);
 
   useEffect(() => {
     if (!readyRef.current || !state) return;
@@ -4477,9 +4723,34 @@ export default function LifeManager() {
   };
 
   const saveMetrics = (v) => {
-    setState((prev) => ({ ...prev, metrics: { asset: statClamp(v.asset), infl: statClamp(v.infl), body: statClamp(v.body) } }));
+    setState((prev) => ({
+      ...prev,
+      metrics: { asset: statClamp(v.asset), infl: statClamp(v.infl), body: statClamp(v.body) },
+      act: { ...prev.act, lastCheckin: today },
+    }));
     setModal(null);
     showToast({ msg: "지표를 갱신했어요" });
+  };
+
+  /* Daily assistant */
+  const markBriefingSeen = () => setState((prev) => (prev.act?.briefingSeen === today ? prev : { ...prev, act: { ...prev.act, briefingSeen: today } }));
+  const closeBriefing = (next) => {
+    markBriefingSeen();
+    setModal(null);
+    if (!next) return;
+    if (next.type === "task") { const q = state.tasks.find((x) => x.id === next.id); if (q) tryComplete(q); return; }
+    if (next.type === "goals" || next.type === "growth") { setTab(next.type); return; }
+    setModal({ type: next.type });
+  };
+  const saveJournal = (text, silent) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const e = (s.journal || []).find((x) => x.date === today);
+      if (e) e.text = text;
+      else s.journal = [{ id: uid(), date: today, text }, ...(s.journal || [])];
+      return s;
+    });
+    if (!silent) { setModal(null); showToast({ msg: "일지를 저장했어요" }); }
   };
 
   const setAreaDir = (areaId, dirs) => {
@@ -4543,7 +4814,8 @@ export default function LifeManager() {
       <main className="px-4 pb-24 space-y-4">
         {tab === "home" && (
           <HomeTab state={state} today={today} imgs={imgs} onUpload={askUpload} onClearImg={clearImg}
-            onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("tasks")} />
+            onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("tasks")}
+            onBriefing={() => setModal({ type: "briefing" })} onJournal={() => setModal({ type: "journal" })} />
         )}
         {tab === "goals" && (
           <GoalsTab state={state}
@@ -4619,6 +4891,12 @@ export default function LifeManager() {
       )}
       {modal?.type === "metrics" && (
         <MetricsModal metrics={state.metrics} onClose={() => setModal(null)} onSave={saveMetrics} />
+      )}
+      {modal?.type === "briefing" && (
+        <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />
+      )}
+      {modal?.type === "journal" && (
+        <JournalModal state={state} today={today} onClose={() => setModal(null)} onSave={saveJournal} />
       )}
 
       {overlay && <Overlay data={overlay} onClose={() => setOverlay(null)} />}

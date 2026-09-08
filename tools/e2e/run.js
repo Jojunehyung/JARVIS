@@ -185,7 +185,12 @@ const typeInto = async (placeholder, value) => {
     await sleep(320);
   };
   // Split coverage around reloads and accumulate (V8 coverage resets on every navigation)
-  const reload = async (opts) => { await stashCov(); await page.reload(opts || { waitUntil: "networkidle2" }); await startCov(); await sleep(300); };
+  // The app opens the daily briefing on the first load of each day; dismiss it so the next click
+  // reaches the screen behind. Pass { keepModal: true } in steps that assert the briefing itself.
+  const reload = async (opts, { keepModal = false } = {}) => {
+    await stashCov(); await page.reload(opts || { waitUntil: "networkidle2" }); await startCov(); await sleep(300);
+    if (!keepModal) { try { await closeModal(); } catch {} }
+  };
   // 1x1 PNG fixture for photo attachments (evidence, study artifacts, profile)
   const PNG_PATH = path.join(OUT, "shot.png");
   fs.writeFileSync(PNG_PATH, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));

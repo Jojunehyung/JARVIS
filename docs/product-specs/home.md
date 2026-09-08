@@ -1,7 +1,7 @@
 # Home tab
 <!-- src: SPEC-4-2 -->
 
-`HomeTab` is the landing screen after onboarding: a profile card, the three most urgent active goals with their 페이스 (pace), and up to five of today's open 실행 (tasks) with a one-tap completion that still goes through the evidence gate. Everything is derived from `state` at render time — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onUpload (askUpload), onClearImg (clearImg), onComplete (tryComplete), onGoGoals, onGoQuests` — the last two switch the bottom tab to 목표 / 실행.
+The first section is the 오늘 브리핑 card (see [daily-briefing.md](daily-briefing.md)). `HomeTab` is the landing screen after onboarding: a profile card, the three most urgent active goals with their 페이스 (pace), and up to five of today's open 실행 (tasks) with a one-tap completion that still goes through the evidence gate. Everything is derived from `state` at render time — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onUpload (askUpload), onClearImg (clearImg), onComplete (tryComplete), onGoGoals, onGoQuests` — the last two switch the bottom tab to 목표 / 실행.
 
 ## Profile card
 - Portrait: `Portrait` at size 72 renders `imgs.profile` when a photo exists, otherwise the parametric `PortraitSprite` from `profile.look` and `profile.gender`. With a photo present a `✕` button calls `onClearImg("profile")` → `clearImg` clears it from memory and deletes the `liferpg-img-profile` key.

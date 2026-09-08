@@ -9,7 +9,7 @@ Severity: **S1** cannot run / data loss / wrong payout · **S2** behaviour contr
 | TD-01 | S1 | goal engine | `krDoneCount` / `krProgress` (count) sum **every** task with the goal's `goalId`, including cert/exam/study `once` milestones → passing `전기기사` also advances `CATIA 30회` 2→3/30. Several count KRs on one goal share the same value (no per-KR link). | Needs a KR–task link key; migration block. |
 | TD-02 | S2 | tasks | `TaskTab` orphan test only checks missing/deleted goal → tasks of a **done** goal appear in no section (cannot complete or delete). | |
 | TD-03 | S2 | goals | `AddGoalModal` accepts start = target (instantly 100 %), count need ≤ 0, free-text cert names (bridge cannot match), past deadlines (instantly behind). Metric check-in blur on empty input stores `Number("") = 0`. | |
-| TD-04 | S2 | dates | `ddayStr` off by one (today shows D-1, tomorrow D-DAY). `today` fixed at render; `dstr` local-time dependent. | |
+| TD-04 | S2 | dates | `dstr` is local-time dependent, so crossing time zones shifts the streak. | The off-by-one and the render-fixed `today` were fixed 2026-09-09 (`daysBetween`, and a `day` state re-read on focus and on a 60 s tick). |
 | TD-05 | S2 | catalog | `CatalogModal` gain ignores job-fit weighting although the caption says otherwise. | |
 | TD-06 | S2 | duplicates | Three different duplicate checks: `hasCertQ` (global partial match), `addTask` (exact), catalog owned (longest-name). `hasExamQ` is goal-scoped, so the same exam can be registered under two goals. | |
 | TD-07 | S2 | payouts | A cert KR with tier C (×0) can still be registered (`+0P · 등록 ›`) and on completion logs "+0P" and a trophy. Re-taking an exam at a lower band pays 0 but still logs "+0P", a trophy, and `metricsGain(band.d)`. Policy decision needed. | Rule 1/2 |
@@ -52,6 +52,8 @@ Severity: **S1** cannot run / data loss / wrong payout · **S2** behaviour contr
 | R-10 | S3 | Game residue (`kind: "boss"`, `BOSS_COLORS`, 🎲, `플레이어`, "CHARACTER CREATION", "▶", `캐릭터`, `퀘스트/파트/상태창/실드`) | 2026-09-07 — schema v13/v14, terminology rename |
 | R-11 | S2 | Docs claimed `askClaude`/`QuizModal`/`coachApply` existed | 2026-09-07 — removed from CLAUDE.md §4 / Rule 11; now `check-docs` + symbol index |
 | R-12 | S3 | Favicon 404 | 2026-09-07 — data-URI favicon + manifest icon |
+
+| R-13 | S1 | Extracting `roleRecommendations` out of `RoleAdviceModal` left the JSX referencing the removed local `h`, crashing the direction-advice screen | 2026-09-09 — caught by the E2E run (a page error plus a knock-on step failure), fixed by destructuring `h` from the returned gap |
 
 ## Allowlist mirror (`tools/harness/finish-allowlist.json`)
 _None yet._

@@ -1,6 +1,8 @@
 # Life metrics, role model, and streak
 <!-- src: SPEC-5 -->
 
+`saveMetrics` stamps `act.lastCheckin` with the date of the check-in, and the growth tab shows it; the stamp is a fact, and the metric values still move only through `metricsGain` and the sliders ([Rule 8](core-beliefs.md#rule-8)). The recommendation logic behind 방향 제안 (direction advice) lives in `roleRecommendations`, shared with the daily briefing ([assistant-bridge.md](assistant-bridge.md)).
+
 Three numbers describe the person behind the areas (영역): life metrics (인생 지표) `metrics.asset / infl / body`, role-model (롤모델) proximity `roleGap`, and the streak with its streak shields (보호권) in `act`. Metrics move only through achievements (성취), promotion (승급), goal completion and manual check-in — never with time ([Rule 8](core-beliefs.md#rule-8)); proximity is derived from area grades and never stored ([Rule 9](core-beliefs.md#rule-9), [Rule 14](core-beliefs.md#rule-14)); `metrics.risk` became `metrics.body` in schema v12 ([Rule 12](core-beliefs.md#rule-12)). Field shapes: [../generated/db-schema.md](../generated/db-schema.md).
 
 ## Life metrics (`METRICS_META`)

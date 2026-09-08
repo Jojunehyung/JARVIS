@@ -1,6 +1,8 @@
 # Growth tab
 <!-- src: SPEC-4-5 -->
 
+The metrics footer ends with ` · 마지막 체크인 {date or 없음}`, and 방향 제안 (direction advice) renders `roleRecommendations(state)` — the same source the daily briefing reads.
+
 The 성장 (growth) tab `GrowthTab` is the verified record of an account: the achievement wall, the three 인생 지표 (life metrics), one card per 영역 (area) on the skill track with its next 승급 (promotion) 관문 (gate), 롤모델 (role model) proximity, and the reset button. Props: `state, onPromote, onRoleModel, onRoleAdvice, onReset, onMetrics`; it computes `roleGap(state)` itself. Four modals hang off it: `MetricsModal`, `PromoteModal`, `RoleModelModal`, `RoleAdviceModal`. Mechanisms: [../design-docs/metrics-and-role-model.md](../design-docs/metrics-and-role-model.md), [../design-docs/evidence-and-promotion.md](../design-docs/evidence-and-promotion.md); tokens: [../DESIGN.md](../DESIGN.md). Nothing here grows by itself ([Rule 8](../design-docs/core-beliefs.md#rule-8)).
 
 ## Achievement wall (`성취의 벽`)
