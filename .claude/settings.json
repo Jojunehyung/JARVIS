@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node tools/harness/*)",
+      "Bash(npm run build)",
+      "Bash(npm run build:demo)",
+      "Bash(npm run verify*)",
+      "Bash(npm run finish*)",
+      "Bash(npm run smoke)",
+      "Bash(npm run docs:gen)",
+      "Bash(npm run docs:check*)",
+      "Bash(npm run lang:check*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/harness/prompt-first.js\"", "timeout": 10 } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Edit|MultiEdit", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/harness/data-guard.js\"", "timeout": 10 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/harness/lang-check.js\" --hook", "timeout": 15 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/harness/finish-check.js\" --hook", "timeout": 120 } ] }
+    ]
+  }
+}

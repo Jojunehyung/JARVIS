@@ -1,0 +1,8 @@
+{
+  "duplicatesBlock": true,
+  "lang": false,
+  "window": 6,
+  "minLogicLines": 4,
+  "maxBlocks": 2,
+  "expectedCounts": { "certs": 1011, "examFamilies": 17, "jobs": 21, "categories": 15, "exceptions": 47 }
+}

@@ -171,7 +171,61 @@ const typeInto = async (placeholder, value) => {
   };
   // 새로고침 전후로 커버리지를 끊어서 누적(V8 커버리지는 내비게이션마다 초기화됨)
   const reload = async (opts) => { await stashCov(); await page.reload(opts || { waitUntil: "networkidle2" }); await startCov(); await sleep(300); };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, reload, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  // 1x1 PNG fixture for photo attachments (evidence, study artifacts, profile)
+  const PNG_PATH = path.join(OUT, "shot.png");
+  fs.writeFileSync(PNG_PATH, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
+  const attach = async () => {
+    const input = (await page.$('.fixed.inset-0 input[type="file"]')) || (await page.$('input[type="file"]'));
+    if (!input) throw new Error("no file input");
+    await input.uploadFile(PNG_PATH);
+    await sleep(600);
+  };
+  // Open the AddTaskModal from the goal card whose title contains goalTitle
+  const openTaskModalFor = async (goalTitle) => {
+    await clickTab("목표");
+    const ok = await page.evaluate((t) => {
+      const cards = [...document.querySelectorAll("div")].filter((d) => d.innerText.includes(t) && [...d.querySelectorAll("button")].some((b) => b.innerText.includes("실행")));
+      const inner = cards[cards.length - 1];
+      const btn = inner && [...inner.querySelectorAll("button")].find((b) => b.innerText.includes("실행"));
+      if (btn) { btn.click(); return true; }
+      return false;
+    }, goalTitle);
+    if (!ok) throw new Error("goal card task button not found: " + goalTitle);
+    await sleep(600);
+  };
+  // Register a daily task of an activity kind (chip label 독서/운동/미팅) under a goal
+  const addKindTask = async (goalTitle, kindLabel, title) => {
+    await openTaskModalFor(goalTitle);
+    if (kindLabel) { try { await clickInModal(kindLabel); } catch {} }
+    await sleep(150);
+    await typeInto("무엇을 하나요", title);
+    await clickInModalExact("등록");
+    await sleep(600);
+    const e = await modalError(); if (e) errors.push("task registration rejected: " + e);
+    await sleep(600); await closeModal();
+  };
+  // Complete an evidence-gated task (cert/exam) by attaching the photo fixture and submitting
+  const submitPhotoEvidence = async (title) => {
+    await clickTab("실행");
+    await completeQuest(title);
+    await sleep(400);
+    await attach();
+    await clickInModal("제출하고 완료");
+    await sleep(1200); await closeModal();
+    await clickTab("실행");
+    await assertDone(title);
+  };
+  // Complete an activity task through its log modal; `fill` enters the modal fields
+  const logActivity = async (title, fill) => {
+    await clickTab("실행");
+    await completeQuest(title);
+    await sleep(400);
+    await fill();
+    for (const t of ["기록", "완료", "저장"]) { try { await clickInModal(t); break; } catch {} }
+    await sleep(1000); await closeModal();
+    await assertDone(title);
+  };
+  const h = { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, reload, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

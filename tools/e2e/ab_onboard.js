@@ -1,12 +1,9 @@
 // A/B — 온보딩 4단계(자격 선택) 진입·검색 입력 지연. 1,011행 전체 렌더 vs 60행 캡의 차이를 본다
-const puppeteer = require("puppeteer-core");
 const fs = require("fs");
+const { sleep, med, launchThrottled } = require("./bench-lib");
 const A = process.argv[2] || "http://localhost:5001/";
 const B = process.argv[3] || "http://localhost:5002/";
 const ROUNDS = +(process.argv[4] || 5);
-const CHROME = ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find((p) => fs.existsSync(p));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const med = (a) => { const x = [...a].sort((p, q) => p - q); return +(x.length % 2 ? x[(x.length - 1) / 2] : (x[x.length / 2 - 1] + x[x.length / 2]) / 2).toFixed(1); };
 const clickText = (page, t) => page.evaluate((s) => {
   const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   let hit = [...document.querySelectorAll("button")].filter((e) => vis(e) && (e.innerText || "").includes(s));
@@ -50,9 +47,7 @@ async function run(page, url) {
 }
 
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], defaultViewport: { width: 430, height: 932, isMobile: true } });
-  const page = await browser.newPage();
-  await page.emulateCPUThrottling(4);
+  const { browser, page } = await launchThrottled();
   const res = { A: [], B: [] };
   for (let i = 0; i < ROUNDS; i++) { res.A.push(await run(page, A)); res.B.push(await run(page, B)); process.stdout.write("."); }
   console.log("");

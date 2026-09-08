@@ -1,51 +1,10 @@
-# 인생 관리 (Life Manager) — Claude Code 개발 가이드
+# Life Manager — Claude Code entry point
 
-> 이 문서는 프로젝트의 단일 진실 원천이다. 코드를 수정하기 전에 반드시 전체를 읽을 것.
+@AGENTS.md
 
-## 1. 컨셉 (v3 미니멀)
+Before editing `src/`: read `docs/design-docs/core-beliefs.md` (rules 1–19). Verify with `npm run verify`; finish every task with `npm run finish` (see AGENTS.md §5).
 
-**목표를 세우고(OKR) → 실행하고(실행) → 증거로 증명하고(등급·성취) → 매일 이어가는(스트릭) 인생 관리 도구.**
-
-게임 연출(XP·레벨·골드·크리티컬·보스·스토리·미연시)은 사용자 결정으로 **완전 폐기**되었다 — 백업 없음. 재도입 요청이 오면 그때 처음부터 다시 설계한다.
-
-핵심 루프: 목표(OKR) 생성 → KR 브리지로 마일스톤·일일 실행 등록 → 증거 완료 → 등급 승급·인생 지표·롤모델 근접도 상승.
-
-제품 기획 전문은 `PLANNING.md` 참조 — 하네스 설계 엔지니어 취업 시나리오로 전 시스템을 관통 설명하며, 데모 데이터가 그 시나리오와 일치한다.
-
-## 2. 현재 상태
-
-- Vite React 로컬 앱 (2026-09-03 스캐폴드) — 앱 본체는 `src/LifeManager.jsx` 단일 파일 (상태 스키마 **v14**), `npm run dev` / `npm run build`(통과 확인 2026-09-07)
-- E2E 하니스: `tools/e2e`(설치된 Chrome/Edge를 puppeteer-core로 구동, 68단계 시나리오 + 커버리지·성능 측정). 변경 후 `node run.js`로 회귀 확인 — 클릭만 하지 않고 완료 표시까지 검증한다. 성능 비교는 `ab.js`처럼 두 빌드를 한 프로세스에서 **교차 측정**할 것(단발 측정은 머신 부하로 ±50%까지 흔들린다)
-- 자격 DB는 **V1.3(2026-09-06)**: 현행 전체 국가자격 1,011종(신규 807종 · 카테고리 15 · 직무 21 · 단계군 80). 확장·검증 산출물은 스크래치패드(`calib_merged.json` 등)에 보존
-- 스타일: Tailwind **v3** core utility 클래스만 사용 (임의값 문법 없음 — `bg-opacity-*` 사용 중이라 v4 업그레이드 금지) / 아이콘: `lucide-react`
-- 2026-09-02 디자인 핸드오프 적용됨: PortraitSprite v3·TrophySvg v2·빈 상태 일러스트 5종(`EmptyGoalSvg` `EmptyQuestSvg` `EmptyWallSvg` `WallFrame` `OnboardingHeroSvg`)·전 화면 스타일 델타. 온보딩 타이틀 카피는 사용자 선택으로 "지금 위치를 숫자로 확인하세요. 평가는 시장 기준입니다." 채택(게임 카피 폐기)
-- 데모 배포 파일: `npm run build:demo` → `release/life-demo.html` (JS·CSS 전부 내장한 단일 HTML, IIFE 클래식 스크립트를 `</body>` 직전에 배치 — file:// 로 폰·PC에서 직접 열림, localStorage 유지 확인 2026-09-03). 설정은 `vite.demo.config.js`, `release/`는 gitignore. iOS는 파일 직접 열기로 JS 실행 불가 → 호스팅 링크 필요
-- 아직 실기기 스모크 테스트 전 — 반드시 수행 (§7 백로그 2번)
-
-## 3. 플랫폼 시밍 (아티팩트 전용 API 교체)
-
-### 3-1. `window.storage` → 스토리지 어댑터 — ✅ 완료 (2026-09-03)
-- 위치: `const store =` 검색. 인터페이스: `store.get(key)` / `store.set(key, value)` / `store.del(key)` (JSON 직렬화 내장, 실패 시 메모리 폴백).
-- 교체: 동일 인터페이스의 localStorage 어댑터. **호출부는 절대 수정하지 말 것.**
-- 메인 상태 키: `KEY` 상수. 프로필 사진은 `liferpg-img-profile` 별도 키.
-
-### 3-2. AI 미사용 (사용자 결정 2026-08-29)
-`askClaude`와 모든 AI 기능(목표 코치, 난이도 판정, 승급 지식 체크, 학습 구술검증)이 코드에서 **완전히 제거**되었다. 시밍 대상은 §3-1 스토리지뿐이다. 커스텀 자격 난이도는 수동 D 입력(20~100), 학습 실행은 임시 "자기 기재" 모드다. AI 재도입은 사용자 명시 승인 없이는 금지.
-
-## 4. 아키텍처 맵 (검색 앵커)
-
-| 영역 | 심볼 |
-|---|---|
-| 유틸/저장 | `uid` `dstr` `shiftDay` `monthStr` `store` `KEY` `askClaude` |
-| 조회 인덱스 | `CERT_BY_NAME` `CERTS_LONGEST_FIRST` `CERT_NAME_LC` `EXAM_BY_ID` `certOf` `examOf` `certByTitle`(제목별 캐시) — 1,011종 테이블을 렌더마다 순회하지 않도록 모듈 로드 시 1회 구성 |
-| 성취 상수·계산 | `DIFF_RAW_VERSION` `POINT_POLICY_VERSION` `certP` `achGrade` `legacyCertGrade` `CERTS`(1011종 — 15 카테고리. V1.2 보건·의료 30종, V1.3 전체 국가자격 807종 추가) `EXAMS`(17패밀리) `calcExamPayout` `DIM_STEPS` `LANG_KO` `EVIDENCE_MIN` |
-| 온보딩 상수 | `AREA_PRESETS` `AGE_OPTS`~`OUTPUT_OPTS` `gFromD` `computeGrades` `GATE_CHIPS` |
-| v3 엔진 | `needsEvidence` `METRICS_META` `ddayStr` `krProgress` `krDoneCount` `goalProgress` `elapsedRatio` `paceOf` `krRemainText` `roleGap` `certGainOf` `examBandGain` `areaCatHints` `JOB_FIELDS` `WEIGHT_MATRIX` `CERT_W_EXC` `TIER_MULT` `jobWeightForCert` `certByTitle` `goalKinds` |
-| 상태 수명 | `migrate`(v11 단발 변환) `applyDailyTick`(보호권 월 리셋만) `freshState` `demoState` |
-| 일러스트 | `PortraitSprite`(useId 그라디언트·듀얼 림라이트) `Portrait` `resizeImage` `TrophySvg` |
-| App 핸들러 | `completeTask` `promoteArea` `addGoal` `goalStatus` `checkinKR` `coachApply` `saveMetrics` `setAreaDir` `spawnTask` `applyMeasures` `tryComplete` |
-| UI | `HomeTab` `GoalsTab` `AddGoalModal` `MetricsModal` `CatalogModal` `RoleAdviceModal` `StudyVerifyModal` `ActivityLogModal` `TaskTab` `AddTaskModal` `EvidenceModal` `GrowthTab` `PromoteModal` `RoleModelModal` `EvidenceViewModal` `ToastHost` `Onboarding` `Overlay`(gradeup/achieve) `Shell` `Modal` |
-
+<!-- TEMPORARY until Phase 2 of the harness restructure moves these rules to docs/design-docs/core-beliefs.md. Do not edit here. -->
 ## 5. 디자인 불변 규칙 (어떤 리팩터에서도 유지)
 
 **[성취 시스템 — 절대 유지]**
@@ -70,50 +29,3 @@
 17. **일상 활동 유형**(`task.kind`: book/fit/meet, `ActivityLogModal`): 독서 = 독후감(별점 + 감상 15자+) 필수 / 미팅 = 회의록(상대·안건 필수, 액션 아이템은 `spawnTask`로 팔로업 실행 전환) 필수 / 운동 = 첫 완료 시 기록 선택, 이후 원탭. 운동 측정값(체중·골격근량)은 활성 목표의 **같은 이름 metric KR에 `checkinKR`로만 반영**한다 — 외형 지표 직접 반영 금지(규칙 8 유지). 활동 기록은 영역 성취 로그에 남고 트로피·지표는 지급하지 않는다. 실행 템플릿은 유형·난이도·주기를 함께 적용하고, 제목-유형 불일치(`detectKind`)는 등록을 차단하며, 유형 실행의 **난이도 상한은 C**(pts<150 — 증거 게이트 우회 방지)다.
 18. **목표-우선 구조**(확정 2026-08-30): 실행은 목표에서만 생성한다 — `goalId` 필수, 영역은 목표에서 상속(실행 모달에 영역 선택 없음). 모든 실행은 **하루분량**: 일반·활동 상한 C, 학습은 E·D만. 자격·시험·학습은 "마일스톤"으로 하루분량 예외이며 실행 탭에서 목표 하위에 구분 표시된다. 목표 미연결 레거시 실행은 "미분류" 섹션에서 완료·삭제만 가능. 자유 실행 생성으로 되돌리지 말 것.
 19. **KR-실행 브리지**(확정 2026-08-30): 자격·시험 마일스톤 실행은 목표의 해당 KR에서 **원클릭 등록으로만** 생성한다 — 실행 모달의 자격·시험 자유 탐색 모드는 제거됨(모드는 [일일 실행 · 학습] 둘뿐이며, 템플릿·활동 유형·학습 모드 노출은 `goalKinds`(목표 제목·메모·KR 추론)로 **목표 관련 항목만** 스코프 — 무관 유형은 화면에 나타나지 않음). exam KR → 시험 마일스톤(달성/등록됨 상태 표시), cert KR → 자격 마일스톤(직무 적합·실지급 P 표기), count KR → 일일 실행 프리필, metric KR → 체크인 전용 안내. cert KR의 수동 "취득 완료" 버튼은 제거 — 완료 경로는 마일스톤 실행의 합격증 제출뿐이다.
-
-## 6. 상태 스키마 (v14)
-
-```js
-{
-  v: 14,
-  profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
-  areas: [{ id, name, grade(0~9), dir?, achievements[{id,text,date,grade}] }],
-  tasks: [{ id, title, areaId, goalId(신규 필수 — 레거시만 미연결), diff(E~A), pts?, type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
-             isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?, kind?("book"|"fit"|"meet"), createdAt }],
-  goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
-            krs: [{ id, type:"metric", title, start, target, current, unit }
-                | { id, type:"count",  title, need }
-                | { id, type:"exam",   title, famId, band{label,d,p,conf} }
-                | { id, type:"cert",   title, certName, done? }] }],
-  act: { streak, lastActive, shieldMonth, shieldsLeft },      // 보호권: 월 2개, 하루 공백 자동 소모
-  metrics: { asset, infl, body },                              // 0~100 · body=외형(운동·관리, 자기평가)
-  exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
-  certBest: { sg: { p, name, d } },
-  room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
-  role: { name, targets{areaId: 요구등급(1~8)} } | null,   // 근접도는 roleGap으로 파생
-  lastTick, dModel
-}
-```
-
-## 7. 백로그 (우선순위 순)
-
-1. ~~스토리지 시밍(§3-1) → `npm run dev` 구동~~ — ✅ 완료 (2026-09-03, Vite 베이스 스캐폴드·Node LTS 설치 포함)
-2. **실기기 스모크**: 데모 파일을 폰에서 직접 열어 확인(자동 E2E는 `tools/e2e`로 데스크톱 Chrome에서 60단계 통과 — 2026-09-07). 데모 시작 → 실행 탭(목표별 그룹·마일스톤) → 목표 ＋실행에서 KR 원클릭 등록 → 일일 완료(목표 델타 토스트) → 전기기사 마일스톤 합격증 사진 제출(직무 S ×1.0 · **+900P** 확인) → 지표 체크인 → 새로고침 유지
-3. 파일 분리 리팩터: `src/data`(CERTS/EXAMS/온보딩 상수) · `src/engine`(성취 계산·goal 계산·migrate) · `src/components` — `calcExamPayout`/`krProgress`/`migrate` 단위 테스트와 함께
-4. 주간 리뷰 플로우: 지표 체크인을 "잘된 점/막힌 점" 회고와 묶은 주간 단위 화면으로 확장
-5. 성장 그래프(지표·등급 히스토리 — 히스토리 저장 구조 신설 필요), 온보딩 마지막에 "첫 목표" 단계
-6. 성취 v2: unified rescaling(기획 문서 §41 앵커 캘리브레이션), GRE 컴포짓, HSK 3.0 별도 버전
-7. PWA 패키징(모바일 홈 화면) — 파비콘·매니페스트 아이콘(`public/icon.svg` + index.html 데이터 URI)은 2026-09-07 적용(콘솔 404 해소, 단일 파일 데모에도 포함). iOS apple-touch-icon PNG·서비스워커가 남음
-8. **직무 가중 v3(신설 카테고리 근거 보강)**: V1.3에서 신설 카테고리 5 × 기존 직무 16, 신설 직무 5 × 기존 카테고리 14의 교차 셀 150개는 채용공고 명시율 근거 부족으로 전량 C다. 실제로는 인접 직무(예: 전기·기계 × 금속재료·비파괴, 화학·소재 × 산업안전)에서 평가될 여지가 있으므로, 직무별 공고 표본(직종 코드 필터 100건+)으로 명시율을 집계해 재판정한다. 개별 예외 47종목은 근거강도와 함께 코드 주석에 있다.
-9. 종목 개편 추적: 시행 예정분 반영 대기 — 임업종묘기사→산림종묘기사(2027-01-01), 기상기사→기상기후기사·어로산업기사→어업산업기사·건축구조기사·피부미용장·로봇시스템통합기사/기능사(2028-01-01). 매년 Q-Net 변경사항 공고와 대조.
-10. 직무 가중 v2: 목표 기업유형(공기업/사기업/스타트업) 토글로 예외 재계산(컴활·정보처리기사·한국사의 공기업 가점 축), 어학 직무별 통과선 모듈(해외영업 토익 800+/OPIc IH+ 등), 6개월 주기 채용공고 명시율 재검증(S≥30%/A≥15%/B≥5% 기준)
-
-## 8. 컨벤션
-
-- **용어(2026-09-07 전면 개명)**: 실행(task) · 영역(area) · 인생 관리. 게임 용어였던 퀘스트·파트·상태창·실드는 코드 식별자·UI 문구·문서에서 모두 대체했다. 유지한 것: 등급·성취·마일스톤·스트릭·트로피(제품 개념), 저장 키 `liferpg-*`(데이터 호환), 마이그레이션 블록 내부의 구필드 이름(구세이브 해석용).
-
-- UI 텍스트는 한국어(해요체), 코드 식별자는 영문.
-- 상태 변경은 `setState(prev => { const s = structuredClone(prev); ...; return s; })` 패턴.
-- 연출·토스트는 `queueMicrotask`(+필요시 `setTimeout`) 체인 관행. 연출은 gradeup/achieve 2종뿐 — 새 오버레이 추가는 신중히.
-- 새 기능은 `demoState`에 시연 데이터를 함께 갱신.
-- 검증: `vite build` + §7-2 스모크 플로우.

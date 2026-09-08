@@ -7,7 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "build:demo": "vite build --config vite.demo.config.js"
+    "build:demo": "vite build --config vite.demo.config.js",
+    "verify": "node tools/harness/verify.js",
+    "finish": "node tools/harness/finish-check.js",
+    "smoke": "node tools/harness/smoke-logic.js",
+    "docs:gen": "node tools/harness/gen-schema.js && node tools/harness/gen-cert-stats.js && node tools/harness/gen-symbol-index.js",
+    "docs:check": "node tools/harness/check-docs.js",
+    "lang:check": "node tools/harness/lang-check.js --strict"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",

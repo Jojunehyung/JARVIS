@@ -1,15 +1,6 @@
 // 잔여 경로 — 시험 KR·성적표, 운동/미팅 활동, 프로필 사진, 방향 제안, 퀘스트·목표 삭제, 스트릭 경과
 module.exports = async (h) => {
-  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors } = h;
-  const path = require("path");
-  const PNG_PATH = path.join(__dirname, "out", "shot.png");
-  const attach = async () => {
-    const input = (await page.$('.fixed.inset-0 input[type="file"]')) || (await page.$('input[type="file"]'));
-    if (!input) throw new Error("파일 입력 없음");
-    await input.uploadFile(PNG_PATH);
-    await sleep(700);
-  };
-
+  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity } = h;
   // ── 프로필 사진 업로드(resizeImage 경로)
   await step("프로필 사진 업로드", async () => {
     await clickTab("홈");
@@ -36,93 +27,32 @@ module.exports = async (h) => {
     await clickText("목표 만들기"); await sleep(600);
   });
   await step("시험 마일스톤 등록", async () => {
-    await clickTab("목표");
-    const ok = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll("div")].filter((d) => d.innerText.includes("어학 점수 확보") && [...d.querySelectorAll("button")].some((b) => b.innerText.includes("실행")));
-      const inner = cards[cards.length - 1];
-      if (!inner) return false;
-      const btn = [...inner.querySelectorAll("button")].find((b) => b.innerText.includes("실행"));
-      if (btn) { btn.click(); return true; } return false;
-    });
-    if (!ok) throw new Error("어학 목표의 퀘스트 버튼 없음");
-    await sleep(600);
+    await openTaskModalFor("어학 점수 확보");
     await clickInModal("등록 ›");
     await sleep(1200); await closeModal();
   });
-  await step("성적표 사진 제출(시험 지급)", async () => {
-    await clickTab("실행");
-    await completeQuest("TOEIC");
-    await sleep(400);
-    await attach();
-    await clickInModal("제출하고 완료");
-    await sleep(1200); await closeModal();
-    await assertDone("TOEIC");
-  });
+  await step("성적표 사진 제출(시험 지급)", async () => { await submitPhotoEvidence("TOEIC"); });
   await shot("exam-done");
 
   // ── 운동 활동(체중·골격근량 → metric KR 반영)
-  await step("운동 활동 실행 등록", async () => {
-    await clickTab("목표");
-    const ok운동 = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll("div")].filter((d) => d.innerText.includes("하네스") && [...d.querySelectorAll("button")].some((b) => b.innerText.includes("실행")));
-      const inner = cards[cards.length - 1];
-      if (!inner) return false;
-      const btn = [...inner.querySelectorAll("button")].find((b) => b.innerText.includes("실행"));
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-    if (!ok운동) throw new Error("목표 카드의 퀘스트 버튼 없음");
-    await sleep(600);
-    try { await clickInModal("운동"); } catch {}
-    await typeInto("무엇을 하나요", "웨이트 40분");
-    await clickInModalExact("등록");
-    await sleep(600);
-    const e = await modalError(); if (e) errors.push("등록 거부: " + e);
-    await sleep(600); await closeModal();
-  });
+  await step("운동 활동 실행 등록", async () => { await addKindTask("하네스", "운동", "웨이트 40분"); });
   await step("운동 기록(체중·골격근량) 저장", async () => {
-    await clickTab("실행");
-    await completeQuest("웨이트 40분");
-    await sleep(400);
-    try { await typeInto("체중", "72"); } catch {}
-    try { await typeInto("골격근량", "33"); } catch {}
-    for (const t of ["기록", "완료", "저장"]) { try { await clickInModal(t); break; } catch {} }
-    await sleep(900); await closeModal();
-    await assertDone("웨이트 40분");
+    await logActivity("웨이트 40분", async () => {
+      try { await typeInto("체중", "72"); } catch {}
+      try { await typeInto("골격근량", "33"); } catch {}
+    });
   });
 
   // ── 미팅 활동(액션 아이템 → 팔로업 퀘스트 생성)
-  await step("미팅 활동 실행 등록", async () => {
-    await clickTab("목표");
-    const ok미팅 = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll("div")].filter((d) => d.innerText.includes("하네스") && [...d.querySelectorAll("button")].some((b) => b.innerText.includes("실행")));
-      const inner = cards[cards.length - 1];
-      if (!inner) return false;
-      const btn = [...inner.querySelectorAll("button")].find((b) => b.innerText.includes("실행"));
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-    if (!ok미팅) throw new Error("목표 카드의 퀘스트 버튼 없음");
-    await sleep(600);
-    try { await clickInModal("미팅"); } catch {}
-    await typeInto("무엇을 하나요", "협력사 미팅");
-    await clickInModalExact("등록");
-    await sleep(600);
-    const e = await modalError(); if (e) errors.push("등록 거부: " + e);
-    await sleep(600); await closeModal();
-  });
+  await step("미팅 활동 실행 등록", async () => { await addKindTask("하네스", "미팅", "협력사 미팅"); });
   await step("회의록 기록 + 액션 아이템 팔로업", async () => {
-    await clickTab("실행");
-    await completeQuest("협력사 미팅");
-    await sleep(400);
-    try { await typeInto("미팅 상대", "○○상사 김과장"); } catch {}
-    try { await typeInto("안건", "하네스 사양 협의"); } catch {}
-    try { await typeInto("결정사항", "도면 회신 후 재검토"); } catch {}
-    const ta = await page.$$("textarea");
-    if (ta[0]) { await ta[0].click(); await ta[0].type("사양서 초안 작성", { delay: 4 }); }
-    for (const t of ["기록", "완료", "저장"]) { try { await clickInModal(t); break; } catch {} }
-    await sleep(1000); await closeModal();
-    await assertDone("협력사 미팅");
+    await logActivity("협력사 미팅", async () => {
+      try { await typeInto("미팅 상대", "○○상사 김과장"); } catch {}
+      try { await typeInto("안건", "하네스 사양 협의"); } catch {}
+      try { await typeInto("결정사항", "도면 회신 후 재검토"); } catch {}
+      const ta = await page.$$("textarea");
+      if (ta[0]) { await ta[0].click(); await ta[0].type("사양서 초안 작성", { delay: 4 }); }
+    });
   });
   await shot("meet-done");
 

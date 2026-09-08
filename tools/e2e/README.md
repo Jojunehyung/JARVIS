@@ -8,7 +8,7 @@
 npm run build            # 프로젝트 루트에서 (커버리지까지 볼 거면 --sourcemap)
 npx vite preview --port 4173
 cd tools/e2e && npm i    # 최초 1회
-node run.js --tag run    # 68단계 시나리오
+node run.js --tag run    # 67단계 시나리오
 node perf.js --tag run   # 성능 측정(4배 CPU 스로틀)
 node cov_map.js out/run-coverage.json   # 미실행 원본 라인 매핑(--sourcemap 빌드 필요)
 node prof.js             # CPU 프로파일 상위 함수

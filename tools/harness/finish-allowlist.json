@@ -1,0 +1,7 @@
+{
+  "_doc": "Intentional findings with a reason. Mirror each entry in docs/exec-plans/tech-debt-tracker.md. unused: {name, file?, reason}; duplicates: {fingerprint, reason}; residue: {file, line, reason}; lang: {file, line|\"*\", reason}.",
+  "unused": [],
+  "duplicates": [],
+  "residue": [],
+  "lang": []
+}

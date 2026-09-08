@@ -1,13 +1,10 @@
 // A/B 성능 비교 — 두 빌드를 한 프로세스에서 번갈아 측정해 머신 부하 편차를 상쇄한다
 // 사용: node ab.js <urlA> <urlB> [반복]
-const puppeteer = require("puppeteer-core");
 const fs = require("fs");
+const { sleep, med, launchThrottled } = require("./bench-lib");
 const A = process.argv[2] || "http://localhost:5001/";
 const B = process.argv[3] || "http://localhost:5002/";
 const ROUNDS = +(process.argv[4] || 7);
-const CHROME = ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find((p) => fs.existsSync(p));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const med = (a) => { const x = [...a].sort((p, q) => p - q); return +(x.length % 2 ? x[(x.length - 1) / 2] : (x[x.length / 2 - 1] + x[x.length / 2]) / 2).toFixed(1); };
 
 async function measure(page, url) {
   await page.goto(url, { waitUntil: "networkidle2" });
@@ -47,9 +44,7 @@ async function measure(page, url) {
 }
 
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], defaultViewport: { width: 430, height: 932, isMobile: true } });
-  const page = await browser.newPage();
-  await page.emulateCPUThrottling(4);
+  const { browser, page } = await launchThrottled();
   const res = { A: [], B: [] };
   for (let r = 0; r < ROUNDS; r++) {
     res.A.push(await measure(page, A));

@@ -1,0 +1,6 @@
+{
+  "name": "life-manager-harness",
+  "private": true,
+  "type": "commonjs",
+  "description": "Repo harness scripts (finish gate, verification, doc generation). No dependencies."
+}

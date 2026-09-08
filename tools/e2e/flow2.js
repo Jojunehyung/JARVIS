@@ -1,18 +1,6 @@
 // 심화 플로우 — 증거 제출(사진), 학습 산출물 검증, 활동 기록(독서·운동·미팅), 승급, 롤모델, 마이그레이션
 module.exports = async (h) => {
-  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors } = h;
-
-  // 파일 첨부용 1x1 PNG
-  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
-  const fs = require("fs"), path = require("path");
-  const PNG_PATH = path.join(__dirname, "out", "shot.png");
-  fs.writeFileSync(PNG_PATH, PNG);
-  const attach = async () => {
-    const input = (await page.$('.fixed.inset-0 input[type="file"]')) || (await page.$('input[type="file"]'));
-    if (!input) throw new Error("파일 입력 없음");
-    await input.uploadFile(PNG_PATH);
-    await sleep(600);
-  };
+  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, completeQuest, closeModal, sleep, page, errors, attach, addKindTask, submitPhotoEvidence, logActivity } = h;
 
   // ── 자격 마일스톤 → 합격증 사진 제출(증거 게이트)
   await step("목표 탭 → 자격 KR 마일스톤 원클릭 등록", async () => {
@@ -91,42 +79,15 @@ module.exports = async (h) => {
   await shot("study-done");
 
   // ── 활동 기록(독서)
-  await step("독서 활동 실행 등록", async () => {
-    await clickTab("목표");
-    await clickText("실행 추가"); await sleep(500);
-    try { await clickInModal("독서"); } catch {}
-    await sleep(150);
-    await typeInto("무엇을 하나요", "기술서 30분 읽기");
-    await clickInModalExact("등록");
-    await sleep(600);
-    const e = await modalError(); if (e) errors.push("등록 거부: " + e);
-    await sleep(600); await closeModal();
-  });
+  await step("독서 활동 실행 등록", async () => { await addKindTask("하네스", "독서", "기술서 30분 읽기"); });
   await step("독후감 기록 후 완료", async () => {
-    await clickTab("실행");
-    await completeQuest("기술서 30분 읽기");
-    await sleep(400);
-    try { await clickText("⭐") } catch {}
-    const tas = await page.$$("textarea, input[type=text]");
-    if (tas[0]) { await tas[0].click(); await tas[0].type("설계 관점에서 배선 규칙을 다시 정리했다", { delay: 4 }); }
-    for (const t of ["기록", "완료", "저장"]) { try { await clickInModal(t); break; } catch {} }
-    await sleep(900); await closeModal();
-    await assertDone("기술서 30분 읽기");
+    await logActivity("기술서 30분 읽기", async () => {
+      try { await clickText("⭐"); } catch {}
+      const tas = await page.$$("textarea, input[type=text]");
+      if (tas[0]) { await tas[0].click(); await tas[0].type("설계 관점에서 배선 규칙을 다시 정리했다", { delay: 4 }); }
+    });
   });
   await shot("activity-done");
-
-  // ── 승급 관문(증거 제출)
-  await step("승급 심사 — 증거 제출", async () => {
-    await clickTab("성장");
-    try { await clickText("관문 증명하기"); } catch { errors.push("승급 버튼 없음"); }
-    await sleep(500);
-    const tas = await page.$$("textarea, input[type=text]");
-    if (tas[0]) { await tas[0].click(); await tas[0].type("사내 하네스 설계 검토 통과 — 도면 3건 승인", { delay: 4 }); }
-    try { await attach(); } catch {}
-    try { await clickText("증거 제출 · 승급"); } catch { errors.push("승급 제출 버튼 없음"); }
-    await sleep(900); await closeModal();
-  });
-  await shot("promote");
 
   // ── 롤모델 저장
   await step("롤모델 설정 저장", async () => {

@@ -13,15 +13,7 @@ module.exports = async (h) => {
     await clickText("목표 만들기"); await sleep(700);
   });
   await step("완주 목표에 실행 등록 후 완료(진행률 100%)", async () => {
-    const ok = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll("div")].filter((d) => d.innerText.includes("E2E 완주 목표") && [...d.querySelectorAll("button")].some((b) => b.innerText.includes("실행")));
-      const inner = cards[cards.length - 1];
-      const btn = inner && [...inner.querySelectorAll("button")].find((b) => b.innerText.includes("실행"));
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-    if (!ok) throw new Error("완주 목표의 퀘스트 버튼 없음");
-    await sleep(600);
+    await h.openTaskModalFor("E2E 완주 목표");
     await typeInto("무엇을 하나요", "마무리 점검 실행");
     await clickInModalExact("등록");
     await sleep(1000); await closeModal();
