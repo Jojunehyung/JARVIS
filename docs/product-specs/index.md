@@ -11,10 +11,10 @@ Modals (`Modal` shell, one at a time via `modal` state): `AddGoalModal`, `AddTas
 | Spec | Screen / flow |
 |---|---|
 | [scenario-harness-engineer.md](scenario-harness-engineer.md) | Reference scenario the demo data reproduces |
-| new-user-onboarding.md | Title → 6 steps → computed starting grades (Phase 4) |
-| home.md | Profile card, today's focus (pace), today's tasks (Phase 4) |
-| goals.md | OKR cards, four KR types, KR check-in, goal status, `AddGoalModal` (Phase 4) |
-| tasks.md | Per-goal groups, milestones, unassigned section, `AddTaskModal` with the KR bridge, `CatalogModal` (Phase 4) |
-| growth.md | Achievement wall, life metrics, skill-track gates, role model, direction advice, reset (Phase 4) |
-| evidence-modals.md | `EvidenceModal`, `EvidenceViewModal`, `ActivityLogModal`, `StudyVerifyModal` (Phase 4) |
-| feedback-overlays.md | RANK UP / ACHIEVEMENT overlays and toasts (Phase 4) |
+| [new-user-onboarding.md](new-user-onboarding.md) | Title → 6 steps → computed starting grades |
+| [home.md](home.md) | Profile card, today’s focus (pace), today’s tasks |
+| [goals.md](goals.md) | OKR cards, four KR types, KR check-in, goal status, `AddGoalModal` |
+| [tasks.md](tasks.md) | Per-goal groups, milestones, unassigned section, `AddTaskModal` with the KR bridge, `CatalogModal` |
+| [growth.md](growth.md) | Achievement wall, life metrics, skill-track gates, role model, direction advice, reset |
+| [evidence-modals.md](evidence-modals.md) | `EvidenceModal`, `EvidenceViewModal`, `ActivityLogModal`, `StudyVerifyModal` |
+| [feedback-overlays.md](feedback-overlays.md) | RANK UP / ACHIEVEMENT overlays and toasts |

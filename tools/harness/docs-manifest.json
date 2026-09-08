@@ -114,56 +114,56 @@
         "docs/design-docs/information-architecture.md",
         "docs/product-specs/index.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-4-1": {
       "from": "spec 4-1 onboarding",
       "to": [
         "docs/product-specs/new-user-onboarding.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-4-2": {
       "from": "spec 4-2 home",
       "to": [
         "docs/product-specs/home.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-4-3": {
       "from": "spec 4-3 goals",
       "to": [
         "docs/product-specs/goals.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-4-4": {
       "from": "spec 4-4 tasks + catalog",
       "to": [
         "docs/product-specs/tasks.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-4-5": {
       "from": "spec 4-5 growth",
       "to": [
         "docs/product-specs/growth.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-4-6": {
       "from": "spec 4-6 evidence/activity/study modals",
       "to": [
         "docs/product-specs/evidence-modals.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-4-7": {
       "from": "spec 4-7 overlays/toast",
       "to": [
         "docs/product-specs/feedback-overlays.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-5": {
       "from": "spec ch5 engine specs",
@@ -174,7 +174,7 @@
         "docs/design-docs/evidence-and-promotion.md",
         "docs/design-docs/metrics-and-role-model.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-6": {
       "from": "spec ch6 data model",
@@ -182,28 +182,28 @@
         "docs/design-docs/state-lifecycle.md",
         "docs/generated/db-schema.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-7": {
       "from": "spec ch7 demo data",
       "to": [
         "docs/design-docs/demo-data.md"
       ],
-      "status": "pending"
+      "status": "migrated"
     },
     "SPEC-8": {
       "from": "spec ch8 design + tone",
       "to": [
         "docs/DESIGN.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-9": {
       "from": "spec ch9 rule verdicts",
       "to": [
         "docs/QUALITY_SCORE.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-10": {
       "from": "spec ch10 tech architecture",
@@ -212,14 +212,14 @@
         "docs/FRONTEND.md",
         "docs/RELIABILITY.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-11": {
       "from": "spec ch11 current issues",
       "to": [
         "docs/exec-plans/tech-debt-tracker.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-12": {
       "from": "spec ch12 roadmap",
@@ -227,14 +227,14 @@
         "docs/exec-plans/backlog.md",
         "docs/PLANS.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-13": {
       "from": "spec ch13 decision history",
       "to": [
         "docs/design-docs/decision-log.md"
       ],
-      "status": "partial (Phase 4 completes)"
+      "status": "migrated"
     },
     "SPEC-A": {
       "from": "spec appendix A symbol index",

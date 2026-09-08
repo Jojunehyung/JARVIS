@@ -1,0 +1,73 @@
+# Evidence, activity log and study verification modals
+<!-- src: SPEC-4-6 -->
+
+Completing a 실행 (task) is not a click. `tryComplete` routes the task to the modal its own kind demands, and only that modal's `onDone` reaches `completeTask`. Photo evidence is mandatory for certifications and exams ([Rule 16](../design-docs/core-beliefs.md#rule-16)), study tasks are graded against `STUDY_REQ`, and activity tasks (`kind`) log their own artefact ([Rule 17](../design-docs/core-beliefs.md#rule-17)). Engine detail: [../design-docs/evidence-and-promotion.md](../design-docs/evidence-and-promotion.md).
+
+## Routing (`tryComplete`)
+| Condition (in order) | Modal |
+|---|---|
+| `isStudy && !evidence` | `StudyVerifyModal` (`modal.type === "study"`) |
+| `kind && !evidence` | `ActivityLogModal` (`"activity"`) |
+| `needsEvidence(task) && !evidence` | `EvidenceModal` (`"evidence"`) |
+| otherwise | `completeTask(task.id, null)` immediately |
+
+A task that already carries `evidence` (a repeated daily completion) never re-opens a modal.
+
+## `EvidenceModal`
+`needPhoto = task.isCert || task.isExam`; `docName` is `성적표` for exams and `합격증` for certifications.
+
+- Title: `시험 성적 — 성적표 제출` / `자격증 취득 — 합격증 제출` / `{diff}급 완료 — 증거 선택`.
+- Lead line, photo required: `「{title}」 — {docName} 사진을 첨부해야만 완료됩니다. 텍스트만으로는 인정되지 않아요.` Otherwise: `「{title}」 — 이 등급은 증거 없이는 완료되지 않아요. 해당하는 항목을 골라 주세요.`
+- Attachment (only when `needPhoto`): dashed button `📎 {docName} 사진 첨부 (필수)` with the sub-label `JPG·PNG · 기록에 원본 저장` → `resizeImage` (256 × 320, JPEG quality 0.82) → preview (`object-contain`, `max-h-48`) with an ✕ to clear and the confirmation `첨부 완료 — 제출 시 기록에 저장됩니다`. A read failure sets `이미지를 읽지 못했어요.`
+- `EvidencePicker` is always shown: the four `TASK_EV_CHIPS` (`합격·취득 완료`, `결과물 완성·제출`, `계약·판매·수익 발생`, `공식 기록·인증 있음`) plus `한 줄 메모 (선택)`.
+- Submit validation: no photo while `needPhoto` → `{docName} 사진을 첨부해야 완료할 수 있어요.`; no chip while `!needPhoto` → `증거 항목을 하나 이상 선택해 주세요.`
+- On success the photo is written to `liferpg-img-ev-{task.id}` and `evidence` becomes `📎 {docName} 첨부 · {selected chips joined by " · "}` plus ` — {memo}` when a memo was typed.
+- Button: `제출하고 완료`, or `제출하고 완료 — 첨부 필요` while it is disabled (disabled only when `needPhoto && !img`).
+
+## `EvidenceViewModal`
+Added 2026-09-07 as the reader side of the key convention. Opened from the `증거 보기` button on a completed row; title `증거 — {title}`.
+
+- Shows `완료일 {doneAt or the last doneDates entry or "-"}` and the stored `evidence` text, or `기록된 텍스트 없음`.
+- Loads `liferpg-img-ev-{id}`, `liferpg-img-study-{id}-1` and `-2` through `store.get`, then renders `{doc} 사진 {n}장` where `doc` is `합격증` / `성적표` / `산출물` / `증거` by task type. While loading: `사진 불러오는 중...`; when none exist: `첨부된 사진이 없습니다 — 텍스트 증거만 기록됐어요.`
+- Read-only. Deleting the task or resetting the app removes the same keys.
+
+## `ActivityLogModal`
+One modal, three shapes keyed by `task.kind`. Title: `독후감 — {title}` / `운동 기록 — {title}` / `회의록 — {title}`.
+
+### `book` — reading
+Five ⭐ buttons (`rating`), `한 줄 감상 (15자 이상)` textarea (placeholder `어떤 책이었고, 무엇이 남았는지`), and `기억에 남는 문장 (선택)`.
+Errors: `별점을 선택해 주세요.` and `한 줄 감상을 15자 이상 적어 주세요.`
+Evidence: `독후감 ★{rating} · {review, 60 chars}` plus ` · "{quote, 40 chars}"` when a quote was typed.
+
+### `fit` — exercise
+Lead line: `기록은 전부 선택입니다 — 측정한 날만 적으세요. 수치는 활성 목표의 같은 이름 수치 KR("체중"·"골격근량")에 자동 반영돼요.`
+Fields: `오늘 운동 — 예: 하체 + 유산소 40분`, numeric `체중 kg` and `골격근량 kg` (`step 0.1`). Nothing is required, so the button reads `완료 (기록은 선택)`. Footer: `이후의 일일 완료는 원탭이에요. 측정 갱신은 목표 탭의 수치 KR 체크인으로 언제든 가능합니다.`
+Evidence: `운동 기록 · {workout, 40 chars} · 체중 {w}kg · 골격근량 {m}kg` from whichever parts were filled, or `null` when nothing was.
+Measurements go to `applyMeasures`, which writes each value through `checkinKR` into the first `metric` KR of an active goal whose title contains that label — never into 인생 지표 (life metrics) directly ([Rule 17](../design-docs/core-beliefs.md#rule-17), [Rule 8](../design-docs/core-beliefs.md#rule-8)).
+
+### `meet` — meeting
+Fields: `미팅 상대 — 예: ○○상사 김부장`, `안건`, `결정사항 (선택)`, and an action-item textarea (`액션 아이템 — 줄바꿈으로 여러 개`, placeholder lines `견적서 수정본 송부` / `계약서 초안 검토`).
+With at least one action line the button `액션 {n}건을 팔로업 실행으로 생성` calls `onSpawn` per line → `spawnTask` creates a `once` task at difficulty D with the same `areaId` and `goalId`; afterwards it is disabled and reads `✓ 팔로업 실행 {n}건 생성됨`.
+Errors: `미팅 상대를 적어 주세요.` and `안건을 구체적으로 적어 주세요.` (agenda under 10 characters).
+Evidence: `회의록 · {상대} — 안건: {40 chars}` plus ` · 결정: {40 chars}` and the action-item count when present. Button: `기록하고 완료`.
+
+## `StudyVerifyModal`
+Title `학습 검증 — {source || title}`; `req = STUDY_REQ[task.diff] || STUDY_REQ.D`.
+
+| diff | `sum` | `art` | `crit` | `label` |
+|---|---|---|---|---|
+| E | 30 | 0 | no | `요약·새 지식 기재` |
+| D | 30 | 1 | no | `기재 + 산출물 1건` |
+| C | 60 | 1 | no | `요약 강화(60자+) + 산출물 1건` |
+| B | 100 | 2 | yes | `요약 강화(100자+) + 한계·비판 + 산출물 2건` |
+
+Only E and D can be created today; C and B stay for legacy data ([Rule 18](../design-docs/core-beliefs.md#rule-18)).
+
+- Badge `{diff}급 기준 — {req.label}`.
+- `핵심 요약 ({req.sum}자 이상)` with a live counter `{n}/{sum}` (rose below the threshold, emerald at or above it), placeholder `이 자료의 핵심 주장·내용을 자기 말로`.
+- `새로 알게 된 것 1가지`, placeholder `읽기 전엔 몰랐던 것`.
+- B only: `한계·비판 1줄 (B급 필수)`, placeholder `이 자료의 한계, 또는 동의하지 않는 지점`.
+- When `req.art > 0`: the output panel `산출물 {req.art}건 필수 — 현재 {artCount}건`, up to two photo thumbnails (✕ to remove), a `📎 사진` button (disabled at two) and a link textarea (`정리 링크 (블로그·노션·발표자료, 줄바꿈으로 여러 개)`). `artCount` = photos + link lines that start with `https`. Footer: `인정: 손필기·정리 사진, 블로그/노션 정리 글, 발표자료. 사진은 기기에, 링크는 기록에 원문 보존.`
+- Validation order: summary → `요약을 {sum}자 이상으로 적어 주세요 ({diff}급 기준).`; insight under 10 chars → `'새로 알게 된 것'을 구체적으로 적어 주세요.`; critique under 15 chars when required → `B급은 한계·비판 1줄(15자 이상)이 필요해요.`; outputs → `{diff}급은 산출물 {art}건이 필요해요 — 정리 사진 또는 정리 링크. (현재 {n}건)`.
+- Photos are written to `liferpg-img-study-{task.id}-{n}` (n = 1, 2). Evidence records the insight, the critique, the photo count and the first link, ending with ` · {diff}급 산출물 검증 통과`. **The summary body itself is never stored** — it is a comprehension gate, not a record.
+- Button: `검증 제출하고 완료`.

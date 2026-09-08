@@ -1,0 +1,54 @@
+# Feedback — overlays and toast
+<!-- src: SPEC-4-7 -->
+
+Two full-screen overlays (`Overlay`) and one toast (`ToastHost`) carry every confirmation the app gives. Both state facts only: what was paid, which goal moved, how far the 롤모델 (role model) is. Encouragement is not allowed, and a completion that contributed to no goal says so ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
+
+## `Overlay`
+`fixed inset-0 z-50` over `bg-black/75`; closes on click and after 2,400 ms. There is no queue — a second overlay replaces the first.
+
+### `gradeup` — RANK UP
+Cyan-bordered card, `anim-bigpop`. Contents in order: the label `RANK UP`, `PortraitSprite` at size 64 (the parametric portrait, so an uploaded profile photo is not shown), the 영역 (area) name, the new rank in 2xl cyan, then the proximity line and the closing sentence `증거로 증명된 승급입니다.`
+
+Proximity line, only when `roleTo != null`:
+
+| Case | Text |
+|---|---|
+| `roleTo !== roleFrom` | `롤모델 근접도 {from}% → {to}%` |
+| unchanged, area is a role-model target | `롤모델 근접도 변화 없음 — 이미 요구를 충족한 영역` |
+| unchanged, area is not targeted | `롤모델 요구 외 영역 — 근접도 변화 없음` |
+
+### `achieve` — ACHIEVEMENT
+Amber-bordered card. Label `ACHIEVEMENT`, `TrophySvg` (`kind || "ach"`, tier colour, size 34), the name in amber, then:
+- payout `D{d} · +{p}P` (the `D{d} · ` part only when `d` is known), formatted with thousands separators;
+- job fit, when the achievement carries one: `직무 적합 {tier} · {field}` plus ` 기준(교집합)` for an intersection verdict, then `×{mult}` ([Rule 15](../design-docs/core-beliefs.md#rule-15));
+- goal deltas: one `🎯 {title} {from}% → {to}%` line per active goal that moved; an empty array renders `연결된 목표 없음 — 목표 진행에 기여하지 않은 성취입니다`; when `deltas` is undefined (the goal-achieved overlay) the block is omitted entirely;
+- closing sentence `기록에 남았습니다.`
+
+### Which completions raise an overlay
+| Completion | Overlay | Trophy and 인생 지표 (life metrics) |
+|---|---|---|
+| exam (`isExam`) | always, `kind: "ach"`, tier from `examGrade(band.d)` | trophy + `metricsGain`; a specialisation also adds a `spec` trophy |
+| certification (`isCert`) | always, `kind: "ach"` with the job-fit fields | trophy + `metricsGain` on the weighted D |
+| study (`isStudy`) | always, `kind: "spec"` — so an E (10 P) or D (25 P) study task is still shown with `+{pts}P` | trophy and `metricsGain` only when `pts >= EVIDENCE_MIN` (150) |
+| legacy plain task with `pts >= 150` | `kind: "ach"`, tier from `legacyCertGrade(pts)` | trophy + `metricsGain` |
+| activity (`kind`) and plain task under 150 P | none — toast only | none |
+
+## Toast (`ToastHost`)
+A separate component holding its own state, driven imperatively through `toastRef.current.show({ msg })`, so showing or expiring a toast never re-renders the app root. `fixed bottom-16`, `anim-pop`, dismissed after 2,600 ms; a new message resets the timer.
+
+Messages, verbatim:
+
+| Trigger | Message |
+|---|---|
+| completion contributing to goals | `완료 · 🎯 {title} {from}→{to}%` (several joined by ` · `), plus ` · 보호권 사용` when a 보호권 (streak shield) was consumed |
+| completion contributing to none | `완료 · 목표 기여 없음 · 🔥 {streak}일`, plus ` · 보호권 사용` |
+| language specialisation, 2,700 ms later | `🎖 {language} 전문화 — 고난도 감쇠 하한 70% 적용` |
+| KR check-in that moved a goal | `체크인 · 🎯 {title} {from}% → {to}%` |
+| goal created | `목표 생성 · 시작 진행률 {p0}% · {D-day}` or ` · 기한 없음` |
+| task added | `실행이 추가됐어요` |
+| certification already paid | `{title} — 이미 등록된 자격입니다. 자격 지급은 영역과 무관하게 1회입니다.` |
+| profile photo saved / unreadable | `📷 사진이 등록됐어요` / `이미지를 읽지 못했어요` |
+| metrics check-in saved | `지표를 갱신했어요` |
+| role model saved | `롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다` |
+
+Overlays and toasts are scheduled with `queueMicrotask` from inside the `setState` updater, so the state change lands first and the feedback describes the state that now exists (see [../FRONTEND.md](../FRONTEND.md)).
