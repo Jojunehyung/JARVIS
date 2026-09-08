@@ -1,0 +1,103 @@
+// 성능 실측 — 초기 로드, 도감 오픈/검색 입력 지연, 롤모델 추천 계산, 탭 전환
+// 사용: node perf.js [--tag before]
+const puppeteer = require("puppeteer-core");
+const fs = require("fs"), path = require("path");
+const args = process.argv.slice(2);
+const arg = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
+const TAG = arg("--tag", "perf");
+const URL = arg("--url", "http://localhost:4173/");
+const CHROME = ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find((p) => fs.existsSync(p));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const N = 5; // 반복 측정
+
+(async () => {
+  const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], defaultViewport: { width: 430, height: 932, isMobile: true, hasTouch: true } });
+  const page = await browser.newPage();
+  await page.emulateCPUThrottling(4); // 모바일 근사(4배 감속)
+  const out = {};
+
+  // 1) 초기 로드 — 스크립트 평가 + 첫 렌더
+  const loads = [];
+  for (let i = 0; i < N; i++) {
+    await page.goto("about:blank");
+    const t0 = Date.now();
+    await page.goto(URL, { waitUntil: "networkidle2" });
+    await page.waitForFunction(() => document.body.innerText.includes("인생"));
+    loads.push(Date.now() - t0);
+  }
+  out.초기로드ms = loads.sort((a, b) => a - b)[Math.floor(N / 2)];
+
+  // 데모 상태로 진입(자격·퀘스트·목표가 있는 상태)
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: "networkidle2" });
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll("button")].find((b) => b.innerText.includes("데모 데이터"));
+    btn?.click();
+  });
+  await sleep(800);
+
+  const clickTab = async (n) => { await page.evaluate((t) => { const nav = document.querySelector("nav"); [...nav.querySelectorAll("button")].find((b) => b.innerText.includes(t))?.click(); }, n); await sleep(350); };
+
+  // 2) 도감 오픈(1,011종 목록 첫 렌더)
+  const opens = [];
+  for (let i = 0; i < N; i++) {
+    await clickTab("퀘스트");
+    const t = await page.evaluate(async () => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감");
+      const t0 = performance.now();
+      btn.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return performance.now() - t0;
+    });
+    opens.push(t);
+    await page.evaluate(() => { const ov = [...document.querySelectorAll(".fixed.inset-0")].pop(); const b = [...ov.querySelectorAll("button")].find((x) => x.querySelector("svg") && !x.innerText.trim()); b?.click(); });
+    await sleep(250);
+  }
+  out.도감오픈ms = +(opens.sort((a, b) => a - b)[Math.floor(N / 2)]).toFixed(1);
+
+  // 3) 도감 검색 입력 지연(키 입력 → 리스트 반영)
+  await clickTab("퀘스트");
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감")?.click());
+  await sleep(400);
+  const keys = [];
+  for (const ch of ["기", "사", " ", "전", "기"]) {
+    const el = await page.$('.fixed.inset-0 input[placeholder*="자격증 검색"]');
+    const t0 = Date.now();
+    await el.type(ch, { delay: 0 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    keys.push(Date.now() - t0);
+  }
+  out.도감검색_키입력ms = keys;
+  out.도감검색_중앙값ms = keys.sort((a, b) => a - b)[Math.floor(keys.length / 2)];
+  await page.evaluate(() => { const ov = [...document.querySelectorAll(".fixed.inset-0")].pop(); const b = [...ov.querySelectorAll("button")].find((x) => x.querySelector("svg") && !x.innerText.trim()); b?.click(); });
+  await sleep(250);
+
+  // 4) 탭 전환 렌더
+  const tabs = [];
+  for (const t of ["홈", "목표", "퀘스트", "성장", "홈", "목표"]) {
+    const ms = await page.evaluate(async (name) => {
+      const nav = document.querySelector("nav");
+      const btn = [...nav.querySelectorAll("button")].find((b) => b.innerText.includes(name));
+      const t0 = performance.now();
+      btn.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return performance.now() - t0;
+    }, t);
+    tabs.push(+ms.toFixed(1));
+    await sleep(200);
+  }
+  out.탭전환ms = tabs;
+  out.탭전환_중앙값ms = tabs.slice().sort((a, b) => a - b)[Math.floor(tabs.length / 2)];
+
+  // 5) 자바스크립트 힙·번들 크기
+  const metrics = await page.metrics();
+  out.JS힙MB = +(metrics.JSHeapUsedSize / 1048576).toFixed(1);
+  const dist = "c:/Users/조준형/Desktop/life/files/dist/assets";
+  const js = fs.readdirSync(dist).find((f) => f.endsWith(".js"));
+  out.번들KB = +(fs.statSync(path.join(dist, js)).size / 1024).toFixed(1);
+
+  fs.writeFileSync(path.join(__dirname, "out", `${TAG}-perf.json`), JSON.stringify(out, null, 1));
+  console.log(`[성능 ${TAG}]`);
+  for (const [k, v] of Object.entries(out)) console.log(`  ${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
+  await browser.close();
+})();

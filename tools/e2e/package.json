@@ -1,0 +1,11 @@
+{
+  "name": "life-manager-e2e",
+  "private": true,
+  "description": "인생 상태창 E2E 하니스 — 설치된 Chrome/Edge를 puppeteer-core로 구동(브라우저 다운로드 없음)",
+  "scripts": {
+    "test": "node run.js --tag run",
+    "perf": "node perf.js --tag run",
+    "prof": "node prof.js"
+  },
+  "dependencies": { "puppeteer-core": "^24.0.0", "source-map": "^0.7.4" }
+}

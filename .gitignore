@@ -1,3 +1,8 @@
 node_modules/
 dist/
 *.local
+release/
+tools/e2e/out/
+tools/e2e/node_modules/
+tools/harness/out/
+.claude/harness-state/

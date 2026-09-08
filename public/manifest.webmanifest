@@ -1,10 +1,17 @@
 {
-  "name": "인생 상태창",
-  "short_name": "인생 상태창",
+  "name": "인생 관리",
+  "short_name": "인생 관리",
   "description": "목표(OKR) — 실행 — 증거. 시장 기준으로 평가받는 인생 관리 도구.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#09090b",
-  "icons": []
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
