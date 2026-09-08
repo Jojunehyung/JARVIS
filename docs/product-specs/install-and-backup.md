@@ -1,0 +1,45 @@
+# Installing the app, and backing up the records
+<!-- src: SPEC-10 -->
+
+The build is a progressive web app: an Android phone installs it to the home screen, it opens without browser chrome, and it works in airplane mode. Nothing about the data model changes — records still live in this device's `localStorage` under the frozen `liferpg-*` keys ([Rule 12](../design-docs/core-beliefs.md#rule-12)) — so the app also exports and imports a backup file, which is the only way back from a cleared browser.
+
+## What makes it installable
+- `public/manifest.webmanifest`: `id`, relative `start_url` and `scope` (so the same build runs from a domain root or a project subpath), `display: standalone`, `orientation: portrait`, and PNG icons at 192 and 512 plus a maskable 512 and a 180 Apple icon. The icons are generated from `public/icon.svg` by `tools/harness/gen-icons.js`, which renders them in the Chrome the E2E already drives — no new dependency.
+- `index.html`: the Apple touch icon and the standalone meta tags.
+- `vite.config.js` sets `base: "./"`, so every asset reference in the build is relative.
+
+## Offline — the service worker
+`tools/harness/gen-sw.js` is a build plugin that emits `dist/sw.js` carrying the hashed asset list and a build id:
+- **Hashed assets** (`assets/*.js`, `*.css`) are immutable, so they are served cache-first and filled in on a miss.
+- **The document** is network-first with a cache fallback. A deploy is picked up as soon as the phone has a connection, and airplane mode still opens the last build.
+- On activate, every cache whose name does not match this build id is deleted, then `clients.claim()` takes over the open page. `src/main.jsx` reloads once on `controllerchange`, so the running page never mixes old markup with new assets.
+
+Registration happens in production only (`import.meta.env.PROD`), from `./sw.js` resolved against the document, so a subpath deploy works. The single-file demo (`vite.demo.config.js`) has no service worker and is unaffected. The app also calls `navigator.storage.persist()` on start, which asks the browser not to evict the records under storage pressure.
+
+Service workers need a secure context. `localhost` counts, which is why the E2E can assert all of this; a phone reaching a PC over plain HTTP on the local network does **not**, which is why installing requires hosting over HTTPS.
+
+## Deploying
+`npm run build` produces `dist/`, and that folder is the whole app. Any static HTTPS host serves it as-is:
+
+| Host | Steps | Notes |
+|---|---|---|
+| Netlify Drop | drag `dist/` onto the drop page | random unlisted subdomain, no repository, HTTPS included |
+| Cloudflare Pages | upload `dist/` as a direct upload project | same shape, unlisted subdomain |
+| GitHub Pages | push the repo and publish `dist/` | the repository itself is public on the free tier |
+
+The address is what the phone opens; nothing about the records leaves the device just because the code is hosted.
+
+## Installing on Android
+1. Open the address in Chrome.
+2. Menu → `앱 설치` (or `홈 화면에 추가`).
+3. Launch it from the home screen: no address bar, portrait, its own icon.
+4. Turn on airplane mode and open it again — it should start normally. That is the check that the service worker took.
+
+## Backup — `백업 내보내기` / `백업 불러오기`
+Both sit on the growth tab under `백업`, with the line `기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.`
+
+**Export** writes `life-manager-backup-{date}.json` holding `{ app: "life-manager", exportedAt, state, images }`, where `images` is every evidence and study photo plus the profile photo, keyed exactly as they are stored. Toast: `백업 파일을 내보냈어요 · 사진 {n}장`.
+
+**Import** reads a file back, runs its `state` through `migrate` like any other save, and refuses anything without the app marker (`이 앱의 백업 파일이 아니에요`) or unreadable (`백업 파일을 읽지 못했어요`). It then asks for confirmation naming the export date and stating that the current records will be gone, and only then writes the photos, replaces the state and returns to the home tab. Toast: `백업을 불러왔어요 · {date} 기록`.
+
+Because the file contains the evidence photos, it is as sensitive as the app itself — see [../SECURITY.md](../SECURITY.md).

@@ -140,6 +140,7 @@ module.exports = async (h) => {
   await require("./flow3.js")(h);
   await require("./flow5.js")(h);
   await require("./flow4.js")(h);
+  await require("./flow6.js")(h);
 
   // ── Demo data path (separate session)
   await step("enter demo data", async () => {

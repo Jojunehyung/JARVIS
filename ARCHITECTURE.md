@@ -57,6 +57,7 @@ Schema and storage keys: [docs/generated/db-schema.md](docs/generated/db-schema.
 | `npm run finish` | dead code / duplicates / residue / language gate (also the Stop hook) |
 | `npm run smoke` | pure-function engine checks |
 | `npm run docs:gen` / `docs:check` / `lang:check` | regenerate generated docs / doc integrity / language policy |
+| `node tools/harness/gen-icons.js` | re-render the app icons from `public/icon.svg` (after an icon change) |
 
 Current status (2026-09-08): schema **v14**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 67 steps green, real-device smoke still pending (backlog 2).
 

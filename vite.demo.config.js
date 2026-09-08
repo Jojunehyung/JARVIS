@@ -33,6 +33,7 @@ function singleFileDemo() {
       // remove links that mean nothing under file://
       html = html
         .replace(/\s*<link rel="manifest"[^>]*>/g, "")
+        .replace(/\s*<link rel="apple-touch-icon"[^>]*>/g, "")
         .replace(/\s*<link rel="modulepreload"[^>]*>/g, "");
 
       if (/(?:src|href)="(?!data:)/.test(html)) {

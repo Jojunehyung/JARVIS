@@ -4327,7 +4327,7 @@ function StudyVerifyModal({ task, onClose, onDone }) {
 
 /* ───────────────────────── Growth tab ───────────────────────── */
 
-function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMetrics }) {
+function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMetrics, onExport, onImport }) {
   const rg = roleGap(state);
   return (
     <>
@@ -4488,6 +4488,15 @@ function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMet
         </div>
       </section>
 
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <SectionLabel tone="text-zinc-400">백업</SectionLabel>
+        <p className="text-xs text-zinc-500 mt-1.5">기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.</p>
+        <div className="flex gap-1.5 mt-2.5">
+          <button onClick={onExport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
+          <button onClick={onImport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 불러오기</button>
+        </div>
+      </section>
+
       <button onClick={onReset} className="w-full py-2.5 text-xs text-rose-400 border border-rose-400/30 rounded-xl flex items-center justify-center gap-1.5">
         <RotateCcw size={12} /> 데이터 초기화
       </button>
@@ -4634,6 +4643,7 @@ export default function LifeManager() {
   const [imgs, setImgs] = useState({});
   const fileRef = useRef(null);
   const slotRef = useRef(null);
+  const importRef = useRef(null);
   const [day, setDay] = useState(dstr());
   const dayRef = useRef(null);
   const today = day;
@@ -5009,6 +5019,41 @@ export default function LifeManager() {
     });
   };
 
+  /* Backup — the save plus its evidence photos in one file. The app has no cloud copy, so this is
+     the only way back from a cleared browser. Import replaces everything and asks first. */
+  const exportBackup = async () => {
+    const images = {};
+    for (const t of state?.tasks || []) {
+      for (const k of [`liferpg-img-ev-${t.id}`, `liferpg-img-study-${t.id}-1`, `liferpg-img-study-${t.id}-2`]) {
+        const v = await store.get(k).catch(() => null);
+        if (v) images[k] = v;
+      }
+    }
+    const prof = await store.get("liferpg-img-profile").catch(() => null);
+    if (prof) images["liferpg-img-profile"] = prof;
+    const blob = new Blob([JSON.stringify({ app: "life-manager", exportedAt: today, state, images }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `life-manager-backup-${today}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast({ msg: `백업 파일을 내보냈어요 · 사진 ${Object.keys(images).length}장` });
+  };
+  const importBackup = async (file) => {
+    let data;
+    try { data = JSON.parse(await file.text()); } catch { showToast({ msg: "백업 파일을 읽지 못했어요" }); return; }
+    const next = migrate(data?.state);
+    if (!next || data?.app !== "life-manager") { showToast({ msg: "이 앱의 백업 파일이 아니에요" }); return; }
+    const when = data.exportedAt || "날짜 미상";
+    if (!window.confirm(`${when}에 내보낸 백업으로 되돌려요. 지금 이 기기의 기록은 모두 사라져요. 계속할까요?`)) return;
+    for (const [k, v] of Object.entries(data.images || {})) store.set(k, v);
+    setState(applyDailyTick(next));
+    setImgs({ profile: data.images?.["liferpg-img-profile"] || null });
+    setPhase("main"); setTab("home"); setModal(null);
+    showToast({ msg: `백업을 불러왔어요 · ${when} 기록` });
+  };
+  const askImport = () => importRef.current?.click();
+
   const resetAll = async () => {
     // Clears the evidence photo keys (rule 16) and the profile photo along with the state — left behind they keep piling up.
     for (const t of state?.tasks || []) {
@@ -5046,6 +5091,8 @@ export default function LifeManager() {
   return (
     <Shell>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+      <input ref={importRef} type="file" accept="application/json,.json" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importBackup(f); }} />
       <header className="px-5 pt-5 pb-3 flex items-center justify-between">
         <div>
           <div className="text-xs tracking-widest text-cyan-400 font-mono font-bold">LIFE MANAGER</div>
@@ -5085,6 +5132,7 @@ export default function LifeManager() {
             onRoleModel={() => setModal({ type: "role" })}
             onRoleAdvice={() => setModal({ type: "roleAdvice" })}
             onReset={resetAll}
+            onExport={exportBackup} onImport={askImport}
             onMetrics={() => setModal({ type: "metrics" })} />
         )}
       </main>

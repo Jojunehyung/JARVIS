@@ -140,10 +140,12 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | `liferpg-img-ev-${task.id}` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
 | `liferpg-img-study-${task.id}-1` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
 | `liferpg-img-study-${task.id}-2` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-profile` | 4654 | App root |
-| `liferpg-img-${slot}` | 4691 | App root |
-| `liferpg-img-ev-${id}` | 4714 | App root |
-| `liferpg-img-ev-${t.id}` | 5015 | App root |
+| `liferpg-img-profile` | 4664 | App root |
+| `liferpg-img-${slot}` | 4701 | App root |
+| `liferpg-img-ev-${id}` | 4724 | App root |
+| `liferpg-img-ev-${t.id}` | 5027 | App root |
+| `liferpg-img-study-${t.id}-1` | 5027 | App root |
+| `liferpg-img-study-${t.id}-2` | 5027 | App root |
 
 ## Demo data (`demoState`)
 

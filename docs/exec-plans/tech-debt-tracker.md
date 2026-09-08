@@ -55,5 +55,7 @@ Severity: **S1** cannot run / data loss / wrong payout · **S2** behaviour contr
 
 | R-13 | S1 | Extracting `roleRecommendations` out of `RoleAdviceModal` left the JSX referencing the removed local `h`, crashing the direction-advice screen | 2026-09-09 — caught by the E2E run (a page error plus a knock-on step failure), fixed by destructuring `h` from the returned gap |
 
+| R-14 | S1 | The backup file input was inserted into `EvidenceModal` instead of the app root, so `importRef` was undefined at render and the growth tab crashed | 2026-09-09 — caught by the E2E (22 knock-on step failures from one page error), fixed by moving the input into the root render |
+
 ## Allowlist mirror (`tools/harness/finish-allowlist.json`)
 _None yet._

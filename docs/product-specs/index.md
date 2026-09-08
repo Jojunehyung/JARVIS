@@ -12,6 +12,7 @@ Modals (`Modal` shell, one at a time via `modal` state): `BriefingModal`, `Journ
 |---|---|
 | [scenario-harness-engineer.md](scenario-harness-engineer.md) | Reference scenario the demo data reproduces |
 | [new-user-onboarding.md](new-user-onboarding.md) | Title → 6 steps → computed starting grades |
+| [install-and-backup.md](install-and-backup.md) | Installing the app on Android, offline behaviour, and the backup file |
 | [daily-briefing.md](daily-briefing.md) | Today's briefing, the home card, and the journal |
 | [home.md](home.md) | Profile card, briefing card, today’s focus (pace), today’s agenda |
 | [goals.md](goals.md) | OKR cards, four KR types, KR check-in, goal status, `AddGoalModal` |
