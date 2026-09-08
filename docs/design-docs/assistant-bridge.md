@@ -40,5 +40,36 @@ Thresholds are named constants: `CHECKIN_STALE_DAYS` 7, `AREA_STALE_DAYS` 30, `A
 ## `roleRecommendations(state)`
 Extracted from `RoleAdviceModal` so the briefing and the direction-advice screen compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
+## The bridge — `buildAssistantPacket(state, today)`
+A text packet the user copies into an external chat. It opens with the role and the four rules the assistant must follow (facts and numbers only, `해요체`, no judging scores or difficulty, proposals limited to day-sized tasks under an existing goal, and a closing JSON block), then the data:
+
+| Section | Content | Cap |
+|---|---|---|
+| `## 오늘 브리핑` | briefing lines of severity 2 and above | 12 |
+| `## 목표` | active goals: deadline, D-day, progress, pace, KR remainders | 5 goals × 4 KRs |
+| `## 열린 실행` | the agenda in order: goal, title, difficulty, cadence, due | 12 |
+| `## 최근 일지 (7일)` | journal entries clipped to 200 characters | 7 |
+| `## 최근 주간 리뷰` | the newest review | 1 |
+| `## 지표·연속` | metrics, last check-in, streak, shields, role-model proximity | 3 lines |
+
+The whole packet is capped at 4,000 characters; journal entries are dropped oldest-first until it fits. Photos are never included.
+
+`BridgeModal` always renders the packet in a read-only textarea, which doubles as the fallback when the clipboard is unavailable: `navigator.clipboard.writeText` first, then `select()` + `execCommand("copy")` inside the click gesture, which is what makes the copy work from `file://` where there is no secure context.
+
+## The reply — `parseAssistantReply(text, state)`
+Only a fenced ```` ```json ```` block is read, and only `tasks` (at most five) and `note`. Each proposal is validated before it can be imported:
+
+| Field | Rule |
+|---|---|
+| `title` | trimmed to 60 characters; empty becomes `제목 없음` |
+| `goal` | matched against active goal titles exactly, then by substring either way; no match leaves `goalId` null and the row shows a `목표 선택` dropdown ([Rule 18](core-beliefs.md#rule-18)) |
+| `diff` | E, D or C — anything else becomes D. C is 60 points, below `EVIDENCE_MIN`, so an import can never bypass the evidence gate |
+| `type` | `daily` or `once`, defaulting to `once`; `due` is kept only for a `once` task with a `YYYY-MM-DD` date |
+| `kind` | `detectKind(title)` wins over the proposed kind |
+
+A proposal is refused, greyed out with a reason, when the title matches a certification (`certByTitle`), contains an exam family name, or ends in `취득` — those exist only through the KR bridge ([Rule 19](core-beliefs.md#rule-19)) — or when the same title is already open under that goal.
+
+Confirming calls `importTasks`, which prepends plain tasks built exactly like `addQuest` builds them and stores the raw reply on today's journal entry. A reply with no JSON block, or with an empty list, is stored as text only. Re-pasting on the same day overwrites the stored reply; the latest one wins.
+
 ## What the assistant never does
 It reads. It does not complete tasks, promote areas, submit evidence, or change metrics, payouts, D values, or grades. Tapping a briefing line routes into the normal path — `tryComplete` for a task, a tab switch, or an existing modal — so every gate still applies.

@@ -137,13 +137,13 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1225 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3334 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 3334 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 3334 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-profile` | 4449 | App root |
-| `liferpg-img-${slot}` | 4486 | App root |
-| `liferpg-img-ev-${id}` | 4509 | App root |
-| `liferpg-img-ev-${t.id}` | 4768 | App root |
+| `liferpg-img-ev-${task.id}` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-profile` | 4654 | App root |
+| `liferpg-img-${slot}` | 4691 | App root |
+| `liferpg-img-ev-${id}` | 4714 | App root |
+| `liferpg-img-ev-${t.id}` | 5015 | App root |
 
 ## Demo data (`demoState`)
 

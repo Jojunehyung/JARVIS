@@ -2220,6 +2220,87 @@ const buildBriefing = (state, today) => {
   };
 };
 
+/* ── Assistant bridge — the app writes a text packet, the user talks to an external chat, the reply comes back as text.
+   No key, no network (rule 7 amendment). A reply can only propose plain tasks; it never completes, promotes or scores. ── */
+const PACKET_MAX = 4000;
+const PACKET_HEAD = [
+  "역할: 이 사용자의 목표·실행·기록을 점검하는 비서예요. 아래 데이터만 근거로 답해요.",
+  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
+  "3) 제안은 목표에 연결된 하루분량 실행만 가능해요 (난이도 E/D/C). 자격·시험 실행은 제안하지 않아요.",
+  "4) 답변 형식: ① 오늘 점검 요약 5줄 이내 ② 다음 단계 1개 ③ 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"tasks\": []).",
+  "```json",
+  '{"tasks":[{"goal":"<목표 제목 그대로>","title":"...","diff":"E|D|C","type":"daily|once","due":"YYYY-MM-DD","kind":"book|fit|meet"}],"note":"한 줄"}',
+  "```",
+];
+
+const buildAssistantPacket = (state, today) => {
+  const brief = buildBriefing(state, today);
+  const act = state.act || {};
+  const m = state.metrics || {};
+  const rg = roleGap(state);
+  const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
+  const sec = (title, lines) => (lines.length ? [`## ${title}`, ...lines] : [`## ${title}`, "- 없음"]);
+
+  const briefLines = brief.sections.flatMap((s) => s.items.filter((it) => it.severity >= 2).map((it) => `- [${s.title}] ${it.text}`)).slice(0, 12);
+  const goalLines = active.map((g) => {
+    const pc = paceOf(g, state);
+    const krs = (g.krs || []).slice(0, 4).map((kr) => `${kr.title} ${krRemainText(kr, g, state)}`).join(" · ");
+    return `- ${g.title} · ${g.deadline ? `${g.deadline} ${ddayStr(g.deadline)}` : "기한 없음"} · 진행 ${Math.round(pc.p * 100)}% · ${pc.label}${krs ? ` / KR: ${krs}` : ""}`;
+  });
+  const taskLines = agendaOf(state, today).all.slice(0, 12).map((q) => {
+    const g = state.goals?.find((x) => x.id === q.goalId);
+    return `- [${g?.title || "목표 없음"}] ${q.title} · ${q.diff} · ${q.type === "daily" ? "매일" : "1회"} · 기한 ${q.due || "없음"}`;
+  });
+  const journal = [...(state.journal || [])].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
+  const journalLines = journal.map((e) => `- ${e.date}: ${e.text.slice(0, 200)}${e.ai ? " (AI 답변 있음)" : ""}`);
+  const review = [...(state.reviews || [])].sort((a, b) => b.weekOf.localeCompare(a.weekOf))[0];
+  const reviewLines = review ? [`- ${review.weekOf} 주 · 잘된 것: ${review.wins} · 막힌 것: ${review.blocks}`] : [];
+  const stateLines = [
+    `- 자산 ${m.asset} · 영향력 ${m.infl} · 외형 ${m.body} · 마지막 체크인 ${act.lastCheckin || "없음"}`,
+    `- 연속 ${act.streak}일 · 마지막 완료 ${act.lastActive || "없음"} · 보호권 ${act.shieldsLeft}`,
+    rg ? `- 롤모델 ${rg.name} 근접도 ${rg.match}%` : "- 롤모델 미설정",
+  ];
+
+  const build = (jl) => [
+    `[인생 관리 — 오늘 점검 요청 ${today}]`, ...PACKET_HEAD, "",
+    ...sec("오늘 브리핑", briefLines), ...sec("목표", goalLines), ...sec("열린 실행", taskLines),
+    ...sec("최근 일지 (7일)", jl), ...sec("최근 주간 리뷰", reviewLines), ...sec("지표·연속", stateLines),
+  ].join("\n");
+
+  let lines = journalLines;
+  let out = build(lines);
+  while (out.length > PACKET_MAX && lines.length) { lines = lines.slice(0, -1); out = build(lines); }
+  return out;
+};
+
+// Reads the JSON block an assistant appends. Everything is validated here: a proposal is a plain task
+// under an existing goal, difficulty at most C, and never a certification or exam (rules 18, 19).
+const IMPORT_MAX = 5;
+const parseAssistantReply = (text, state) => {
+  const raw = String(text || "");
+  const m = raw.match(/```json\s*([\s\S]*?)```/i);
+  let data = null;
+  if (m) { try { data = JSON.parse(m[1]); } catch { data = null; } }
+  const active = (state.goals || []).filter((g) => g.status === "active");
+  const open = (state.tasks || []).filter((q) => (q.type === "daily" ? true : q.status !== "done"));
+  const proposals = (Array.isArray(data?.tasks) ? data.tasks : []).slice(0, IMPORT_MAX).map((t, n) => {
+    const title = String(t?.title || "").trim().slice(0, 60) || "제목 없음";
+    const wanted = String(t?.goal || "").trim();
+    const goal = active.find((g) => g.title === wanted) || active.find((g) => wanted && (g.title.includes(wanted) || wanted.includes(g.title))) || null;
+    const diff = ["E", "D", "C"].includes(t?.diff) ? t.diff : "D";
+    const type = t?.type === "daily" ? "daily" : "once";
+    const due = type === "once" && /^\d{4}-\d{2}-\d{2}$/.test(t?.due || "") ? t.due : undefined;
+    const dk = detectKind(title);
+    const kind = dk || (["book", "fit", "meet"].includes(t?.kind) ? t.kind : undefined);
+    let reject = null;
+    if (certByTitle(title) || EXAMS.some((e) => title.includes(e.n)) || /취득$/.test(title)) reject = "자격·시험 실행은 목표의 KR에서만 등록돼요";
+    else if (goal && open.some((q) => q.goalId === goal.id && q.title.trim() === title)) reject = "이미 등록된 실행이에요";
+    return { key: `p${n}`, title, goalId: goal?.id || null, goalTitle: goal?.title || wanted || "목표 미지정", diff, type, due, kind, reject };
+  });
+  return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
+};
+
 /* ── State lifecycle ── */
 /**
  * @schema v15 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
@@ -2813,7 +2894,7 @@ function Onboarding({ onStart, onDemo }) {
 }
 
 /* ───────────────────────── Home — today's focus ───────────────────────── */
-function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onBriefing, onJournal }) {
+function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onBriefing, onJournal, onReview }) {
   const a = state.act;
   const brief = buildBriefing(state, today);
   const firstAlert = brief.sections.flatMap((s) => s.items).find((it) => it.severity === 3);
@@ -2855,6 +2936,7 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
         <div className="flex gap-1.5 mt-2.5">
           <button onClick={onBriefing} className="flex-1 py-2 rounded-xl bg-amber-400 text-zinc-950 font-black text-xs">브리핑 열기 ›</button>
           <button onClick={onJournal} className="flex-1 py-2 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">일지 쓰기</button>
+          <button onClick={onReview} className="flex-1 py-2 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">주간 리뷰</button>
         </div>
       </section>
 
@@ -3252,6 +3334,12 @@ function BriefingModal({ state, today, onClose, onAction }) {
           </div>
         ))}
         <div className="flex gap-1.5">
+          <button onClick={() => onAction({ type: "bridge", mode: "send" })}
+            className="flex-1 py-2.5 rounded-xl bg-amber-400 text-zinc-950 font-black text-xs">AI에게 보내기</button>
+          <button onClick={() => onAction({ type: "bridge", mode: "paste" })}
+            className="flex-1 py-2.5 rounded-xl border border-amber-700 text-amber-300 font-bold text-xs">AI 답변 붙여넣기</button>
+        </div>
+        <div className="flex gap-1.5">
           <button onClick={() => onAction({ type: "journal" })}
             className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">일지 쓰기</button>
           <button onClick={onClose}
@@ -3298,6 +3386,123 @@ function JournalModal({ state, today, onClose, onSave }) {
             </div>
           )}
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Assistant bridge — copy the packet out, paste the reply back ── */
+function BridgeModal({ state, today, initialMode, onClose, onImport, onStoreReply }) {
+  const [mode, setMode] = useState(initialMode || "send");
+  const [reply, setReply] = useState("");
+  const [parsed, setParsed] = useState(null);
+  const [picked, setPicked] = useState({});
+  const [goalSel, setGoalSel] = useState({});
+  const taRef = useRef(null);
+  const packet = useMemo(() => buildAssistantPacket(state, today), [state, today]);
+  const active = (state.goals || []).filter((g) => g.status === "active");
+
+  const copy = async () => {
+    const ta = taRef.current;
+    try {
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(packet); onStoreReply(null, "복사했어요 — AI 채팅에 붙여넣어요"); return; }
+      throw new Error("no clipboard");
+    } catch {
+      try { ta?.select(); document.execCommand("copy"); onStoreReply(null, "복사했어요 — AI 채팅에 붙여넣어요"); }
+      catch { onStoreReply(null, "자동 복사 불가 — 글을 길게 눌러 복사해요"); }
+    }
+  };
+  const check = () => {
+    const r = parseAssistantReply(reply, state);
+    setParsed(r);
+    setPicked(Object.fromEntries(r.proposals.filter((p) => !p.reject && p.goalId).map((p) => [p.key, true])));
+  };
+  const confirm = () => {
+    const list = (parsed?.proposals || [])
+      .filter((p) => picked[p.key] && !p.reject)
+      .map((p) => ({ ...p, goalId: p.goalId || goalSel[p.key] }))
+      .filter((p) => p.goalId);
+    onImport(list, parsed.raw);
+  };
+
+  return (
+    <Modal title={mode === "send" ? "AI에게 보내기" : "AI 답변 붙여넣기"} onClose={onClose}>
+      {mode === "send" ? (
+        <div className="space-y-3">
+          <p className="text-xs text-zinc-500">아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요.</p>
+          <textarea ref={taRef} readOnly value={packet} rows={9}
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs font-mono" />
+          <div className="flex gap-1.5">
+            <button onClick={copy} className="flex-1 py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">복사</button>
+            <button onClick={() => setMode("paste")} className="flex-1 py-3 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-sm">AI 답변 붙여넣기 ›</button>
+          </div>
+        </div>
+      ) : !parsed ? (
+        <div className="space-y-3">
+          <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={9}
+            placeholder="AI 답변을 여기에 붙여넣어요"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+          <button onClick={check} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">답변 확인</button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="text-sm font-bold">제안 실행 확인 — {parsed.proposals.length}건</div>
+          {parsed.note && <p className="text-xs text-zinc-400">{parsed.note}</p>}
+          {parsed.proposals.length === 0 ? (
+            <p className="text-xs text-zinc-500">제안 실행 없음 — 답변은 일지에 저장돼요.</p>
+          ) : parsed.proposals.map((p) => (
+            <div key={p.key} className={`bg-zinc-950 rounded-xl p-3 ${p.reject ? "opacity-50" : ""}`}>
+              <label className="flex items-start gap-2">
+                <input type="checkbox" disabled={!!p.reject || !(p.goalId || goalSel[p.key])} checked={!!picked[p.key]}
+                  onChange={(e) => setPicked((s) => ({ ...s, [p.key]: e.target.checked }))} className="mt-0.5" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-semibold truncate">{p.title}</span>
+                  <span className="block text-xs text-zinc-500">{p.goalTitle} · {p.diff} · {p.type === "daily" ? "매일" : "1회"}{p.due ? ` · 기한 ${p.due}` : ""}</span>
+                  {p.reject && <span className="block text-xs text-rose-400 mt-0.5">{p.reject}</span>}
+                </span>
+              </label>
+              {!p.reject && !p.goalId && (
+                <select value={goalSel[p.key] || ""} onChange={(e) => setGoalSel((s) => ({ ...s, [p.key]: e.target.value }))}
+                  className="w-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs">
+                  <option value="">목표 선택</option>
+                  {active.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}
+                </select>
+              )}
+            </div>
+          ))}
+          <button onClick={confirm} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">선택한 실행 등록</button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ── Weekly review — what worked, what blocked, beside the numbers of that week ── */
+function ReviewModal({ state, today, onClose, onSave, onCheckin }) {
+  const weekOf = mondayOf(today);
+  const mine = (state.reviews || []).find((r) => r.weekOf === weekOf);
+  const [wins, setWins] = useState(mine?.wins || "");
+  const [blocks, setBlocks] = useState(mine?.blocks || "");
+  const [err, setErr] = useState("");
+  const doneThisWeek = (state.tasks || []).reduce((n, q) => n + (q.type === "daily"
+    ? (q.doneDates || []).filter((d) => d >= weekOf).length
+    : q.doneAt && q.doneAt >= weekOf ? 1 : 0), 0);
+  const achThisWeek = (state.areas || []).reduce((n, p) => n + (p.achievements || []).filter((a) => a.date >= weekOf).length, 0);
+  const submit = (thenCheckin) => {
+    if (!wins.trim() && !blocks.trim()) { setErr("잘된 것 또는 막힌 것을 한 줄 이상 적어요."); return; }
+    onSave({ wins: wins.trim(), blocks: blocks.trim() }, thenCheckin);
+  };
+  return (
+    <Modal title={`주간 리뷰 — ${weekOf} 주`} onClose={onClose}>
+      <div className="space-y-3">
+        <p className="text-xs font-mono text-zinc-400">이번 주 완료 {doneThisWeek}건 · 성취 기록 {achThisWeek}건</p>
+        <textarea value={wins} onChange={(e) => setWins(e.target.value)} rows={3}
+          placeholder="잘된 것 — 사실·수치로" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        <textarea value={blocks} onChange={(e) => setBlocks(e.target.value)} rows={3}
+          placeholder="막힌 것 — 원인" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={() => submit(false)} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">리뷰 저장</button>
+        <button onClick={() => submit(true)} className="w-full py-2.5 rounded-xl border border-violet-800 text-violet-300 font-bold text-xs">저장하고 지표 체크인 ›</button>
       </div>
     </Modal>
   );
@@ -4740,7 +4945,49 @@ export default function LifeManager() {
     if (!next) return;
     if (next.type === "task") { const q = state.tasks.find((x) => x.id === next.id); if (q) tryComplete(q); return; }
     if (next.type === "goals" || next.type === "growth") { setTab(next.type); return; }
-    setModal({ type: next.type });
+    setModal(next.type === "bridge" ? { type: "bridge", mode: next.mode } : { type: next.type });
+  };
+  // Stores the pasted reply on today's journal entry. Text only — it never changes a score (rule 7 amendment).
+  const upsertReply = (s, raw) => {
+    if (!raw) return;
+    const e = (s.journal || []).find((x) => x.date === today);
+    if (e) { e.ai = raw.slice(0, 4000); e.aiDate = today; }
+    else s.journal = [{ id: uid(), date: today, text: "", ai: raw.slice(0, 4000), aiDate: today }, ...(s.journal || [])];
+  };
+  const importTasks = (list, raw) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const made = list.map((p) => {
+        const goal = s.goals.find((g) => g.id === p.goalId);
+        return {
+          id: uid(), title: p.title, areaId: goal?.areaId || s.areas[0]?.id, goalId: p.goalId,
+          diff: p.diff, pts: DIFFS[p.diff].pts, type: p.type, status: "todo", doneDates: [], createdAt: today,
+          ...(p.due ? { due: p.due } : {}), ...(p.kind ? { kind: p.kind } : {}),
+        };
+      });
+      s.tasks = [...made, ...s.tasks];
+      upsertReply(s, raw);
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: list.length ? `AI 제안 ${list.length}건 등록 · 일지에 답변 저장` : "AI 답변을 일지에 저장했어요 — 제안 실행 없음" });
+  };
+  const storeReply = (raw, msg) => {
+    if (raw) setState((prev) => { const s = structuredClone(prev); upsertReply(s, raw); return s; });
+    if (msg) showToast({ msg });
+  };
+  const saveReview = ({ wins, blocks }, thenCheckin) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const weekOf = mondayOf(today);
+      const r = (s.reviews || []).find((x) => x.weekOf === weekOf);
+      if (r) { r.wins = wins; r.blocks = blocks; r.date = today; }
+      else s.reviews = [{ id: uid(), weekOf, wins, blocks, date: today }, ...(s.reviews || [])];
+      s.act = { ...s.act, lastReview: today };
+      return s;
+    });
+    setModal(thenCheckin ? { type: "metrics" } : null);
+    showToast({ msg: "주간 리뷰를 저장했어요" });
   };
   const saveJournal = (text, silent) => {
     setState((prev) => {
@@ -4815,7 +5062,8 @@ export default function LifeManager() {
         {tab === "home" && (
           <HomeTab state={state} today={today} imgs={imgs} onUpload={askUpload} onClearImg={clearImg}
             onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("tasks")}
-            onBriefing={() => setModal({ type: "briefing" })} onJournal={() => setModal({ type: "journal" })} />
+            onBriefing={() => setModal({ type: "briefing" })} onJournal={() => setModal({ type: "journal" })}
+            onReview={() => setModal({ type: "review" })} />
         )}
         {tab === "goals" && (
           <GoalsTab state={state}
@@ -4897,6 +5145,13 @@ export default function LifeManager() {
       )}
       {modal?.type === "journal" && (
         <JournalModal state={state} today={today} onClose={() => setModal(null)} onSave={saveJournal} />
+      )}
+      {modal?.type === "bridge" && (
+        <BridgeModal state={state} today={today} initialMode={modal.mode} onClose={() => setModal(null)}
+          onImport={importTasks} onStoreReply={storeReply} />
+      )}
+      {modal?.type === "review" && (
+        <ReviewModal state={state} today={today} onClose={() => setModal(null)} onSave={saveReview} />
       )}
 
       {overlay && <Overlay data={overlay} onClose={() => setOverlay(null)} />}

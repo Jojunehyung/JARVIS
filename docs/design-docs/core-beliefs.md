@@ -28,6 +28,8 @@ Grade letters use a single cut everywhere: A ≥ 82, B ≥ 65, C ≥ 50, D ≥ 3
 ### Rule 7 — No game mechanics
 XP, levels, gold, shops, criticals, random rewards, boss effects, story, and dating-sim elements are **never reintroduced**. AI features (goal coach, difficulty judgement, promotion quiz, study oral check — all removed 2026-08-29) require explicit user approval before any reintroduction.
 
+**Amendment 2026-09-09 (user approval):** the **assistant bridge** is the one approved AI touchpoint. The app builds a text packet the user copies into an external chat and pastes the reply back (`buildAssistantPacket` / `parseAssistantReply`); there is no API key and no network call. In-app AI — generation, judgement, scoring — stays excluded. A pasted reply can only *propose* plain `daily`/`once` tasks, which enter through the normal task path and its gates; it never completes a task, promotes an area, submits evidence, or changes metrics, payouts, D values, or grades.
+
 ### Rule 8 — Life metrics: automatic from achievements, manual by check-in, never idle
 Life metrics (`metrics.asset / infl / body`) change only through `metricsGain` (D/10-based) on achievements, promotions, and goal completion, plus manual check-in corrections. No idle (time-based) growth. `body` (appearance — exercise, diet, grooming) is self-assessment only: never build an automatic source for it. Objective measures belong in a goal's metric KR (body-fat %, etc.).
 

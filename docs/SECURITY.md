@@ -8,7 +8,9 @@ Life Manager is a local-only, single-user web app with no backend, no accounts, 
 - The single-file demo (`release/life-demo.html`) opened from `file://` has its own origin and storage; it contains no user data at build time.
 
 ## Data in transit
-None. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static.
+None by the app. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static.
+
+The assistant bridge (`AI에게 보내기`) is the one place data leaves deliberately: it renders a text packet — goals, open tasks, the last seven journal entries, the last weekly review, life metrics and the streak, never photos — into a textarea and the clipboard. Copying it is a user action, and pasting it into a third-party chat puts that text outside this threat model. The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score ([Rule 7](design-docs/core-beliefs.md#rule-7)).
 
 ## Code execution surfaces
 - Runtime: React renders user text as text (no `dangerouslySetInnerHTML`); links entered as study artifacts are stored as strings and rendered as text.
@@ -18,7 +20,7 @@ None. The production build makes no fetch/XHR; fonts and icons are bundled. Mani
 ## Rules that are also safety properties
 - Frozen data tables and payout formulas ([Rules 1–6](design-docs/core-beliefs.md#rule-1)) prevent silent score inflation.
 - Frozen storage keys and append-only migrations ([Rule 12](design-docs/core-beliefs.md#rule-12)) prevent data loss on upgrade.
-- No AI or network features without explicit user approval ([Rule 7](design-docs/core-beliefs.md#rule-7)) — adding one would change this document's threat model.
+- No in-app AI and no network calls ([Rule 7](design-docs/core-beliefs.md#rule-7)); the approved assistant bridge moves text only through the clipboard, under user action, and is described under "Data in transit".
 
 ## Reporting
 There is no external bug bounty; open an entry in `docs/exec-plans/tech-debt-tracker.md` with severity S1 for data-loss or exposure issues.

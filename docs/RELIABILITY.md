@@ -19,7 +19,8 @@ Reliability for a local-only app means: the user's state survives every version,
 | `flow.js` | onboarding (6 steps) → goal with metric/count/cert KRs → KR bridge → daily completion → catalog → metrics check-in → reload persistence → schema version assert; ends with data reset (image keys cleared) |
 | `flow2.js` | certification milestone with the photo gate (blocked without photo), evidence viewer, study artifact verification, reading log, role model |
 | `flow3.js` | profile photo, exam KR → score report, fitness and meeting logs (follow-up task), promotion with evidence chips, direction advice, task deletion, streak after a day gap |
-| `flow4.js` | goal completion and removal, v10 / no-version / v13 migrations |
+| `flow4.js` | goal completion and removal, v10 / no-version / v13 / v14 migrations |
+| `flow5.js` | due dates and the home agenda, the daily briefing (new day, same day, streak line), journal persistence, the assistant packet and reply import, the weekly review |
 | `cov_map.js` | maps V8 coverage back to `src/LifeManager.jsx` lines (needs `vite build --sourcemap`) |
 | `perf.js`, `prof.js`, `ab.js`, `ab_onboard.js`, `rows.js` | performance probes (see below) |
 
@@ -31,5 +32,5 @@ Single-run timings on this machine swing by ±50 % with background load. Compare
 ## Known limits
 - No unit-test runner; engine checks are `smoke-logic.js` and the E2E. The planned file split (backlog 3) adds unit tests for `calcExamPayout`, `krProgress`, `migrate`.
 - Dates use local time (`dstr`); a timezone change can shift streak boundaries.
-- `today` is fixed at render; a session crossing midnight shows the previous day until the next state change.
+- A session crossing midnight now re-reads the date on focus and on a 60-second tick, so `today` follows the clock; only a timezone change still shifts streak boundaries.
 - Photos are stored as resized data URLs; very large evidence sets are bounded by `localStorage` quota (≈ 5 MB per origin).

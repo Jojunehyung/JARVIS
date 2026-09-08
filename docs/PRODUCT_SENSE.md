@@ -34,7 +34,7 @@ People preparing for a job, a career change, or a certification who want a ledge
 Home (profile · today's focus = pace · today's tasks) / Goals (OKR cards · KR check-in · direction advice) / Tasks (grouped by goal: daily tasks + milestones · catalog) / Growth (life-metric check-in · skill track gates · role-model proximity · achievement wall). Bottom tab bar with these four; onboarding in six steps; ~10 modals; two full-screen overlays (RANK UP / ACHIEVEMENT); one toast.
 
 ## Non-goals (what we do not build)
-- Any AI feature (user decision 2026-08-29; reintroduction needs explicit approval).
+- In-app AI: generation, judgement, scoring (user decision 2026-08-29). The only AI touchpoint is the copy/paste assistant bridge approved 2026-09-09 ([Rule 7](design-docs/core-beliefs.md#rule-7)): no key, no network, proposals only.
 - Game mechanics: XP, levels, gold, random rewards, story, dating-sim elements ([Rule 7](design-docs/core-beliefs.md#rule-7)).
 - Social features, rankings, sharing.
 - Encouraging copy, streak guilt, notifications that nag.

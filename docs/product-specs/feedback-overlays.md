@@ -50,5 +50,9 @@ Messages, verbatim:
 | profile photo saved / unreadable | `📷 사진이 등록됐어요` / `이미지를 읽지 못했어요` |
 | metrics check-in saved | `지표를 갱신했어요` |
 | role model saved | `롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다` |
+| journal saved | `일지를 저장했어요` |
+| weekly review saved | `주간 리뷰를 저장했어요` |
+| assistant packet copied | `복사했어요 — AI 채팅에 붙여넣어요` or `자동 복사 불가 — 글을 길게 눌러 복사해요` |
+| assistant reply imported | `AI 제안 {n}건 등록 · 일지에 답변 저장` or `AI 답변을 일지에 저장했어요 — 제안 실행 없음` |
 
 Overlays and toasts are scheduled with `queueMicrotask` from inside the `setState` updater, so the state change lands first and the feedback describes the state that now exists (see [../FRONTEND.md](../FRONTEND.md)).

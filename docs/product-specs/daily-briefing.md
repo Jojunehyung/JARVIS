@@ -22,7 +22,7 @@ Title `오늘 브리핑 — {today}`. One block per section, each with a `Sectio
 | `주간 리뷰` | whether this week's review exists |
 | `일지` | today's journal length and whether an assistant reply is stored |
 
-Footer: `일지 쓰기` and `닫기`. Closing the modal — by either button, the X, or the backdrop — stamps `act.briefingSeen = today`, so the briefing opens once per day.
+Footer: `AI에게 보내기`, `AI 답변 붙여넣기`, then `일지 쓰기` and `닫기`. Closing the modal — by either button, the X, or the backdrop — stamps `act.briefingSeen = today`, so the briefing opens once per day.
 
 ## When it opens
 - At boot, when `act.briefingSeen !== today`.
@@ -33,6 +33,12 @@ Footer: `일지 쓰기` and `닫기`. Closing the modal — by either button, th
 Title `일지 — {today}`. A textarea with the placeholder `오늘 한 일 · 수치 · 막힌 것 — 사실만 적어요`, a `저장` button (toast `일지를 저장했어요`), and an autosave when the modal is closed with unsaved changes. When today's entry holds an assistant reply it is shown below under `AI 답변 · {aiDate}`. A `최근 7일` list shows the previous entries collapsed to `{date} · {first 40 characters}`; tapping one expands it with its stored reply. Empty state: `일지 기록 없음`.
 
 Entries are stored one per date in `journal[]` and upserted, so writing again on the same day replaces that day's text.
+
+## `BridgeModal` (`modal.type: "bridge"`)
+Two modes. **Send** (`AI에게 보내기`) explains `아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요.`, shows the packet in a read-only textarea and offers `복사` (toast `복사했어요 — AI 채팅에 붙여넣어요`, or `자동 복사 불가 — 글을 길게 눌러 복사해요` when the browser refuses) and `AI 답변 붙여넣기 ›`. **Paste** takes the reply in a textarea (`AI 답변을 여기에 붙여넣어요`) and `답변 확인` shows `제안 실행 확인 — {n}건`: one checkbox row per proposal reading `{title} · {goal} · {diff} · {매일|1회} · 기한 {due}`, a `목표 선택` dropdown when the goal could not be matched, and a greyed row with its reason when the proposal is refused. `선택한 실행 등록` imports the checked rows and stores the reply; the toast is `AI 제안 {n}건 등록 · 일지에 답변 저장`, or `AI 답변을 일지에 저장했어요 — 제안 실행 없음` when nothing was proposed.
+
+## `ReviewModal` (`modal.type: "review"`)
+Title `주간 리뷰 — {Monday} 주`. A facts line `이번 주 완료 {n}건 · 성취 기록 {m}건` counts the completions and achievements dated on or after that Monday. Two textareas, `잘된 것 — 사실·수치로` and `막힌 것 — 원인`, prefilled from this week's review if one exists. Empty on both sides shows `잘된 것 또는 막힌 것을 한 줄 이상 적어요.` `리뷰 저장` upserts by week and stamps `act.lastReview`; `저장하고 지표 체크인 ›` does the same and then opens the metrics check-in. Toast: `주간 리뷰를 저장했어요`.
 
 ## Metrics check-in
 `saveMetrics` now also stamps `act.lastCheckin = today`, and the growth tab's metrics footer ends with ` · 마지막 체크인 {date or 없음}`. The stamp is a date, not a verdict: the metric values themselves still move only through `metricsGain` and the check-in sliders ([Rule 8](../design-docs/core-beliefs.md#rule-8)).

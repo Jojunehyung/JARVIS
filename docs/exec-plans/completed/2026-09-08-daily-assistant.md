@@ -1,5 +1,5 @@
 # Daily assistant — briefing, agenda, journal, weekly review, assistant bridge
-- Status: active (Phases A and B done, Phase C next)
+- Status: completed
 - Date: 2026-09-08
 - Needs approval: granted — the user approved the plan, which covers the new `migrate` block (schema v15) and the [Rule 7](../../design-docs/core-beliefs.md#rule-7) amendment
 - Agents: main agent → cleanup → verifier → docs-syncer
@@ -16,7 +16,7 @@ Implement the approved daily-assistant plan in three phases, each ending at a fu
 ## Steps
 - [x] **Phase A — schema v15, due dates, agenda.** `migrate` v15 block, `freshState`, `@schema`, `demoState` fixtures; date helpers (`daysBetween`, `mondayOf`, `lastDoneDate`, `doneTodayCount`), `ddayStr` off-by-one fix, `agendaOf`, `DueChip`; due-date input in `AddTaskModal` and the KR-bridge default; `HomeTab` agenda; `TaskTab` chip; E2E `setValue` helper, `flow.js` schema assertion 14 → 15, `flow4.js` v14 → v15 fixture, `flow5.js` steps 1-3; docs and regeneration.
 - [x] **Phase B — briefing, journal, check-in stamp.** Extract `roleRecommendations` from `RoleAdviceModal`; `buildBriefing`; `BriefingModal` with the boot auto-open and the `day` state; home briefing card; `JournalModal` and `saveJournal`; `saveMetrics` stamps `act.lastCheckin`; E2E `reload` gains `keepModal`, `flow5.js` steps 4-8.
-- [ ] **Phase C — assistant bridge, weekly review, rule amendment.** `buildAssistantPacket`, `parseAssistantReply`, `BridgeModal`, `importTasks`, `storeReply`; `ReviewModal` and `saveReview`; Rule 7 amendment, decision log, `PRODUCT_SENSE`, `SECURITY`, new `daily-briefing.md` and `assistant-bridge.md`; `flow5.js` steps 9-16.
+- [x] **Phase C — assistant bridge, weekly review, rule amendment.** `buildAssistantPacket`, `parseAssistantReply`, `BridgeModal`, `importTasks`, `storeReply`; `ReviewModal` and `saveReview`; Rule 7 amendment, decision log, `PRODUCT_SENSE`, `SECURITY`, new `daily-briefing.md` and `assistant-bridge.md`; `flow5.js` steps 9-16.
 
 ## Verification
 Per phase: `npm run verify` (E2E grows from 67 to about 85 steps, 0 failures, 0 console errors), `npm run finish` exit 0, `npm run docs:gen && npm run docs:check`. After Phase C also `npm run build:demo` and open `release/life-demo.html` from `file://` to confirm the briefing opens and the clipboard fallback works without a secure context.
@@ -24,8 +24,8 @@ Per phase: `npm run verify` (E2E grows from 67 to about 85 steps, 0 failures, 0 
 ## Cleanup checklist
 - [x] `npm run finish` exit 0 after Phase A (the duplicated migration fixture preamble was merged into `migrateFixture`)
 - [x] `npm run finish` exit 0 after Phase B
-- [ ] `npm run finish` exit 0 after Phase C (share `DueChip`, `agendaOf`, `doneTodayCount` rather than copying row markup; keep the modal textareas distinct or allowlist with a reason)
-- [ ] allowlist additions mirrored in `tech-debt-tracker.md`
+- [x] `npm run finish` exit 0 after Phase C (share `DueChip`, `agendaOf`, `doneTodayCount` rather than copying row markup; keep the modal textareas distinct or allowlist with a reason)
+- [x] no allowlist additions were needed; the one duplicate found (the migration fixture preamble) was merged into `migrateFixture`
 
 ## Docs to sync
 `state-lifecycle.md`, `goal-engine.md`, `home.md`, `tasks.md`, `growth.md`, `metrics-and-role-model.md`, `feedback-overlays.md`, `demo-data.md`, `information-architecture.md`, `ARCHITECTURE.md`, `RELIABILITY.md`, `PRODUCT_SENSE.md`, `SECURITY.md`, `core-beliefs.md` (Rule 7), `decision-log.md`, `backlog.md` (item 4 done, item 5 partly), `tech-debt-tracker.md` (TD-04 second half resolved), `tools/e2e/README.md`, new `docs/product-specs/daily-briefing.md` and `docs/design-docs/assistant-bridge.md` plus both index files, and `docs/generated/*` via `npm run docs:gen`.

@@ -6,7 +6,7 @@ Per-screen behaviour as implemented. Rules by number → [../design-docs/core-be
 ## Screen map
 Bottom tab bar (`NAV`, four tabs): **홈** `HomeTab` · **목표** `GoalsTab` · **실행** `TaskTab` · **성장** `GrowthTab`. Header on every tab: `LIFE MANAGER` / nickname · status / 🔥 streak · 🛡 shields. Phases: `loading` → `onboard` (`Onboarding`, six steps + title) → `main`.
 
-Modals (`Modal` shell, one at a time via `modal` state): `BriefingModal`, `JournalModal`, `AddGoalModal`, `AddTaskModal`, `EvidenceModal`, `EvidenceViewModal`, `StudyVerifyModal`, `ActivityLogModal`, `PromoteModal`, `RoleModelModal`, `RoleAdviceModal`, `CatalogModal`, `MetricsModal`. Full-screen overlays (`Overlay`): `gradeup` (RANK UP), `achieve` (ACHIEVEMENT). One toast (`ToastHost`).
+Modals (`Modal` shell, one at a time via `modal` state): `BriefingModal`, `JournalModal`, `BridgeModal`, `ReviewModal`, `AddGoalModal`, `AddTaskModal`, `EvidenceModal`, `EvidenceViewModal`, `StudyVerifyModal`, `ActivityLogModal`, `PromoteModal`, `RoleModelModal`, `RoleAdviceModal`, `CatalogModal`, `MetricsModal`. Full-screen overlays (`Overlay`): `gradeup` (RANK UP), `achieve` (ACHIEVEMENT). One toast (`ToastHost`).
 
 | Spec | Screen / flow |
 |---|---|
