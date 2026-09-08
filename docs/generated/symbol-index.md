@@ -7,129 +7,129 @@ Data-table regions (skipped by duplicate detection, frozen by rules 6/15): `RANK
 
 | Symbol | Kind | Line | Section |
 |---|---|---|---|
-| `RANKS` | data | 9 | 상수: 등급·판정 규칙 |
-| `DIFFS` | data | 22 | 상수: 등급·판정 규칙 |
-| `EVIDENCE_MIN` | const | 31 | 상수: 등급·판정 규칙 |
-| `scoreTier` | const | 32 | 상수: 등급·판정 규칙 |
-| `DIFF_RAW_VERSION` | const | 34 | 상수: 등급·판정 규칙 |
-| `certP` | const | 35 | 상수: 등급·판정 규칙 |
-| `achGrade` | const | 36 | 상수: 등급·판정 규칙 |
-| `legacyCertGrade` | const | 37 | 상수: 등급·판정 규칙 |
-| `GRADE_TEXT` | const | 38 | 상수: 등급·판정 규칙 |
-| `GRADE_BORDER` | const | 39 | 상수: 등급·판정 규칙 |
-| `CERT_CATS` | data | 42 | 상수: 등급·판정 규칙 |
-| `CERTS` | data | 44 | 상수: 등급·판정 규칙 |
-| `TASK_EV_CHIPS` | data | 1081 | V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변. |
-| `GATE_CHIPS` | data | 1082 | V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변. |
-| `AREA_PRESETS` | data | 1093 | V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변. |
-| `ROLE_PRESETS` | data | 1094 | V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변. |
-| `TASK_TEMPLATES` | data | 1095 | V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변. |
-| `detectKind` | const | 1101 | V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변. |
-| `goalKinds` | const | 1109 | V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변. |
-| `AGE_OPTS` | data | 1127 | 초기 설정 선택지 (정형 데이터) |
-| `STATUS_OPTS` | data | 1128 | 초기 설정 선택지 (정형 데이터) |
-| `EDU_OPTS` | data | 1129 | 초기 설정 선택지 (정형 데이터) |
-| `MAJOR_FIELDS` | data | 1137 | 초기 설정 선택지 (정형 데이터) |
-| `KNOWLEDGE_FIELDS` | data | 1138 | 초기 설정 선택지 (정형 데이터) |
-| `CAREER_OPTS` | data | 1139 | 초기 설정 선택지 (정형 데이터) |
-| `LEAD_OPTS` | data | 1148 | 초기 설정 선택지 (정형 데이터) |
-| `BIZ_OPTS` | data | 1152 | 초기 설정 선택지 (정형 데이터) |
-| `OUTPUT_OPTS` | data | 1161 | 초기 설정 선택지 (정형 데이터) |
-| `gFromD` | const | 1167 | 초기 설정 선택지 (정형 데이터) |
-| `computeGrades` | const | 1170 | 초기 설정 선택지 (정형 데이터) |
-| `uid` | const | 1215 | 초기 설정 선택지 (정형 데이터) |
-| `dstr` | const | 1216 | 초기 설정 선택지 (정형 데이터) |
-| `shiftDay` | const | 1220 | 초기 설정 선택지 (정형 데이터) |
-| `monthStr` | const | 1221 | 초기 설정 선택지 (정형 데이터) |
-| `KEY` | const | 1225 | 저장소 (localStorage + 메모리 폴백) — §3-1 시밍 2026-09-03 |
-| `mem` | const | 1226 | 저장소 (localStorage + 메모리 폴백) — §3-1 시밍 2026-09-03 |
-| `store` | const | 1227 | 저장소 (localStorage + 메모리 폴백) — §3-1 시밍 2026-09-03 |
-| `Bar` | component | 1248 | AI 헬퍼 |
-| `DiffBadge` | component | 1259 | AI 헬퍼 |
-| `CertBadge` | component | 1274 | AI 헬퍼 |
-| `SKINS` | const | 1282 | AI 헬퍼 |
-| `HAIR_COLORS` | const | 1283 | AI 헬퍼 |
-| `OUTFITS` | const | 1284 | AI 헬퍼 |
-| `HAIR_STYLES` | const | 1285 | AI 헬퍼 |
-| `FACES` | const | 1286 | AI 헬퍼 |
-| `PortraitSprite` | component | 1292 | 실사풍 초상 일러스트 (프로필 사진용 버스트샷) |
-| `resizeImage` | const | 1497 | 실사풍 초상 일러스트 (프로필 사진용 버스트샷) |
-| `Portrait` | component | 1514 | 실사풍 초상 일러스트 (프로필 사진용 버스트샷) |
-| `statClamp` | const | 1521 | 공용 유틸 |
-| `TIER_COLORS` | const | 1523 | 공용 유틸 |
-| `TrophySvg` | component | 1525 | 공용 유틸 |
-| `EmptyGoalSvg` | component | 1556 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `EmptyQuestSvg` | component | 1569 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `EmptyWallSvg` | component | 1585 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `WallFrame` | component | 1598 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `OnboardingHeroSvg` | component | 1608 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `POINT_POLICY_VERSION` | const | 1638 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `EXAMS` | data | 1639 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `LANG_KO` | data | 1675 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `examGrade` | const | 1676 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `DIM_STEPS` | data | 1677 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `EXAM_BY_ID` | const | 1679 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `examOf` | const | 1680 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `calcExamPayout` | function | 1681 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `SectionLabel` | component | 1707 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `Chip` | component | 1711 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `EvidencePicker` | component | 1725 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `composeEvidence` | const | 1740 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `Modal` | component | 1742 | 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 |
-| `needsEvidence` | const | 1762 | 메인 앱 |
-| `METRICS_META` | data | 1764 | 메인 앱 |
-| `KR_CHIP` | const | 1771 | 메인 앱 |
-| `DIFF_TONE` | const | 1777 | 메인 앱 |
-| `DIFF_SEL` | const | 1778 | 메인 앱 |
-| `DIFF_PT_TEXT` | const | 1779 | 메인 앱 |
-| `ddayStr` | const | 1781 | 메인 앱 |
-| `krProgress` | const | 1787 | 메인 앱 |
-| `krDoneCount` | const | 1807 | 메인 앱 |
-| `goalProgress` | const | 1811 | 메인 앱 |
-| `elapsedRatio` | const | 1815 | 메인 앱 |
-| `paceOf` | const | 1823 | 메인 앱 |
-| `krRemainText` | const | 1834 | 메인 앱 |
-| `roleGap` | const | 1852 | 메인 앱 |
-| `certGainOf` | const | 1863 | 메인 앱 |
-| `examBandGain` | const | 1869 | 메인 앱 |
-| `DIR_CATS` | data | 1874 | 메인 앱 |
-| `JOB_FIELDS` | data | 1905 | 메인 앱 |
-| `areaCatHints` | const | 1906 | 메인 앱 |
-| `TIER_MULT` | const | 1924 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `TIER_CLS` | const | 1925 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `WEIGHT_MATRIX` | data | 1927 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `CERT_W_EXC` | data | 1952 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `CERT_BY_NAME` | const | 2004 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `CERTS_LONGEST_FIRST` | const | 2005 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `CERT_NAME_LC` | const | 2006 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `CERTS_BY_CAT` | const | 2007 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `certOf` | const | 2008 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `certTitleCache` | const | 2009 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `certByTitle` | const | 2011 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `DIR_ALIAS` | data | 2019 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `normDirs` | const | 2024 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `jobWeightForCert` | const | 2025 | 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) |
-| `migrate` | const | 2066 | 상태 수명 |
-| `applyDailyTick` | const | 2108 | 상태 수명 |
-| `freshState` | const | 2115 | 상태 수명 |
-| `demoState` | const | 2131 | 상태 수명 |
-| `Shell` | component | 2180 | 상태 수명 |
-| `Onboarding` | component | 2197 | 온보딩 (클릭 중심) |
-| `HomeTab` | component | 2607 | 홈 — 오늘의 초점 |
-| `GoalsTab` | component | 2713 | 목표 탭 (OKR) |
-| `AddGoalModal` | component | 2849 | 새 목표 모달 (OKR 빌더) |
-| `MetricsModal` | component | 2989 | 지표 체크인 모달 |
-| `ToastHost` | const | 3012 | 토스트 — 자체 상태를 가진 별도 컴포넌트. 표시·소멸이 App 렌더를 건드리지 않는다 |
-| `EvidenceViewModal` | component | 3034 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
-| `CatalogModal` | component | 3072 | 성취 도감 — 자격·시험 실지급 P 조회 |
-| `RoleAdviceModal` | component | 3159 | 롤모델 방향 제안 |
-| `TaskTab` | component | 3246 | 실행 탭 — 목표별 실행 |
-| `AddTaskModal` | component | 3356 | 실행 탭 — 목표별 실행 |
-| `EvidenceModal` | component | 3547 | 실행 탭 — 목표별 실행 |
-| `ActivityLogModal` | component | 3617 | 일상 활동 기록 모달 — 독서·운동·미팅 |
-| `STUDY_REQ` | data | 3720 | 학습 검증 모달 — 등급별 산출물 증거 (확정 2026-08-29) |
-| `StudyVerifyModal` | component | 3726 | 학습 검증 모달 — 등급별 산출물 증거 (확정 2026-08-29) |
-| `GrowthTab` | component | 3834 | 성장 탭 |
-| `PromoteModal` | component | 4004 | 승급 모달 (클릭형) |
-| `RoleModelModal` | component | 4035 | 승급 모달 (클릭형) |
-| `Overlay` | component | 4079 | 오버레이 연출 |
+| `RANKS` | data | 9 | Constants: grade and verdict rules |
+| `DIFFS` | data | 22 | Constants: grade and verdict rules |
+| `EVIDENCE_MIN` | const | 31 | Constants: grade and verdict rules |
+| `scoreTier` | const | 32 | Constants: grade and verdict rules |
+| `DIFF_RAW_VERSION` | const | 34 | Constants: grade and verdict rules |
+| `certP` | const | 35 | Constants: grade and verdict rules |
+| `achGrade` | const | 36 | Constants: grade and verdict rules |
+| `legacyCertGrade` | const | 37 | Constants: grade and verdict rules |
+| `GRADE_TEXT` | const | 38 | Constants: grade and verdict rules |
+| `GRADE_BORDER` | const | 39 | Constants: grade and verdict rules |
+| `CERT_CATS` | data | 42 | Constants: grade and verdict rules |
+| `CERTS` | data | 44 | Constants: grade and verdict rules |
+| `TASK_EV_CHIPS` | data | 1081 | V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged. |
+| `GATE_CHIPS` | data | 1082 | V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged. |
+| `AREA_PRESETS` | data | 1093 | V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged. |
+| `ROLE_PRESETS` | data | 1094 | V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged. |
+| `TASK_TEMPLATES` | data | 1095 | V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged. |
+| `detectKind` | const | 1101 | V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged. |
+| `goalKinds` | const | 1109 | V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged. |
+| `AGE_OPTS` | data | 1127 | Onboarding options (structured data) |
+| `STATUS_OPTS` | data | 1128 | Onboarding options (structured data) |
+| `EDU_OPTS` | data | 1129 | Onboarding options (structured data) |
+| `MAJOR_FIELDS` | data | 1137 | Onboarding options (structured data) |
+| `KNOWLEDGE_FIELDS` | data | 1138 | Onboarding options (structured data) |
+| `CAREER_OPTS` | data | 1139 | Onboarding options (structured data) |
+| `LEAD_OPTS` | data | 1148 | Onboarding options (structured data) |
+| `BIZ_OPTS` | data | 1152 | Onboarding options (structured data) |
+| `OUTPUT_OPTS` | data | 1161 | Onboarding options (structured data) |
+| `gFromD` | const | 1167 | Onboarding options (structured data) |
+| `computeGrades` | const | 1170 | Onboarding options (structured data) |
+| `uid` | const | 1215 | Onboarding options (structured data) |
+| `dstr` | const | 1216 | Onboarding options (structured data) |
+| `shiftDay` | const | 1220 | Onboarding options (structured data) |
+| `monthStr` | const | 1221 | Onboarding options (structured data) |
+| `KEY` | const | 1225 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
+| `mem` | const | 1226 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
+| `store` | const | 1227 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
+| `Bar` | component | 1248 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `DiffBadge` | component | 1259 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `CertBadge` | component | 1274 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `SKINS` | const | 1282 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `HAIR_COLORS` | const | 1283 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `OUTFITS` | const | 1284 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `HAIR_STYLES` | const | 1285 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `FACES` | const | 1286 | Shared UI atoms — Bar, DiffBadge, CertBadge |
+| `PortraitSprite` | component | 1292 | Portrait illustration (bust shot used as the profile picture) |
+| `resizeImage` | const | 1497 | Portrait illustration (bust shot used as the profile picture) |
+| `Portrait` | component | 1514 | Portrait illustration (bust shot used as the profile picture) |
+| `statClamp` | const | 1521 | Shared utilities |
+| `TIER_COLORS` | const | 1523 | Shared utilities |
+| `TrophySvg` | component | 1525 | Shared utilities |
+| `EmptyGoalSvg` | component | 1556 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `EmptyQuestSvg` | component | 1569 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `EmptyWallSvg` | component | 1585 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `WallFrame` | component | 1598 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `OnboardingHeroSvg` | component | 1608 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `POINT_POLICY_VERSION` | const | 1638 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `EXAMS` | data | 1639 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `LANG_KO` | data | 1675 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `examGrade` | const | 1676 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `DIM_STEPS` | data | 1677 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `EXAM_BY_ID` | const | 1679 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `examOf` | const | 1680 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `calcExamPayout` | function | 1681 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `SectionLabel` | component | 1707 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `Chip` | component | 1711 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `EvidencePicker` | component | 1725 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `composeEvidence` | const | 1740 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `Modal` | component | 1742 | Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic |
+| `needsEvidence` | const | 1762 | Main app |
+| `METRICS_META` | data | 1764 | Main app |
+| `KR_CHIP` | const | 1771 | Main app |
+| `DIFF_TONE` | const | 1777 | Main app |
+| `DIFF_SEL` | const | 1778 | Main app |
+| `DIFF_PT_TEXT` | const | 1779 | Main app |
+| `ddayStr` | const | 1781 | Main app |
+| `krProgress` | const | 1787 | Main app |
+| `krDoneCount` | const | 1807 | Main app |
+| `goalProgress` | const | 1811 | Main app |
+| `elapsedRatio` | const | 1815 | Main app |
+| `paceOf` | const | 1823 | Main app |
+| `krRemainText` | const | 1834 | Main app |
+| `roleGap` | const | 1852 | Main app |
+| `certGainOf` | const | 1863 | Main app |
+| `examBandGain` | const | 1869 | Main app |
+| `DIR_CATS` | data | 1874 | Main app |
+| `JOB_FIELDS` | data | 1905 | Main app |
+| `areaCatHints` | const | 1906 | Main app |
+| `TIER_MULT` | const | 1924 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `TIER_CLS` | const | 1925 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `WEIGHT_MATRIX` | data | 1927 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `CERT_W_EXC` | data | 1952 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `CERT_BY_NAME` | const | 2004 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `CERTS_LONGEST_FIRST` | const | 2005 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `CERT_NAME_LC` | const | 2006 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `CERTS_BY_CAT` | const | 2007 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `certOf` | const | 2008 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `certTitleCache` | const | 2009 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `certByTitle` | const | 2011 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `DIR_ALIAS` | data | 2019 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `normDirs` | const | 2024 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `jobWeightForCert` | const | 2025 | Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) |
+| `migrate` | const | 2066 | State lifecycle |
+| `applyDailyTick` | const | 2108 | State lifecycle |
+| `freshState` | const | 2115 | State lifecycle |
+| `demoState` | const | 2131 | State lifecycle |
+| `Shell` | component | 2180 | State lifecycle |
+| `Onboarding` | component | 2197 | Onboarding (click-driven) |
+| `HomeTab` | component | 2607 | Home — today's focus |
+| `GoalsTab` | component | 2713 | Goals tab (OKR) |
+| `AddGoalModal` | component | 2849 | New goal modal (OKR builder) |
+| `MetricsModal` | component | 2989 | Metrics check-in modal |
+| `ToastHost` | const | 3012 | Toast — separate component with its own state. Showing and expiring never re-render App |
+| `EvidenceViewModal` | component | 3034 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `CatalogModal` | component | 3072 | Achievement catalogue — actual payout P for certifications and exams |
+| `RoleAdviceModal` | component | 3159 | Role-model direction advice |
+| `TaskTab` | component | 3246 | Tasks tab — tasks per goal |
+| `AddTaskModal` | component | 3356 | Tasks tab — tasks per goal |
+| `EvidenceModal` | component | 3547 | Tasks tab — tasks per goal |
+| `ActivityLogModal` | component | 3617 | Daily activity log modal — reading, exercise, meetings |
+| `STUDY_REQ` | data | 3720 | Study verification modal — output evidence per grade (decided 2026-08-29) |
+| `StudyVerifyModal` | component | 3726 | Study verification modal — output evidence per grade (decided 2026-08-29) |
+| `GrowthTab` | component | 3834 | Growth tab |
+| `PromoteModal` | component | 4004 | Promotion modal (click-driven) |
+| `RoleModelModal` | component | 4035 | Promotion modal (click-driven) |
+| `Overlay` | component | 4079 | Overlay effects |

@@ -1,4 +1,4 @@
-// CPU 프로파일 — 탭 전환·도감 검색 구간의 자체시간 상위 함수를 원본 위치로 역매핑
+// CPU profile — top self-time functions during tab switching and catalogue search, mapped back to source positions
 const puppeteer = require("puppeteer-core");
 const fs = require("fs"), path = require("path");
 const { SourceMapConsumer } = require("source-map");
@@ -24,7 +24,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const clickTab = async (n) => { await page.evaluate((t) => { const nav = document.querySelector("nav"); [...nav.querySelectorAll("button")].find((b) => b.innerText.includes(t))?.click(); }, n); await sleep(500); };
   for (const t of ["목표", "퀘스트", "성장", "홈", "목표", "퀘스트"]) await clickTab(t);
-  // 도감 검색
+  // catalogue search
   await clickTab("퀘스트");
   await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감")?.click());
   await sleep(400);
@@ -36,7 +36,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const map = JSON.parse(fs.readFileSync(path.join(DIST, fs.readdirSync(DIST).find((f) => f.endsWith(".js.map"))), "utf8"));
   const consumer = await new SourceMapConsumer(map);
 
-  // 자체시간 집계
+  // self-time aggregation
   const self = new Map();
   const byId = new Map(profile.nodes.map((n) => [n.id, n]));
   const total = profile.timeDeltas.reduce((s, d) => s + d, 0);
@@ -55,7 +55,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return { fn: cf.functionName || "(anonymous)", where: orig || (cf.url ? cf.url.split("/").pop() + ":" + (cf.lineNumber + 1) : cf.url), ms: +(us / 1000).toFixed(1) };
   }).filter(Boolean).sort((a, b) => b.ms - a.ms);
 
-  console.log(`총 샘플 구간 ${(total / 1000).toFixed(0)}ms\n[자체시간 상위]`);
+  console.log(`total sampled ${(total / 1000).toFixed(0)}ms\n[top self-time]`);
   for (const r of rows.slice(0, 25)) console.log(`  ${String(r.ms).padStart(7)}ms  ${r.fn.padEnd(24)} ${r.where || ""}`);
   fs.writeFileSync(path.join(__dirname, "out", "profile-top.json"), JSON.stringify(rows.slice(0, 60), null, 1));
   consumer.destroy();

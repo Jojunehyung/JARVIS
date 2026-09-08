@@ -1,4 +1,4 @@
-// A/B — 온보딩 4단계(자격 선택) 진입·검색 입력 지연. 1,011행 전체 렌더 vs 60행 캡의 차이를 본다
+// A/B — onboarding step 4 (certification picker) entry and search-input latency. Compares rendering all 1,011 rows vs the 60-row cap
 const fs = require("fs");
 const { sleep, med, launchThrottled } = require("./bench-lib");
 const A = process.argv[2] || "http://localhost:5001/";
@@ -16,17 +16,17 @@ async function run(page, url) {
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle2" });
   await sleep(400);
-  // 온보딩 1~3단계 통과 (버튼 문구는 두 빌드가 다르므로 둘 다 시도)
+  // pass onboarding steps 1–3 (button copy differs between the builds, so try both)
   if (!(await clickText(page, "시작하기"))) await clickText(page, "새 인생 시작하기");
   await sleep(400);
   const nick = await page.$('input[placeholder*="닉네임"]');
   if (nick) await nick.type("AB", { delay: 0 });
   for (const t of ["20대 후반", "남성", "취업 준비", "학사 졸", "공학"]) { await clickText(page, t); await sleep(80); }
   await clickText(page, "다음"); await sleep(350);
-  await clickText(page, "다음"); await sleep(350);      // 외형
+  await clickText(page, "다음"); await sleep(350);      // appearance
   await clickText(page, "기본지식"); await sleep(120);
-  await clickText(page, "다음"); await sleep(350);      // 파트 → 4단계 직전
-  // 4단계 진입 렌더 시간
+  await clickText(page, "다음"); await sleep(350);      // areas → just before step 4
+  // step 4 entry render time
   const enter = await page.evaluate(async () => {
     const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const btn = [...document.querySelectorAll("button")].filter((e) => vis(e) && e.innerText.trim() === "다음")[0];
@@ -51,9 +51,9 @@ async function run(page, url) {
   const res = { A: [], B: [] };
   for (let i = 0; i < ROUNDS; i++) { res.A.push(await run(page, A)); res.B.push(await run(page, B)); process.stdout.write("."); }
   console.log("");
-  console.log(`  4단계 진입 렌더: A ${med(res.A.map((x) => x.enter))}ms → B ${med(res.B.map((x) => x.enter))}ms`);
-  console.log(`  검색 키입력:     A ${med(res.A.map((x) => x.key))}ms → B ${med(res.B.map((x) => x.key))}ms`);
-  console.log(`  렌더된 행 수:    A ${res.A[0].rows}행 → B ${res.B[0].rows}행`);
+  console.log(`  step 4 entry render: A ${med(res.A.map((x) => x.enter))}ms → B ${med(res.B.map((x) => x.enter))}ms`);
+  console.log(`  search keystroke:     A ${med(res.A.map((x) => x.key))}ms → B ${med(res.B.map((x) => x.key))}ms`);
+  console.log(`  rendered rows:       A ${res.A[0].rows} → B ${res.B[0].rows}`);
   fs.writeFileSync(__dirname + "/out/ab-onboard.json", JSON.stringify(res, null, 1));
   await browser.close();
 })();

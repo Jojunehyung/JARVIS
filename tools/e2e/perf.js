@@ -1,5 +1,5 @@
-// 성능 실측 — 초기 로드, 도감 오픈/검색 입력 지연, 롤모델 추천 계산, 탭 전환
-// 사용: node perf.js [--tag before]
+// Performance measurement — initial load, catalogue open/search-input latency, role-model recommendation, tab switching
+// Usage: node perf.js [--tag before]
 const puppeteer = require("puppeteer-core");
 const fs = require("fs"), path = require("path");
 const args = process.argv.slice(2);
@@ -8,15 +8,15 @@ const TAG = arg("--tag", "perf");
 const URL = arg("--url", "http://localhost:4173/");
 const CHROME = ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find((p) => fs.existsSync(p));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const N = 5; // 반복 측정
+const N = 5; // repeated measurements
 
 (async () => {
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], defaultViewport: { width: 430, height: 932, isMobile: true, hasTouch: true } });
   const page = await browser.newPage();
-  await page.emulateCPUThrottling(4); // 모바일 근사(4배 감속)
+  await page.emulateCPUThrottling(4); // mobile approximation (4× slowdown)
   const out = {};
 
-  // 1) 초기 로드 — 스크립트 평가 + 첫 렌더
+  // 1) Initial load — script evaluation + first render
   const loads = [];
   for (let i = 0; i < N; i++) {
     await page.goto("about:blank");
@@ -27,7 +27,7 @@ const N = 5; // 반복 측정
   }
   out.초기로드ms = loads.sort((a, b) => a - b)[Math.floor(N / 2)];
 
-  // 데모 상태로 진입(자격·퀘스트·목표가 있는 상태)
+  // enter the demo state (has certifications, tasks and goals)
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle2" });
   await page.evaluate(() => {
@@ -38,7 +38,7 @@ const N = 5; // 반복 측정
 
   const clickTab = async (n) => { await page.evaluate((t) => { const nav = document.querySelector("nav"); [...nav.querySelectorAll("button")].find((b) => b.innerText.includes(t))?.click(); }, n); await sleep(350); };
 
-  // 2) 도감 오픈(1,011종 목록 첫 렌더)
+  // 2) Catalogue open (first render of the 1,011-row list)
   const opens = [];
   for (let i = 0; i < N; i++) {
     await clickTab("퀘스트");
@@ -55,7 +55,7 @@ const N = 5; // 반복 측정
   }
   out.도감오픈ms = +(opens.sort((a, b) => a - b)[Math.floor(N / 2)]).toFixed(1);
 
-  // 3) 도감 검색 입력 지연(키 입력 → 리스트 반영)
+  // 3) Catalogue search-input latency (keystroke → list update)
   await clickTab("퀘스트");
   await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감")?.click());
   await sleep(400);
@@ -72,7 +72,7 @@ const N = 5; // 반복 측정
   await page.evaluate(() => { const ov = [...document.querySelectorAll(".fixed.inset-0")].pop(); const b = [...ov.querySelectorAll("button")].find((x) => x.querySelector("svg") && !x.innerText.trim()); b?.click(); });
   await sleep(250);
 
-  // 4) 탭 전환 렌더
+  // 4) Tab switch render
   const tabs = [];
   for (const t of ["홈", "목표", "퀘스트", "성장", "홈", "목표"]) {
     const ms = await page.evaluate(async (name) => {
@@ -89,7 +89,7 @@ const N = 5; // 반복 측정
   out.탭전환ms = tabs;
   out.탭전환_중앙값ms = tabs.slice().sort((a, b) => a - b)[Math.floor(tabs.length / 2)];
 
-  // 5) 자바스크립트 힙·번들 크기
+  // 5) JavaScript heap and bundle size
   const metrics = await page.metrics();
   out.JS힙MB = +(metrics.JSHeapUsedSize / 1048576).toFixed(1);
   const dist = "c:/Users/조준형/Desktop/life/files/dist/assets";
@@ -97,7 +97,7 @@ const N = 5; // 반복 측정
   out.번들KB = +(fs.statSync(path.join(dist, js)).size / 1024).toFixed(1);
 
   fs.writeFileSync(path.join(__dirname, "out", `${TAG}-perf.json`), JSON.stringify(out, null, 1));
-  console.log(`[성능 ${TAG}]`);
+  console.log(`[perf ${TAG}]`);
   for (const [k, v] of Object.entries(out)) console.log(`  ${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
   await browser.close();
 })();

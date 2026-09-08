@@ -4,7 +4,7 @@ import {
   Flag, ClipboardList, Camera, Paperclip, Link as LinkIcon,
 } from "lucide-react";
 
-/* ───────────────────────── 상수: 등급·판정 규칙 ───────────────────────── */
+/* ───────────────────────── Constants: grade and verdict rules ───────────────────────── */
 
 const RANKS = [
   { name: "지망생", gate: "관심 단계, 실행 전", req: "시작하면 됩니다" },
@@ -27,20 +27,20 @@ const DIFFS = {
   A: { pts: 400, label: "인생 이벤트 (취득·출시·계약)" },
 };
 
-/* 자격증 DB — 분야(c) · 등급(l) · 개별 점수(s). 같은 '기사'라도 시험별 난이도로 차등 */
+/* Certification DB — category (c) · grade letter (l) · individual score (s). Even certs of the same 기사 tier differ by exam difficulty */
 const EVIDENCE_MIN = 150;
 const scoreTier = (s) => (s >= 400 ? "A" : s >= 150 ? "B" : s >= 60 ? "C" : s >= 25 ? "D" : "E");
-/* 자격증 전용 등급 — A 기술사·전문자격 / B 상위기사·기능장·국가전문 / C 산업기사·기사 / D 기능사·초급공인 / E 입문 */
-const DIFF_RAW_VERSION = "1.3"; // 1.2: 보건·의료 카테고리 추가(2026-09-04) · 1.3: 전체 국가자격 수록(2026-09-06) — 기존 D값 불변
+/* Certification-only grade letters — A 기술사 and professional licences / B upper 기사, 기능장, national professional / C 산업기사, 기사 / D 기능사, entry-level licensed / E introductory */
+const DIFF_RAW_VERSION = "1.3"; // 1.2: 보건·의료 (health/medical) category added (2026-09-04) · 1.3: every current national qualification listed (2026-09-06) — existing D values unchanged
 const certP = (d) => Math.round((0.2 * d * d) / 10) * 10;
 const achGrade = (d) => (d >= 82 ? "A" : d >= 65 ? "B" : d >= 50 ? "C" : d >= 35 ? "D" : "E");
 const legacyCertGrade = (s) => (s >= 550 ? "A" : s >= 250 ? "B" : s >= 100 ? "C" : s >= 50 ? "D" : "E");
 const GRADE_TEXT = { A: "text-amber-300", B: "text-violet-300", C: "text-sky-300", D: "text-emerald-300", E: "text-zinc-300" };
 const GRADE_BORDER = { A: "border-amber-600", B: "border-violet-700", C: "border-sky-700", D: "border-emerald-700", E: "border-zinc-600" };
-/* v1(S~D 체계) 저장 데이터 → v2(A~E 체계) 자동 변환 */
+/* Converts v1 saves (S–D scale) to the v2 A–E scale automatically */
 
 const CERT_CATS = ["IT·데이터", "클라우드·글로벌IT", "전기·기계·설비", "건설·안전·환경", "화학·재료·섬유", "농림·축산·식품", "운송·항공·해양", "사무·회계", "금융·경영", "부동산·법·행정", "전문직", "보건·의료", "교육·복지·상담", "문화·예술·디자인", "기능사·서비스"];
-/* V1.1 확정 — d: Raw Difficulty(0~100), sg/st: 단계형 그룹(차액 지급) */
+/* V1.1 final — d: raw difficulty (0–100), sg/st: stage group (paid as the difference) */
 const CERTS = [
   { n: "프로그래밍기능사", d: 33, c: "IT·데이터", l: "기능사" },
   { n: "정보처리산업기사", d: 48, c: "IT·데이터", l: "산업기사" },
@@ -206,9 +206,9 @@ const CERTS = [
   { n: "공인회계사 CPA", d: 98, c: "전문직", l: "전문자격" },
   { n: "변리사", d: 99, c: "전문직", l: "전문자격" },
   { n: "변호사(변호사시험)", d: 100, c: "전문직", l: "전문자격" },
-  /* 보건·의료 — V1.2 추가(2026-09-04). 면허(의료법·의료기사법·약사법·수의사법·국민영양관리법·공중위생관리법) / 국가전문(응급의료법·장애인복지법·국민건강증진법·사회복지사업법·노인복지법 자격).
-     D 근거: 2026-09 조사(국시원 합격률 2024~2026·응시자격·정원) + 앵커 캘리브레이션 3안 중앙값 + 적대적 검증. 전문의는 D 상한(100=변호사) 때문에 미수록.
-     sg rn: 조산사·전문간호사는 상호 전제 없는 병렬 분기지만 '간호사 상위 자격' 최고치 차액으로 통일(백로그 3에서 분리 재검토). */
+  /* 보건·의료 (health/medical) — added in V1.2 (2026-09-04). Licences (Medical Service Act, Medical Technologists Act, Pharmaceutical Affairs Act, Veterinarians Act, National Nutrition Management Act, Public Health Control Act) / national professional qualifications (Emergency Medical Service Act, Welfare of Persons with Disabilities Act, National Health Promotion Act, Social Welfare Services Act, Welfare of Senior Citizens Act).
+     D evidence: 2026-09 survey (Korea Health Personnel Licensing Examination Institute pass rates 2024–2026, eligibility, quotas) + median of three anchor calibrations + adversarial verification. Medical specialist licences are not listed because of the D cap (100 = the lawyer-licence anchor).
+     sg rn: 조산사 and 전문간호사 are parallel branches with no mutual prerequisite, but both are treated as the "above 간호사" stage and paid as the difference from the best record (splitting them is reconsidered in backlog item 3). */
   { n: "의사", d: 99, c: "보건·의료", l: "면허" },
   { n: "치과의사", d: 97, c: "보건·의료", l: "면허" },
   { n: "한의사", d: 95, c: "보건·의료", l: "면허" },
@@ -249,10 +249,10 @@ const CERTS = [
   { n: "미용사(네일)", d: 32, c: "기능사·서비스", l: "기능사" },
   { n: "조리기능장", d: 70, c: "기능사·서비스", l: "기능장" },
   { n: "바리스타 2급", d: 22, c: "기능사·서비스", l: "민간" },
-  /* ── V1.3 전체 국가자격 수록(2026-09-06) — 국가기술자격 전 등급(Q-Net 시행 종목) · 국가전문자격 · 국가면허. 신규 804종, 기존 D 불변.
-     D 근거: 3렌즈(합격률·응시자격 / 앵커 비교 / 준비기간·전제요건) 독립 산정 중앙값 + 적대적 검증(밴드·앵커·사다리 단조성). 파생·교육이수형·임시면허·한정(限定) 표기 중복은 제외.
-     sg: 같은 자격의 급수 사다리만(차액 지급) — 기능사/산업기사/기사/기술사 계열은 사다리 아님. l: 국가기술=서비스 분야 국가기술자격, 국가전문=국가전문자격, 면허=국가면허 ── */
-  /* IT·데이터 — 24종 */
+  /* ── V1.3 every current national qualification listed (2026-09-06) — all national technical qualification levels (Q-Net families) · national professional qualifications · national licences. 804 new rows, existing D unchanged.
+     D evidence: median of three independent lenses (pass rate & eligibility / anchor comparison / preparation time & prerequisites) + adversarial verification (band, anchor position, ladder monotonicity). Derived, education-only, temporary-licence and "限定" (restricted) duplicate entries are excluded.
+     sg: only grade ladders within one qualification (paid as the difference) — the 기능사/산업기사/기사/기술사 series is not a ladder. l: 국가기술 = service-sector national technical qualification, 국가전문 = national professional qualification, 면허 = national licence ── */
+  /* IT·데이터 (IT/data) — 24 rows */
   { n: "정보기기운용기능사", d: 32, c: "IT·데이터", l: "기능사" },
   { n: "방송통신기능사", d: 32, c: "IT·데이터", l: "기능사" },
   { n: "정보통신기능사", d: 32, c: "IT·데이터", l: "기능사" },
@@ -277,7 +277,7 @@ const CERTS = [
   { n: "통신설비기능장", d: 71, c: "IT·데이터", l: "기능장" },
   { n: "정보통신기술사", d: 90, c: "IT·데이터", l: "기술사" },
   { n: "정보시스템감리사", d: 84, c: "IT·데이터", l: "국가전문" },
-  /* 전기·기계·설비 — 110종 */
+  /* 전기·기계·설비 (electrical/mechanical/facilities) — 110 rows */
   { n: "3D프린터운용기능사", d: 30, c: "전기·기계·설비", l: "기능사" },
   { n: "농업기계정비기능사", d: 31, c: "전기·기계·설비", l: "기능사" },
   { n: "자동차보수도장기능사", d: 31, c: "전기·기계·설비", l: "기능사" },
@@ -388,7 +388,7 @@ const CERTS = [
   { n: "전자응용기술사", d: 88, c: "전기·기계·설비", l: "기술사" },
   { n: "전기응용기술사", d: 90, c: "전기·기계·설비", l: "기술사" },
   { n: "항공정비사", d: 70, c: "전기·기계·설비", l: "면허" },
-  /* 건설·안전·환경 — 178종 */
+  /* 건설·안전·환경 (construction/safety/environment) — 178 rows */
   { n: "거푸집기능사", d: 25, c: "건설·안전·환경", l: "기능사" },
   { n: "방수기능사", d: 25, c: "건설·안전·환경", l: "기능사" },
   { n: "온수온돌기능사", d: 25, c: "건설·안전·환경", l: "기능사" },
@@ -567,7 +567,7 @@ const CERTS = [
   { n: "원자로조종감독자면허", d: 80, c: "건설·안전·환경", l: "면허", sg: "reactor", st: 2 },
   { n: "방사성동위원소취급자일반면허", d: 58, c: "건설·안전·환경", l: "면허", sg: "riso", st: 1 },
   { n: "방사선취급감독자면허", d: 68, c: "건설·안전·환경", l: "면허", sg: "riso", st: 2 },
-  /* 화학·재료·섬유 — 75종 */
+  /* 화학·재료·섬유 (chemistry/materials/textiles) — 75 rows */
   { n: "봉제기능사", d: 29, c: "화학·재료·섬유", l: "기능사" },
   { n: "목재가공기능사", d: 29, c: "화학·재료·섬유", l: "기능사" },
   { n: "펄프종이제조기능사", d: 29, c: "화학·재료·섬유", l: "기능사" },
@@ -643,12 +643,12 @@ const CERTS = [
   { n: "비파괴검사기술사", d: 87, c: "화학·재료·섬유", l: "기술사" },
   { n: "용접기술사", d: 88, c: "화학·재료·섬유", l: "기술사" },
   { n: "화공기술사", d: 89, c: "화학·재료·섬유", l: "기술사" },
-  /* 농림·축산·식품 V1.3 보강(2026-09-06) — 완전성 감사에서 확인된 미수록 신설 국가전문자격 3종.
-     반려동물행동지도사: 동물보호법 제31조, 농식품부 시행(2024 제1회 2급 단독 → 2025 제2회부터 1·2급). 스마트농업관리사: 스마트농업 육성·지원법 제9조(2024-07-26 시행), 2025 제1회 57명 배출 */
+  /* 농림·축산·식품 (agriculture/livestock/food) V1.3 supplement (2026-09-06) — 3 newly created national professional qualifications the completeness audit found missing.
+     Pet behaviour instructor (grades 1·2): Animal Protection Act art. 31, run by the Ministry of Agriculture, Food and Rural Affairs (2024 1st sitting grade 2 only → grades 1 and 2 from the 2025 2nd sitting). Smart-farm manager: Smart Agriculture Promotion and Support Act art. 9 (in force 2024-07-26), 57 passed the 2025 1st sitting */
   { n: "반려동물행동지도사 2급", d: 41, c: "농림·축산·식품", l: "국가전문", sg: "petbhv", st: 1 },
   { n: "반려동물행동지도사 1급", d: 56, c: "농림·축산·식품", l: "국가전문", sg: "petbhv", st: 2 },
   { n: "스마트농업관리사", d: 50, c: "농림·축산·식품", l: "국가전문" },
-  /* 농림·축산·식품 — 45종 */
+  /* 농림·축산·식품 (agriculture/livestock/food) — 45 rows */
   { n: "버섯종균기능사", d: 27, c: "농림·축산·식품", l: "기능사" },
   { n: "산림기능사", d: 27, c: "농림·축산·식품", l: "기능사" },
   { n: "임업종묘기능사", d: 27, c: "농림·축산·식품", l: "기능사" },
@@ -694,7 +694,7 @@ const CERTS = [
   { n: "종자기술사", d: 86, c: "농림·축산·식품", l: "기술사" },
   { n: "축산기술사", d: 86, c: "농림·축산·식품", l: "기술사" },
   { n: "산림기술사", d: 88, c: "농림·축산·식품", l: "기술사" },
-  /* 운송·항공·해양 — 118종 */
+  /* 운송·항공·해양 (transport/aviation/maritime) — 118 rows */
   { n: "철도운송산업기사", d: 45, c: "운송·항공·해양", l: "산업기사" },
   { n: "택시운전자격", d: 24, c: "운송·항공·해양", l: "국가전문" },
   { n: "화물운송종사자격", d: 26, c: "운송·항공·해양", l: "국가전문" },
@@ -813,7 +813,7 @@ const CERTS = [
   { n: "초경량비행장치 조종자(무인수직이착륙기) 3종", d: 24, c: "운송·항공·해양", l: "면허", sg: "uavvt", st: 2 },
   { n: "초경량비행장치 조종자(무인수직이착륙기) 2종", d: 31, c: "운송·항공·해양", l: "면허", sg: "uavvt", st: 3 },
   { n: "초경량비행장치 조종자(무인수직이착륙기) 1종", d: 37, c: "운송·항공·해양", l: "면허", sg: "uavvt", st: 4 },
-  /* 사무·회계 — 12종 */
+  /* 사무·회계 (office/accounting) — 12 rows */
   { n: "전자상거래운용사", d: 33, c: "사무·회계", l: "국가기술" },
   { n: "텔레마케팅관리사", d: 37, c: "사무·회계", l: "국가기술" },
   { n: "전산회계운용사 3급", d: 30, c: "사무·회계", l: "국가기술", sg: "cacc", st: 1 },
@@ -826,7 +826,7 @@ const CERTS = [
   { n: "한글속기 3급", d: 36, c: "사무·회계", l: "국가기술", sg: "steno", st: 1 },
   { n: "한글속기 2급", d: 44, c: "사무·회계", l: "국가기술", sg: "steno", st: 2 },
   { n: "한글속기 1급", d: 54, c: "사무·회계", l: "국가기술", sg: "steno", st: 3 },
-  /* 금융·경영 — 17종 */
+  /* 금융·경영 (finance/management) — 17 rows */
   { n: "공공조달관리사", d: 46, c: "금융·경영", l: "국가기술" },
   { n: "포장산업기사", d: 43, c: "금융·경영", l: "산업기사" },
   { n: "품질경영산업기사", d: 46, c: "금융·경영", l: "산업기사" },
@@ -844,12 +844,12 @@ const CERTS = [
   { n: "보험중개사(손해보험)", d: 56, c: "금융·경영", l: "국가전문" },
   { n: "유통관리사 3급", d: 33, c: "금융·경영", l: "국가전문", sg: "dist", st: 1 },
   { n: "유통관리사 1급", d: 60, c: "금융·경영", l: "국가전문", sg: "dist", st: 3 },
-  /* 부동산·법·행정 — 4종 */
+  /* 부동산·법·행정 (real estate/law/administration) — 4 rows */
   { n: "경비지도사(일반)", d: 52, c: "부동산·법·행정", l: "국가전문" },
   { n: "경비지도사(기계)", d: 53, c: "부동산·법·행정", l: "국가전문" },
   { n: "산업보건지도사(산업위생)", d: 78, c: "부동산·법·행정", l: "국가전문" },
   { n: "산업보건지도사(직업환경의학)", d: 80, c: "부동산·법·행정", l: "국가전문" },
-  /* 전문직 — 9종 */
+  /* 전문직 (professions) — 9 rows */
   { n: "가맹거래사", d: 58, c: "전문직", l: "국가전문" },
   { n: "손해평가사", d: 62, c: "전문직", l: "국가전문" },
   { n: "경영지도사(마케팅)", d: 65, c: "전문직", l: "국가전문" },
@@ -859,12 +859,12 @@ const CERTS = [
   { n: "기술지도사(정보기술관리)", d: 66, c: "전문직", l: "국가전문" },
   { n: "경영지도사(재무관리)", d: 68, c: "전문직", l: "국가전문" },
   { n: "건축사", d: 86, c: "전문직", l: "국가전문" },
-  /* 보건·의료 — 4종 */
+  /* 보건·의료 (health/medical) — 4 rows */
   { n: "국제의료관광코디네이터", d: 52, c: "보건·의료", l: "국가기술" },
   { n: "안마사", d: 38, c: "보건·의료", l: "국가전문" },
   { n: "임상영양사", d: 62, c: "보건·의료", l: "국가전문" },
   { n: "방사성동위원소취급자특수면허", d: 96, c: "보건·의료", l: "면허" },
-  /* 교육·복지·상담 — 83종 */
+  /* 교육·복지·상담 (education/welfare/counselling) — 83 rows */
   { n: "이러닝운영관리사", d: 40, c: "교육·복지·상담", l: "국가기술" },
   { n: "직업상담사 1급", d: 58, c: "교육·복지·상담", l: "국가기술", sg: "career", st: 2 },
   { n: "임상심리사 2급", d: 56, c: "교육·복지·상담", l: "국가기술", sg: "clinpsy", st: 1 },
@@ -948,7 +948,7 @@ const CERTS = [
   { n: "청소년지도사 3급", d: 40, c: "교육·복지·상담", l: "국가전문", sg: "youth", st: 1 },
   { n: "청소년지도사 2급", d: 45, c: "교육·복지·상담", l: "국가전문", sg: "youth", st: 2 },
   { n: "청소년지도사 1급", d: 55, c: "교육·복지·상담", l: "국가전문", sg: "youth", st: 3 },
-  /* 문화·예술·디자인 — 75종 */
+  /* 문화·예술·디자인 (culture/arts/design) — 75 rows */
   { n: "영사기능사", d: 30, c: "문화·예술·디자인", l: "기능사" },
   { n: "목공예기능사", d: 31, c: "문화·예술·디자인", l: "기능사" },
   { n: "석공예기능사", d: 31, c: "문화·예술·디자인", l: "기능사" },
@@ -1024,7 +1024,7 @@ const CERTS = [
   { n: "무대예술전문인(무대음향) 3급", d: 44, c: "문화·예술·디자인", l: "국가전문", sg: "stgsnd", st: 1 },
   { n: "무대예술전문인(무대음향) 2급", d: 56, c: "문화·예술·디자인", l: "국가전문", sg: "stgsnd", st: 2 },
   { n: "무대예술전문인(무대음향) 1급", d: 68, c: "문화·예술·디자인", l: "국가전문", sg: "stgsnd", st: 3 },
-  /* 기능사·서비스 — 50종 */
+  /* 기능사·서비스 (craft/service) — 50 rows */
   { n: "롤러운전기능사", d: 25, c: "기능사·서비스", l: "기능사" },
   { n: "양화장치운전기능사", d: 26, c: "기능사·서비스", l: "기능사" },
   { n: "농기계운전기능사", d: 26, c: "기능사·서비스", l: "기능사" },
@@ -1077,7 +1077,7 @@ const CERTS = [
   { n: "관광통역안내사(아랍어)", d: 58, c: "기능사·서비스", l: "국가전문" },
 ];
 
-/* 클릭형 증거 선택지 */
+/* Click-to-pick evidence options */
 const TASK_EV_CHIPS = ["합격·취득 완료", "결과물 완성·제출", "계약·판매·수익 발생", "공식 기록·인증 있음"];
 const GATE_CHIPS = {
   1: ["강의·책 학습 기록 있음", "정리 노트·요약 있음"],
@@ -1105,7 +1105,7 @@ const detectKind = (t) => {
   if (/미팅|회의|거래처/.test(t)) return "meet";
   return "";
 };
-// 목표 제목·메모·KR을 읽어 이 목표에 의미 있는 활동 유형·학습 여부를 추론
+// Reads the goal title, note and KRs to infer which activity kinds, and whether study mode, are meaningful for this goal
 const goalKinds = (goal) => {
   const kinds = new Set([""]);
   let study = false;
@@ -1123,7 +1123,7 @@ const goalKinds = (goal) => {
   return { kinds, study };
 };
 
-/* ── 초기 설정 선택지 (정형 데이터) ── */
+/* ── Onboarding options (structured data) ── */
 const AGE_OPTS = ["10대", "20대 초반", "20대 중반", "20대 후반", "30대 초반", "30대 중·후반", "40대 이상"];
 const STATUS_OPTS = ["고등학생", "대학 재학", "휴학·졸업예정", "취업 준비", "직장인 1~3년", "직장인 4~7년", "직장인 8년+", "프리랜서", "예비 창업", "사업 운영 중", "전환기·무직"];
 const EDU_OPTS = [
@@ -1166,7 +1166,7 @@ const OUTPUT_OPTS = [
 ];
 const gFromD = (d) => (d >= 82 ? 5 : d >= 67 ? 4 : d >= 55 ? 3 : d >= 40 ? 2 : d >= 25 ? 1 : 0);
 
-/* 선택지 조합 → 영역별 시작 등급 자동 산정 (동일 선택 = 동일 등급, V1.1 D 기반) */
+/* Option combination → starting grade per area (same choices = same grade; based on V1.1 D) */
 const computeGrades = (profile, areaNames) => {
   const certMaxD = (profile.certs || []).reduce((m, n) => {
     const c = certOf(n);
@@ -1220,7 +1220,7 @@ const dstr = (d = new Date()) => {
 const shiftDay = (base, delta) => { const d = new Date(base + "T12:00:00"); d.setDate(d.getDate() + delta); return dstr(d); };
 const monthStr = () => dstr().slice(0, 7);
 
-/* ───────────────────────── 저장소 (localStorage + 메모리 폴백) — §3-1 시밍 2026-09-03 ───────────────────────── */
+/* ───────────────────────── Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 ───────────────────────── */
 
 const KEY = "liferpg-state-v1";
 const mem = {};
@@ -1242,7 +1242,7 @@ const store = {
   },
 };
 
-/* ───────────────────────── AI 헬퍼 ───────────────────────── */
+/* ───────────────────────── Shared UI atoms — Bar, DiffBadge, CertBadge ───────────────────────── */
 
 
 function Bar({ ratio, color, h = "h-2" }) {
@@ -1285,10 +1285,10 @@ const OUTFITS = ["#f59e0b", "#22d3ee", "#a78bfa", "#34d399", "#fb7185", "#94a3b8
 const HAIR_STYLES = ["기본", "단발", "장발", "포니", "스포츠"];
 const FACES = ["기본", "미소", "진지"];
 
-/* ── 실사풍 초상 일러스트 (프로필 사진용 버스트샷) ── */
-/* PortraitSprite v3 — 웹툰 무드 파라메트릭 초상 (디자인 핸드오프 2026-09-02 드롭인)
- * API 동일: <PortraitSprite look={{skin,hair,hairColor,outfit,face}} gender size />
- * 4:5, viewBox 120×150 · 무대 radial #2a1e4a→#171130→#0a0716 · 듀얼 림라이트 #67e8f9/#f0abfc */
+/* ── Portrait illustration (bust shot used as the profile picture) ── */
+/* PortraitSprite v3 — webtoon-mood parametric portrait (design hand-off 2026-09-02 drop-in)
+ * Same API: <PortraitSprite look={{skin,hair,hairColor,outfit,face}} gender size />
+ * 4:5, viewBox 120×150 · stage radial #2a1e4a→#171130→#0a0716 · dual rim light #67e8f9/#f0abfc */
 function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
   const fem = gender === "여성";
   const masc = gender === "남성";
@@ -1328,7 +1328,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
       <rect width="120" height="150" fill={`url(#${g}bg)`} />
       <ellipse cx="60" cy="58" rx="52" ry="56" fill={`url(#${g}gl)`} />
 
-      {/* 뒷머리 */}
+      {/* back hair */}
       {style === "장발" && (<>
         <path d="M30 44 C22 84 25 122 33 150 L45 150 C39 120 38 84 40 50 Z" fill={hc} />
         <path d="M90 44 C98 84 95 122 87 150 L75 150 C81 120 82 84 80 50 Z" fill={hc} />
@@ -1341,7 +1341,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
       </>)}
       {style !== "장발" && style !== "단발" && <path d="M34 38 C30 56 31 72 37 81 L83 81 C89 72 90 56 86 38 Z" fill={hc} />}
 
-      {/* 목·상의 */}
+      {/* neck and top */}
       <path d="M53 72 C53 91 53.7 101 55.8 109 L64.2 109 C66.3 101 67 91 67 72 Z" fill={sk} />
       <path d="M53 74 h14 l-1.3 9 q-5.7 3.4 -11.4 0 Z" fill="#000" opacity="0.24" />
       <path d="M55.4 94 C55.9 100 56.6 104.5 57.5 107.5" fill="none" stroke="#000" strokeOpacity="0.1" strokeWidth="1" strokeLinecap="round" />
@@ -1367,7 +1367,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
         <path d="M41 92 C39.6 114 40 132 42.6 146" fill="none" stroke="#fff" strokeOpacity="0.1" strokeWidth="1.1" strokeLinecap="round" />
       </>)}
 
-      {/* 얼굴 — 샤프한 턱 */}
+      {/* face — sharp jaw */}
       <path d={masc
         ? "M60 21 C76 21 83.4 32.5 82.8 47.5 C82.3 60 76.5 71.5 63.5 77.8 C62 78.6 60.8 79 60 79 C59.2 79 58 78.6 56.5 77.8 C43.5 71.5 37.7 60 37.2 47.5 C36.6 32.5 44 21 60 21 Z"
         : "M60 21 C77 21 84 33 83.2 48 C82.4 60.5 75 72 62.8 78 C61.6 78.6 60.7 78.9 60 78.9 C59.3 78.9 58.4 78.6 57.2 78 C45 72 37.6 60.5 36.8 48 C36 33 43 21 60 21 Z"} fill={sk} />
@@ -1377,7 +1377,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
       <path d="M83.6 50 q-1.6 2 -1.3 4.4" fill="none" stroke="#000" strokeOpacity="0.22" strokeWidth="1.1" strokeLinecap="round" />
       {fem && (<><circle cx="36.5" cy="58.9" r="1.2" fill="#f3dc8f" /><circle cx="83.5" cy="58.9" r="1.2" fill="#f3dc8f" /></>)}
 
-      {/* 입체 음영 */}
+      {/* shading */}
       <path d="M82.8 47.5 C82.3 60 76.5 71.5 63.5 77.8 C70.5 72.5 75.5 63.5 77 52.5 C78 43 75.8 33.5 70 28 C77 31 83.1 37.5 82.8 47.5 Z" fill={`url(#${g}fs)`} />
       <ellipse cx="60" cy="46" rx="25" ry="29" fill="#fff" opacity="0.05" />
       <path d="M39 39 C37.4 50 38.5 61 44 70 C40.5 62 39 50 41 41 Z" fill="#000" opacity="0.09" />
@@ -1385,7 +1385,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
       <ellipse cx="73.5" cy="61.5" rx="6.2" ry="3.5" fill={`url(#${g}bl)`} />
       <path d="M53.5 74 q6.5 2.4 13 0 l-1.1 2.4 q-5.4 2 -10.8 0 Z" fill="#000" opacity="0.13" />
 
-      {/* 눈썹 — 낮고 직선적 */}
+      {/* eyebrows — low and straight */}
       {face === "진지" ? (<>
         <path d="M42.8 45 C47 43.2 52 43 55.8 44.2" fill="none" stroke={hc} strokeOpacity="0.95" strokeWidth={masc ? 2.6 : 2} strokeLinecap="round" />
         <path d="M64.2 44.2 C68 43 73 43.2 77.2 45" fill="none" stroke={hc} strokeOpacity="0.95" strokeWidth={masc ? 2.6 : 2} strokeLinecap="round" />
@@ -1394,7 +1394,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
         <path d="M64.4 43 C68.4 41.6 73.4 41.8 77.4 43.8" fill="none" stroke={hc} strokeOpacity="0.95" strokeWidth={masc ? 2.5 : 1.9} strokeLinecap="round" />
       </>)}
 
-      {/* 눈 — 가늘고 눈두덩 무거움 */}
+      {/* eyes — narrow, heavy lids */}
       {face === "미소" ? (<>
         <path d="M43.5 49.5 C46.5 46.6 52.5 46.6 55.5 49.5" fill="none" stroke="#141018" strokeWidth="2.4" strokeLinecap="round" />
         <path d="M64.5 49.5 C67.5 46.6 73.5 46.6 76.5 49.5" fill="none" stroke="#141018" strokeWidth="2.4" strokeLinecap="round" />
@@ -1423,14 +1423,14 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
         </>)}
       </>)}
 
-      {/* 코 — 긴 콧대 */}
+      {/* nose — long bridge */}
       <path d="M60.7 51 C61.8 57 62 61.8 61.4 65.4 L60.2 65.4 C60.9 61.8 60.7 57 59.6 51 Z" fill="#000" opacity="0.13" />
       <path d="M62.1 53 C62.5 57.5 62.6 61 62.3 64" fill="none" stroke="#fff" strokeOpacity="0.14" strokeWidth="0.9" strokeLinecap="round" />
       <path d="M56.8 67 q1.9 1.5 3.3 0.8" fill="none" stroke="#000" strokeOpacity="0.2" strokeWidth="1.1" strokeLinecap="round" />
       <path d="M60.9 67.8 q1.9 0.7 3.2 -0.8" fill="none" stroke="#000" strokeOpacity="0.2" strokeWidth="1.1" strokeLinecap="round" />
       <circle cx="60.5" cy="64.2" r="1" fill="#fff" opacity="0.18" />
 
-      {/* 입 — 작게 */}
+      {/* mouth — small */}
       {face === "미소" ? (<>
         <path d="M54 70.4 C57.5 69.4 62.5 69.4 66 70.4 C64.4 74.9 55.6 74.9 54 70.4 Z" fill="#5e2626" />
         <path d="M55.8 70.7 C58.4 70.1 61.6 70.1 64.2 70.7 C63.4 72 56.6 72 55.8 70.7 Z" fill="#fdf6ee" />
@@ -1447,7 +1447,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
         <path d="M57 75.6 q3 0.8 6 0" fill="none" stroke="#fff" strokeOpacity="0.22" strokeWidth="0.9" strokeLinecap="round" />
       </>)}
 
-      {/* 앞머리 — 스타일별 */}
+      {/* fringe — per hair style */}
       {style === "스포츠" ? (<>
         <path d="M36 35 C36 16 46 10 60 10 C74 10 84 16 84 35 C79 23 70 19.5 60 19.5 C50 19.5 41 23 36 35 Z" fill={hc} />
         <path d="M46 15.5 C44.8 18.5 44.2 21.5 44.4 24.5" fill="none" stroke="#fff" strokeOpacity="0.28" strokeWidth="1" strokeLinecap="round" />
@@ -1484,7 +1484,7 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
       </>)}
       <path d="M36 25 Q60 32 84 25 L83 28 Q60 34.5 37 28 Z" fill="#000" opacity="0.12" />
 
-      {/* 듀얼 림라이트 — 시그니처, 유지 필수 */}
+      {/* dual rim light — signature, must stay */}
       <path d="M82.8 28 C87.6 36.5 88.2 49.5 84.8 62" fill="none" stroke="#67e8f9" strokeOpacity="0.78" strokeWidth="2" strokeLinecap="round" />
       <path d="M74 107 C91 112 100.5 124 104 142" fill="none" stroke="#67e8f9" strokeOpacity="0.5" strokeWidth="2.3" strokeLinecap="round" />
       <path d="M37.2 29 C33.4 37 32.8 48.5 34.8 59.5" fill="none" stroke="#f0abfc" strokeOpacity="0.48" strokeWidth="1.7" strokeLinecap="round" />
@@ -1516,12 +1516,12 @@ function Portrait({ img, look, gender, size = 84 }) {
   return <PortraitSprite look={look} gender={gender} size={size} />;
 }
 
-/* ── 공용 유틸 ── */
+/* ── Shared utilities ── */
 
 const statClamp = (v) => Math.max(0, Math.min(100, Math.round(v)));
 
 const TIER_COLORS = { E: "#a1a1aa", D: "#34d399", C: "#38bdf8", B: "#a78bfa", A: "#fbbf24" };
-/* TrophySvg v2 — 3종(ach/rank/spec) × 티어 5색 전부 반영 (디자인 핸드오프 2026-09-02 드롭인) */
+/* TrophySvg v2 — all 3 kinds (ach/rank/spec) × 5 tier colours (design hand-off 2026-09-02 drop-in) */
 function TrophySvg({ kind = "ach", tier = "C", size = 30 }) {
   const c = TIER_COLORS[tier] || "#38bdf8";
   if (kind === "rank") return (
@@ -1552,7 +1552,7 @@ function TrophySvg({ kind = "ach", tier = "C", size = 30 }) {
     </svg>);
 }
 
-/* ── 빈 상태·프레임 일러스트 (디자인 핸드오프 2026-09-02) — 무채+포인트 1색, 도식 위주 ── */
+/* ── Empty-state and frame illustrations (design hand-off 2026-09-02) — monochrome + one accent colour, diagrammatic ── */
 function EmptyGoalSvg() {
   return (
     <svg width="110" height="80" viewBox="0 0 120 90" className="mx-auto mb-2">
@@ -1594,7 +1594,7 @@ function EmptyWallSvg() {
     </svg>
   );
 }
-/* 성취의 벽 선반 배경 — 트로피 행 뒤에 absolute로 깐다 */
+/* Achievement-wall shelf background — positioned absolutely behind the trophy row */
 function WallFrame() {
   return (
     <svg className="absolute inset-0 w-full h-full" viewBox="0 0 480 64" preserveAspectRatio="none" aria-hidden="true">
@@ -1604,7 +1604,7 @@ function WallFrame() {
     </svg>
   );
 }
-/* 온보딩 히어로 — 기록(문서)·측정(그래프)·증명(도장) 모티프 */
+/* Onboarding hero — record (document), measure (graph), prove (stamp) motifs */
 function OnboardingHeroSvg({ width = 320 }) {
   return (
     <svg width={width} height={width * 0.5} viewBox="0 0 340 170">
@@ -1633,7 +1633,7 @@ function OnboardingHeroSvg({ width = 320 }) {
   );
 }
 
-/* ═══════ 표준화 시험 DB — V1 (시험×점수 밴드, D 0~100, P=0.2D², 스냅샷) ═══════ */
+/* ═══════ Standardised exam DB — V1 (exam × score band, D 0–100, P = 0.2·D², snapshot) ═══════ */
 
 const POINT_POLICY_VERSION = "1.0";
 const EXAMS = [
@@ -1721,7 +1721,7 @@ function Chip({ on, onClick, tone = "cyan", children, disabled }) {
   );
 }
 
-/* 클릭형 증거 선택기 — 칩 다중 선택 + 선택 메모 */
+/* Click-to-pick evidence picker — multi-select chips + optional note */
 function EvidencePicker({ chips, selected, onToggle, memo, setMemo }) {
   return (
     <div>
@@ -1756,9 +1756,9 @@ function Modal({ onClose, children, title }) {
   );
 }
 
-/* ───────────────────────── 메인 앱 ───────────────────────── */
+/* ───────────────────────── Main app ───────────────────────── */
 
-/* ═══════ v3 미니멀 엔진 — 지표 · 목표(OKR) · 상태 수명 ═══════ */
+/* ═══════ v3 minimal engine — metrics · goals (OKR) · state lifecycle ═══════ */
 const needsEvidence = (q) => q.isCert || q.isExam || (q.pts ?? DIFFS[q.diff].pts) >= EVIDENCE_MIN;
 
 const METRICS_META = [
@@ -1767,7 +1767,7 @@ const METRICS_META = [
   { k: "body", n: "외형", c: "bg-emerald-400", tc: "text-emerald-300", d: "운동·식단·컨디션 관리의 결과. 체크인으로 스스로 평가" },
 ];
 
-/* KR 타입 칩 · 난이도 셀렉터 색 (등급 5색 계열 — 디자인 핸드오프 2026-09-02) */
+/* KR type chips · difficulty selector colours (the five grade colours — design hand-off 2026-09-02) */
 const KR_CHIP = {
   metric: ["수치", "text-emerald-300 border-emerald-700"],
   count: ["횟수", "text-cyan-300 border-cyan-700"],
@@ -1856,7 +1856,7 @@ const roleGap = (state) => {
     .filter((p) => (r.targets?.[p.id] || 0) > 0)
     .map((p) => ({ area: p, need: r.targets[p.id], have: p.grade, gap: Math.max(0, r.targets[p.id] - p.grade) }));
   if (!items.length) return null;
-  // 제곱 곡선: 상위 등급 없이 수치가 오르지 않게. 요구 바로 아래 단계(턱걸이) ≈ 60~70%.
+  // Squared curve: the number cannot rise without higher grades. One step below the requirement (just short) ≈ 60–70%.
   const match = Math.round((items.reduce((s, i) => s + Math.pow(Math.min(1, i.have / i.need), 2), 0) / items.length) * 100);
   return { name: r.name, items, match };
 };
@@ -1920,10 +1920,10 @@ const areaCatHints = (state, area) => {
   return { cats: [...cats], exam };
 };
 
-/* ── 직무 가중 (2026-08 시장 리서치: HRD코리아·고용부 통계, 합격스펙·인사담당자 설문) ── */
-const TIER_MULT = { S: 1, A: 0.8, B: 0.5, C: 0 }; // C=무관: 시장에서 평가되지 않음 → 지급 없음
+/* ── Job-fit weighting (2026-08 market research: HRD Korea and Ministry of Employment statistics, pass-spec and recruiter surveys) ── */
+const TIER_MULT = { S: 1, A: 0.8, B: 0.5, C: 0 }; // C = unrelated: not valued by the market → no payout
 const TIER_CLS = { S: "text-emerald-400", A: "text-cyan-300", B: "text-zinc-500", C: "text-rose-400" };
-// 미기재 셀 = C. 근거강도: 건설·안전/전기·기계/서비스 [강], 개발/데이터/회계/금융/마케팅 [중], 나머지 [약·추정]
+// Unlisted cell = C. Evidence strength: construction-safety, electrical-mechanical and service rows [strong]; development, data, accounting, finance and marketing rows [medium], the rest [weak/estimated]
 const WEIGHT_MATRIX = {
   "개발": { "IT·데이터": "A", "클라우드·글로벌IT": "A" },
   "데이터·AI": { "IT·데이터": "S", "클라우드·글로벌IT": "A", "금융·경영": "B" },
@@ -1936,11 +1936,11 @@ const WEIGHT_MATRIX = {
   "법무·행정": { "사무·회계": "B", "금융·경영": "B", "부동산·법·행정": "A", "전문직": "A" },
   "건설·안전": { "전기·기계·설비": "A", "건설·안전·환경": "S", "부동산·법·행정": "B", "전문직": "B", "기능사·서비스": "B" },
   "전기·기계": { "전기·기계·설비": "S", "건설·안전·환경": "A", "전문직": "B", "기능사·서비스": "A" },
-  "디자인": { "IT·데이터": "B", "사무·회계": "B", "기능사·서비스": "B", "문화·예술·디자인": "B" }, // 디자인 자격이 신설 카테고리로 이동 — 기존 B 판단 승계(새 근거 없음)
+  "디자인": { "IT·데이터": "B", "사무·회계": "B", "기능사·서비스": "B", "문화·예술·디자인": "B" }, // design certs moved to the new category — the existing B verdict is inherited (no new evidence)
   "미디어·콘텐츠": { "IT·데이터": "B", "사무·회계": "B", "기능사·서비스": "B", "문화·예술·디자인": "B" },
   "서비스": { "건설·안전·환경": "B", "사무·회계": "B", "기능사·서비스": "S" },
-  "보건·의료": { "보건·의료": "S" }, // 면허 = 법적 필수 [강] · 타 카테고리는 근거 없음 → C
-  // V1.3 신규 직무 행(2026-09-06): 자기 카테고리 S만 — 교원·보육·사회복지·스포츠지도사·운송 면허·해기사 등은 법정 배치·필수 요건 [강] · 타 셀 근거 없음 → C
+  "보건·의료": { "보건·의료": "S" }, // licence = statutory requirement [strong] · other categories have no evidence → C
+  // V1.3 new job rows (2026-09-06): only the own category is S — teachers, childcare, social work, sports instructors, transport licences, ship officers etc. are statutory placement or mandatory requirements [strong] · other cells have no evidence → C
   "교육·복지": { "교육·복지·상담": "S" },
   "문화·예술": { "문화·예술·디자인": "S" },
   "운송·항공·해양": { "운송·항공·해양": "S" },
@@ -1948,66 +1948,66 @@ const WEIGHT_MATRIX = {
   "농림·식품": { "농림·축산·식품": "S" },
   "외국어": { "사무·회계": "B", "금융·경영": "B", "전문직": "B" },
 };
-// 개별 예외(직무 기반·리서치 명시분): 실무 무관 판정, 물류 우대 등
+// Individual exceptions (job-based, named in the research): "unrelated in practice" verdicts, logistics preference, etc.
 const CERT_W_EXC = {
   "컴퓨터활용능력 1급": { "개발": "C", "데이터·AI": "C" },
-  "변리사": { "개발": "B", "데이터·AI": "B" }, // IT 특허 경로 [약·추정]
-  "사회조사분석사 2급": { "데이터·AI": "B" }, // 조사방법론·통계 기반, 리서치·데이터마케팅 직무 인식 [중]
+  "변리사": { "개발": "B", "데이터·AI": "B" }, // IT patent route [weak/estimated]
+  "사회조사분석사 2급": { "데이터·AI": "B" }, // survey methodology and statistics; recognised in research and data-marketing roles [medium]
   "컴퓨터활용능력 2급": { "개발": "C", "데이터·AI": "C" },
-  "지게차운전기능사": { "영업": "A", "운송·항공·해양": "A" }, // V1.3 운송·항공·해양 A[중] 건설기계관리법 제26조: 건설기계(지게차 포함)를 조종하려는 사람은 건설기계조종사면허를 받아야 하며, 일반 건설기계는 '국가기
-  /* V1.3 개별 예외(2026-09-06) — 카테고리 단위로는 전부 C로 검증된 신설 셀에서, 법령 명문·채용공고 명시가 확인된 종목만 예외로 둔다.
-     확정 절차: 직무별 리서치 → 적대적 검증(기본값 C, 근거강도 '약'·미확인은 강등). 카테고리 전반에 해당하면 예외가 아니라 매트릭스 사안이므로 제외했다. */
-  "국가유산수리기술자(보수)": { "건설·안전": "A" }, // V1.3 건설·안전 A[강] 「국가유산수리 등에 관한 법률」 제5조(국가유산수리 등의 제한
-  "산림기사": { "건설·안전": "B" }, // V1.3 건설·안전 B[강] 「산림기술 진흥 및 관리에 관한 법률」 시행령 별표3(산림기술자의 종류·자격요건 및 업무범위, 제10조 관련)
-  "국가유산수리기술자(실측설계)": { "건설·안전": "B" }, // V1.3 건설·안전 B[강] 「국가유산수리 등에 관한 법률」 시행령 별표7 등록요건 기술능력(kcpra.or.kr 원문 표)
-  "산림기술사": { "건설·안전": "B" }, // V1.3 건설·안전 B[중] 「산림기술 진흥 및 관리에 관한 법률」 시행령 별표3
-  "산림산업기사": { "건설·안전": "B" }, // V1.3 건설·안전 B[중] zighang '(주)화수목 산림공학기술자'(직무 카테고리 건설·건축, 산림토목 현장대리인
-  "국가유산수리기술자(조경)": { "건설·안전": "B" }, // V1.3 건설·안전 B[중] 「국가유산수리 등에 관한 법률」 시행령 별표7(kcpra.or.kr 원문 표)
-  "용접기술사": { "전기·기계": "A" }, // V1.3 전기·기계 A[중] 기계설비법 시행령 별표(기계설비유지관리자의 자격)
-  "생활스포츠지도사 2급": { "서비스": "B" }, // V1.3 서비스 B[강] 체육시설의 설치·이용에 관한 법률 제23조 및 시행규칙 제22조·별표5(체육지도자 배치기준)
-  "생활스포츠지도사 1급": { "서비스": "B" }, // V1.3 서비스 B[중] 위 체육시설법 제23조·시행규칙 별표5 배치 의무를 충족하는 체육지도자 자격(국민체육진흥법 시행령상 1급 생활스포츠지도사)으로
-  "건강운동관리사": { "서비스": "B" }, // V1.3 서비스 B[중] 국민체육진흥법 시행령상 '체육지도자'에 포함되어 체육시설법 제23조·시행규칙 별표5의 배치 의무를 충족한다(국민체육진흥공단 자
-  "수상구조사": { "서비스": "B" }, // V1.3 서비스 B[강] 체육시설의 설치·이용에 관한 법률 제24조 및 시행규칙 제23조·안전·위생기준 별표
-  "사회복지사 2급": { "보건·의료": "S" }, // V1.3 보건·의료 S[강] 의료법 시행규칙 제38조 제2항
-  "의료사회복지사": { "보건·의료": "S" }, // V1.3 보건·의료 S[강] 사회복지사업법 제11조 제2항
-  "정신건강사회복지사 1급": { "보건·의료": "A" }, // V1.3 보건·의료 A[강] 정신건강복지법 제17조
-  "정신건강사회복지사 2급": { "보건·의료": "A" }, // V1.3 보건·의료 A[강] 위와 동일 근거.
-  "정신건강임상심리사 1급": { "보건·의료": "A" }, // V1.3 보건·의료 A[강] 정신건강복지법 제17조상 정신건강전문요원 4개 분야 중 하나.
-  "정신건강임상심리사 2급": { "보건·의료": "A" }, // V1.3 보건·의료 A[강] 위와 동일.
-  "정신건강간호사 1급": { "보건·의료": "A" }, // V1.3 보건·의료 A[강] 정신건강복지법 제17조상 정신건강전문요원 4개 분야 중 하나(간호사 면허 기반).
-  "정신건강간호사 2급": { "보건·의료": "A" }, // V1.3 보건·의료 A[강] 위와 동일.
-  "정신건강작업치료사 1급": { "보건·의료": "B" }, // V1.3 보건·의료 B[중] 2020.
-  "정신건강작업치료사 2급": { "보건·의료": "B" }, // V1.3 보건·의료 B[중] 위와 동일(정신건강복지법 제17조·시행령 별표2로 1·2급 자격기준 신설, 2020년).
-  "임상심리사 1급": { "보건·의료": "B" }, // V1.3 보건·의료 B[중] 국립중앙의료원 계약직 정신건강전문요원 공고 필수자격 (B)항
-  "임상심리사 2급": { "보건·의료": "B" }, // V1.3 보건·의료 B[중] 위 국립중앙의료원 공고 (B)항에 "임상심리사 1~2급"으로 2급 포함(work24 wantedAuthNo=286823).
-  "한국어교원 2급": { "외국어": "A" }, // V1.3 외국어 A[강] 세종학당재단 '2025년 하반기 제2차 세종학당 국외 파견 한국어 교원 선발 공고'(ALIO 채용정보 seq=289746) 응
-  "한국어교원 1급": { "외국어": "A" }, // V1.3 외국어 A[강] 세종학당재단 국외 파견 한국어 교원 선발 공고 응시자격에 '1~3급'으로 1급이 직접 명시된 필수요건(https://www.a
-  "한국어교원 3급": { "외국어": "B" }, // V1.3 외국어 B[중] 세종학당재단 국외 파견 한국어 교원 선발 공고가 3급까지 필수요건으로 인정(1~3급, https://www.alio.go.kr
-  "사회복지사 1급": { "교육·복지": "S" }, // V1.3 교육·복지 S[강] 사회복지사업법 제13조(사회복지법인·시설 운영자는 대통령령으로 정하는 바에 따라 사회복지사를 종사자로 채용하고 임면사항을 시·
-  "요양보호사": { "교육·복지": "A" }, // V1.3 교육·복지 A[강] 노인복지법 시행규칙 별표4(노인의료복지시설의 시설기준 및 직원배치기준, 제22조제1항 관련) 확인
-  "정사서 1급": { "교육·복지": "A" }, // V1.3 교육·복지 A[중] 학교도서관진흥법 제12조제2항 확인
-  "정사서 2급": { "교육·복지": "A" }, // V1.3 교육·복지 A[중] 학교도서관진흥법 제12조제2항의 사서 배치 의무(2018-08-22 의무규정 전환) 및 도서관법 제6조제2항 사서 자격요건 확
-  "준사서": { "교육·복지": "A" }, // V1.3 교육·복지 A[중] 학교도서관진흥법 제12조제2항 사서 배치 의무 및 도서관법 제6조제2항 사서 자격요건(준사서 포함) 확인
-  "검수사": { "운송·항공·해양": "S" }, // V1.3 운송·항공·해양 S[강] 항만운송사업법 제7조(검수사등의 자격 및 등록): 검수사가 되려는 자는 해양수산부장관이 실시하는 자격시험에 합격한 후 해양수산
-  "검량사": { "운송·항공·해양": "S" }, // V1.3 운송·항공·해양 S[강] 항만운송사업법 제7조: 검량사도 해양수산부장관 자격시험 합격 후 등록 의무.
-  "감정사": { "운송·항공·해양": "S" }, // V1.3 운송·항공·해양 S[강] 항만운송사업법 제7조: 감정사도 자격시험 합격 후 등록 의무.
-  "위험물기능사": { "운송·항공·해양": "B", "화학·소재": "B" }, // V1.3 운송·항공·해양 B[중] 위험물안전관리법 제21조제1항: 이동탱크저장소(탱크로리)에 의하여 위험물을 운송하는 자(운송책임자 및 이동탱크저장소운전자 = / 화학·소재 B[중] 위험물안전관리법 제15조 및 선임기준 '지정수량 5배 이상 제조소에서 위험물기능사 이상'(law.go.kr + leothoug
-  "위험물산업기사": { "운송·항공·해양": "B", "화학·소재": "B" }, // V1.3 운송·항공·해양 B[중] 위험물안전관리법 제21조제1항 및 제20조제2항 / 화학·소재 B[중] 위험물안전관리법 제15조 제1항(law.go.kr 조문 확인)
-  "위험물기능장": { "화학·소재": "B" }, // V1.3 화학·소재 B[중] 위험물안전관리법 제15조 선임 의무 및 선임 자격 '지정수량 5배 이상 제조소에서 위험물기능사 이상'(law.go.kr 제15
-  "산업안전기사": { "화학·소재": "B" }, // V1.3 화학·소재 B[중] 산업안전보건법상 안전관리자 선임 자격 확인(나무위키 산업안전기사: '안전관리자에 선임될 수 있다', 사업 종류·규모에 따라 안
-  "산업안전산업기사": { "화학·소재": "B" }, // V1.3 화학·소재 B[중] 화학물질 관리 채용공고(kr.indeed.com)에서 '산업안전기사 또는 산업안전산업기사'가 필수조건 대안으로 병기된 사례 확
-  "대기환경기사": { "화학·소재": "B" }, // V1.3 화학·소재 B[중] 환경 직종 법적 인력기준에 포함되는 자격임을 확인(나무위키 대기환경기사
-  "수질환경기사": { "화학·소재": "B" }, // V1.3 화학·소재 B[중] 나무위키 대기환경기사
-  "수의사": { "농림·식품": "S" }, // V1.3 농림·식품 S[강] 「가축전염병 예방법」 제7조 제2항 "제1항의 규정에 의한 가축방역관은 수의사이어야 한다"
+  "지게차운전기능사": { "영업": "A", "운송·항공·해양": "A" }, // V1.3 운송·항공·해양 A [medium] Construction Machinery Management Act art. 26: anyone operating construction machinery (forklifts included) needs a construction machinery operator licence
+  /* V1.3 individual exceptions (2026-09-06) — among the new cells verified as C at category level, only qualifications with explicit statutory text or job-posting mentions are listed as exceptions.
+     Procedure: per-job research → adversarial verification (default C; "weak" or unconfirmed evidence is demoted). Category-wide judgments are matrix matters, not exceptions, and were excluded. */
+  "국가유산수리기술자(보수)": { "건설·안전": "A" }, // V1.3 건설·안전 A [strong] National Heritage Repair Act art. 5 (restrictions on heritage repair)
+  "산림기사": { "건설·안전": "B" }, // V1.3 건설·안전 B [strong] Forestry Technology Promotion and Management Act, Enforcement Decree table 3 (types, qualifications and scope of forestry engineers, art. 10)
+  "국가유산수리기술자(실측설계)": { "건설·안전": "B" }, // V1.3 건설·안전 B [strong] National Heritage Repair Act, Enforcement Decree table 7, registration requirements (kcpra.or.kr source table)
+  "산림기술사": { "건설·안전": "B" }, // V1.3 건설·안전 B [medium] Forestry Technology Promotion and Management Act, Enforcement Decree table 3
+  "산림산업기사": { "건설·안전": "B" }, // V1.3 건설·안전 B [medium] zighang posting "Hwasumok Co. forestry engineer" (job category construction/architecture, forest civil-works site agent)
+  "국가유산수리기술자(조경)": { "건설·안전": "B" }, // V1.3 건설·안전 B [medium] National Heritage Repair Act, Enforcement Decree table 7 (kcpra.or.kr source table)
+  "용접기술사": { "전기·기계": "A" }, // V1.3 전기·기계 A [medium] Mechanical Facilities Act, Enforcement Decree table (qualifications of mechanical-facility maintenance managers)
+  "생활스포츠지도사 2급": { "서비스": "B" }, // V1.3 서비스 B [strong] Sports Facilities Act art. 23 and Enforcement Rule art. 22, table 5 (sports instructor placement standards)
+  "생활스포츠지도사 1급": { "서비스": "B" }, // V1.3 서비스 B [medium] sports instructor qualification (grade-1 sports-for-all instructor under the National Sports Promotion Act Enforcement Decree) that satisfies the placement duty of Sports Facilities Act art. 23 / Enforcement Rule table 5
+  "건강운동관리사": { "서비스": "B" }, // V1.3 서비스 B [medium] counted as a "sports instructor" under the National Sports Promotion Act Enforcement Decree, satisfying the placement duty of Sports Facilities Act art. 23 / Enforcement Rule table 5 (Korea Sports Promotion Foundation)
+  "수상구조사": { "서비스": "B" }, // V1.3 서비스 B [strong] Sports Facilities Act art. 24 and Enforcement Rule art. 23, safety and hygiene standards table
+  "사회복지사 2급": { "보건·의료": "S" }, // V1.3 보건·의료 S [strong] Medical Service Act, Enforcement Rule art. 38 (2)
+  "의료사회복지사": { "보건·의료": "S" }, // V1.3 보건·의료 S [strong] Social Welfare Services Act art. 11 (2)
+  "정신건강사회복지사 1급": { "보건·의료": "A" }, // V1.3 보건·의료 A [strong] Mental Health Welfare Act art. 17
+  "정신건강사회복지사 2급": { "보건·의료": "A" }, // V1.3 보건·의료 A [strong] same evidence as above.
+  "정신건강임상심리사 1급": { "보건·의료": "A" }, // V1.3 보건·의료 A [strong] one of the four mental-health professional fields under Mental Health Welfare Act art. 17.
+  "정신건강임상심리사 2급": { "보건·의료": "A" }, // V1.3 보건·의료 A [strong] same as above.
+  "정신건강간호사 1급": { "보건·의료": "A" }, // V1.3 보건·의료 A [strong] one of the four mental-health professional fields under Mental Health Welfare Act art. 17 (requires a nursing licence).
+  "정신건강간호사 2급": { "보건·의료": "A" }, // V1.3 보건·의료 A [strong] same as above.
+  "정신건강작업치료사 1급": { "보건·의료": "B" }, // V1.3 보건·의료 B [medium] introduced 2020.
+  "정신건강작업치료사 2급": { "보건·의료": "B" }, // V1.3 보건·의료 B [medium] same as above (grade 1/2 criteria created by Mental Health Welfare Act art. 17 and Enforcement Decree table 2, 2020).
+  "임상심리사 1급": { "보건·의료": "B" }, // V1.3 보건·의료 B [medium] National Medical Center contract mental-health professional posting, required qualification item (B)
+  "임상심리사 2급": { "보건·의료": "B" }, // V1.3 보건·의료 B [medium] the same National Medical Center posting item (B) lists "임상심리사 grade 1–2", so grade 2 is included (work24 wantedAuthNo=286823).
+  "한국어교원 2급": { "외국어": "A" }, // V1.3 외국어 A [strong] King Sejong Institute Foundation, "2025 H2 2nd overseas Korean-language teacher recruitment" (ALIO posting seq=289746), eligibility requirement
+  "한국어교원 1급": { "외국어": "A" }, // V1.3 외국어 A [strong] the King Sejong Institute Foundation overseas teacher recruitment lists "grades 1–3" as a required qualification, naming grade 1 directly (alio.go.kr)
+  "한국어교원 3급": { "외국어": "B" }, // V1.3 외국어 B [medium] the same recruitment accepts grade 3 as a required qualification (grades 1–3, alio.go.kr)
+  "사회복지사 1급": { "교육·복지": "S" }, // V1.3 교육·복지 S [strong] Social Welfare Services Act art. 13 (operators of social-welfare corporations and facilities must employ social workers as prescribed by Presidential Decree and report appointments)
+  "요양보호사": { "교육·복지": "A" }, // V1.3 교육·복지 A [strong] Welfare of Senior Citizens Act, Enforcement Rule table 4 (facility and staffing standards for elderly medical-welfare facilities, art. 22 (1)) confirmed
+  "정사서 1급": { "교육·복지": "A" }, // V1.3 교육·복지 A [medium] School Libraries Promotion Act art. 12 (2) confirmed
+  "정사서 2급": { "교육·복지": "A" }, // V1.3 교육·복지 A [medium] librarian placement duty under School Libraries Promotion Act art. 12 (2) (made mandatory 2018-08-22) and librarian qualification under Libraries Act art. 6 (2) confirmed
+  "준사서": { "교육·복지": "A" }, // V1.3 교육·복지 A [medium] librarian placement duty under School Libraries Promotion Act art. 12 (2) and librarian qualification (assistant librarian included) under Libraries Act art. 6 (2) confirmed
+  "검수사": { "운송·항공·해양": "S" }, // V1.3 운송·항공·해양 S [strong] Harbor Transport Business Act art. 7 (qualification and registration of tally clerks etc.): a tally clerk must pass the Ministry of Oceans and Fisheries examination and register
+  "검량사": { "운송·항공·해양": "S" }, // V1.3 운송·항공·해양 S [strong] Harbor Transport Business Act art. 7: weighers must also pass the ministry examination and register.
+  "감정사": { "운송·항공·해양": "S" }, // V1.3 운송·항공·해양 S [strong] Harbor Transport Business Act art. 7: surveyors must also pass the examination and register.
+  "위험물기능사": { "운송·항공·해양": "B", "화학·소재": "B" }, // V1.3 운송·항공·해양 B [medium] Hazardous Substances Safety Control Act art. 21 (1): persons transporting hazardous substances by mobile tank storage (tank lorries) — transport supervisor and driver / 화학·소재 B [medium] art. 15 and the appointment standard "위험물기능사 or higher at manufacturing sites of 5× the designated quantity or more" (law.go.kr)
+  "위험물산업기사": { "운송·항공·해양": "B", "화학·소재": "B" }, // V1.3 운송·항공·해양 B [medium] Hazardous Substances Safety Control Act art. 21 (1) and art. 20 (2) / 화학·소재 B [medium] art. 15 (1) (law.go.kr text confirmed)
+  "위험물기능장": { "화학·소재": "B" }, // V1.3 화학·소재 B [medium] Hazardous Substances Safety Control Act art. 15 appointment duty and standard "위험물기능사 or higher at manufacturing sites of 5× the designated quantity or more" (law.go.kr art. 15)
+  "산업안전기사": { "화학·소재": "B" }, // V1.3 화학·소재 B [medium] eligible for appointment as safety manager under the Occupational Safety and Health Act, by business type and size (Namuwiki 산업안전기사 entry)
+  "산업안전산업기사": { "화학·소재": "B" }, // V1.3 화학·소재 B [medium] chemical-management job postings (kr.indeed.com) list "산업안전기사 or 산업안전산업기사" as alternative required qualifications
+  "대기환경기사": { "화학·소재": "B" }, // V1.3 화학·소재 B [medium] included in the statutory staffing standards for environmental roles (Namuwiki 대기환경기사 entry)
+  "수질환경기사": { "화학·소재": "B" }, // V1.3 화학·소재 B [medium] same source as 대기환경기사 (Namuwiki entry)
+  "수의사": { "농림·식품": "S" }, // V1.3 농림·식품 S [strong] Act on the Prevention of Contagious Animal Diseases art. 7 (2): "livestock quarantine officers under paragraph 1 must be veterinarians"
 };
-/* 조회 인덱스 — 1,011종 테이블을 매 렌더 순회하지 않도록 모듈 로드 시 1회만 구성한다 */
+/* Lookup indexes — built once at module load so the 1,011-row table is not scanned on every render */
 const CERT_BY_NAME = new Map(CERTS.map((c) => [c.n, c]));
-const CERTS_LONGEST_FIRST = [...CERTS].sort((a, b) => b.n.length - a.n.length); // 최장 이름 우선 매칭용
-const CERT_NAME_LC = new Map(CERTS.map((c) => [c, c.n.toLowerCase()]));         // 검색 시 toLowerCase 반복 제거
+const CERTS_LONGEST_FIRST = [...CERTS].sort((a, b) => b.n.length - a.n.length); // longest-name-first matching
+const CERT_NAME_LC = new Map(CERTS.map((c) => [c, c.n.toLowerCase()]));         // avoids repeated toLowerCase during search
 const CERTS_BY_CAT = CERTS.reduce((m, c) => { (m[c.c] = m[c.c] || []).push(c); return m; }, {});
 const certOf = (n) => CERT_BY_NAME.get(n) || null;
 const certTitleCache = new Map();
-// 실행 제목에서 자격을 찾는다 — 최장 이름 우선(의사⊂치과의사 등 오매칭 방지). 결과는 제목별로 캐시.
+// Finds the certification in a task title — longest name first (prevents 의사 ⊂ 치과의사 mismatches). Cached per title.
 const certByTitle = (t) => {
   if (!t) return null;
   if (certTitleCache.has(t)) return certTitleCache.get(t);
@@ -2015,19 +2015,19 @@ const certByTitle = (t) => {
   certTitleCache.set(t, hit);
   return hit;
 };
-// 온보딩 지식 방향 → 가중 매트릭스 직무 별칭
+// Onboarding knowledge direction → weight-matrix job alias
 const DIR_ALIAS = {
   "IT·개발": "개발", "재테크·금융": "금융", "경영·창업": "기획·PM",
   "법·행정": "법무·행정", "콘텐츠·미디어": "미디어·콘텐츠", "부동산": "법무·행정",
-  "심리·상담": "교육·복지", "건강·운동": "교육·복지", // V1.3: 상담·스포츠지도 자격이 교육·복지·상담 카테고리로 편성됨에 따라 이동
+  "심리·상담": "교육·복지", "건강·운동": "교육·복지", // V1.3: counselling and sports-instructor certs moved into the 교육·복지·상담 category
 };
 const normDirs = (area) => [...new Set((area?.dir || []).map((d) => (WEIGHT_MATRIX[d] ? d : DIR_ALIAS[d])).filter(Boolean))];
 const jobWeightForCert = (state, areaId, cert) => {
   if (!cert) return null;
   const area = state.areas?.find((p) => p.id === areaId);
   const dirs = normDirs(area);
-  if (!dirs.length) return null; // 직무 미지정 — 판단 근거 없음, ×1.0
-  // 교집합: 지정한 모든 직무에서 통해야 한다 — 최저 등급 적용, 근거 직무 표기
+  if (!dirs.length) return null; // no job specified — no basis for judgment, ×1.0
+  // Intersection: must hold in every specified job — the lowest tier applies, and its job is shown as the reason
   let worst = null;
   for (const d of dirs) {
     const tier = CERT_W_EXC[cert.n]?.[d] || WEIGHT_MATRIX[d][cert.c] || "C";
@@ -2036,7 +2036,7 @@ const jobWeightForCert = (state, areaId, cert) => {
   return { ...worst, mult: TIER_MULT[worst.tier], inter: dirs.length > 1 };
 };
 
-/* ── 상태 수명 ── */
+/* ── State lifecycle ── */
 /**
  * @schema v14 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
@@ -2065,7 +2065,7 @@ const jobWeightForCert = (state, areaId, cert) => {
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
-  if (typeof s.v !== "number") s = { ...s, v: 0 }; // v 도입 이전 세이브: 모든 블록을 건너뛰고 미변환 상태로 진입하던 문제 방어
+  if (typeof s.v !== "number") s = { ...s, v: 0 }; // saves from before v existed: guards against skipping every block and entering unconverted
   if (s.v < 11) {
   const p = { ...(s.profile || {}) };
   delete p.persona;
@@ -2091,11 +2091,11 @@ const migrate = (s) => {
     s = { ...s, v: 12, metrics: { asset: statClamp(m.asset ?? 10), infl: statClamp(m.infl ?? 5), body: 15 } };
   }
   if (s.v < 13) {
-    // v13: 트로피 종류 이름에서 게임 잔재 제거 — "boss"(구 보스 처치 연출)를 "ach"(성취)로 변환. 값·표시는 동일.
+    // v13: removes the game residue from trophy kind names — "boss" (old boss-defeat effect) becomes "ach" (achievement). Values and display unchanged.
     s = { ...s, v: 13, room: { ...(s.room || {}), trophies: (s.room?.trophies || []).map((t) => (t.kind === "boss" ? { ...t, kind: "ach" } : t)) } };
   }
   if (s.v < 14) {
-    // v14: 게임 용어 정리 — quests→tasks, parts→areas, partId→areaId. 값·의미는 그대로다(저장 키 liferpg-*는 데이터 호환상 유지).
+    // v14: game vocabulary cleanup — quests→tasks, parts→areas, partId→areaId. Values and meaning unchanged (storage keys liferpg-* kept for data compatibility).
     const areas = s.areas || s.parts || [];
     const mapId = (o) => { const { partId, ...rest } = o; return partId !== undefined ? { ...rest, areaId: partId } : o; };
     const next = { ...s, v: 14, areas, tasks: (s.tasks || s.quests || []).map(mapId), goals: (s.goals || []).map(mapId) };
@@ -2192,12 +2192,12 @@ function Shell({ children }) {
   );
 }
 
-/* ───────────────────────── 온보딩 (클릭 중심) ───────────────────────── */
+/* ───────────────────────── Onboarding (click-driven) ───────────────────────── */
 
 function Onboarding({ onStart, onDemo }) {
   const [step, setStep] = useState("title");
   const [err, setErr] = useState("");
-  // 기본 정보
+  // Basic info
   const [nick, setNick] = useState("");
   const [age, setAge] = useState(null);
   const [gender, setGender] = useState(null);
@@ -2205,7 +2205,7 @@ function Onboarding({ onStart, onDemo }) {
   const [edu, setEdu] = useState(null);
   const [majorField, setMajorField] = useState(null);
   const [majorName, setMajorName] = useState("");
-  // 외형
+  // Appearance
   const [look, setLook] = useState({ skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 1 });
   const setL = (k, v) => setLook((s) => ({ ...s, [k]: v }));
   const randomLook = () => setLook({
@@ -2215,19 +2215,19 @@ function Onboarding({ onStart, onDemo }) {
     outfit: Math.floor(Math.random() * OUTFITS.length),
     face: Math.floor(Math.random() * FACES.length),
   });
-  // 영역 + 방향
+  // Areas + directions
   const [selected, setSelected] = useState(["사업", "직업·커리어", "기본지식"]);
   const [customs, setCustoms] = useState([]);
   const [customInput, setCustomInput] = useState("");
   const [directions, setDirections] = useState([]);
-  // 보유 자격
+  // Held certifications
   const [certSel, setCertSel] = useState([]);
   const [examOwnFam, setExamOwnFam] = useState(null);
   const [examsOwned, setExamsOwned] = useState([]);
   const [cat, setCat] = useState("전체");
   const [gradeF, setGradeF] = useState("전체");
   const [query, setQuery] = useState("");
-  // 경험
+  // Experience
   const [career, setCareer] = useState(null);
   const [lead, setLead] = useState(null);
   const [biz, setBiz] = useState(null);
@@ -2259,7 +2259,7 @@ function Onboarding({ onStart, onDemo }) {
       (!kw || c.n.includes(kw))
     );
   }, [cat, gradeF, query]);
-  // 목록은 60행까지만 그린다(1,011종 전체 마운트 방지). 이미 고른 자격은 캡 밖으로 밀려나 해제 못 하는 일이 없도록 앞에 고정.
+  // Render at most 60 rows (never mount all 1,011). Already-selected certs are pinned first so they cannot be pushed past the cap and become un-deselectable.
   const shown = useMemo(() => {
     const picked = filtered.filter((c) => certSetSel.has(c.n));
     const rest = filtered.filter((c) => !certSetSel.has(c.n));
@@ -2304,7 +2304,7 @@ function Onboarding({ onStart, onDemo }) {
       if (r.name === "기본지식") area.dir = directions;
       return area;
     });
-    /* 시험 상태 프리필 — 등록 순서대로 감쇠 락, 전문화 판정 */
+    /* Exam state prefill — decay locked in registration order, specialisation verdict */
     const ex = { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION };
     for (const o of examsOwned) {
       const fam = examOf(o.famId);
@@ -2327,7 +2327,7 @@ function Onboarding({ onStart, onDemo }) {
         }
       }
     }
-    /* 단계형 자격 최고 기록 프리필 */
+    /* Stage-group certification best-record prefill */
     const cb = {};
     for (const nm of certSel) {
       const c = certOf(nm);
@@ -2603,7 +2603,7 @@ function Onboarding({ onStart, onDemo }) {
   );
 }
 
-/* ───────────────────────── 홈 — 오늘의 초점 ───────────────────────── */
+/* ───────────────────────── Home — today's focus ───────────────────────── */
 function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests }) {
   const a = state.act;
   const active = (state.goals || []).filter((g) => g.status === "active");
@@ -2709,7 +2709,7 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
   );
 }
 
-/* ───────────────────────── 목표 탭 (OKR) ───────────────────────── */
+/* ───────────────────────── Goals tab (OKR) ───────────────────────── */
 function GoalsTab({ state, onAddGoal, onCheckin, onGoalStatus, onRemoveGoal, onAddQuestFor }) {
   const groups = [
     ["active", "진행 중"],
@@ -2741,7 +2741,7 @@ function GoalsTab({ state, onAddGoal, onCheckin, onGoalStatus, onRemoveGoal, onA
             </div>
             {list.map((g) => {
               const pc = paceOf(g, state);
-              const pr = pc.p; // paceOf가 이미 진행률을 계산한다 — 중복 호출 제거
+              const pr = pc.p; // paceOf already computed the progress — no duplicate call
               const area = state.areas.find((p) => p.id === g.areaId);
               return (
                 <section key={g.id} className={`bg-zinc-900 border border-zinc-800 rounded-2xl p-4 ${st === "done" ? "opacity-75" : ""}`}>
@@ -2845,7 +2845,7 @@ function GoalsTab({ state, onAddGoal, onCheckin, onGoalStatus, onRemoveGoal, onA
   );
 }
 
-/* ── 새 목표 모달 (OKR 빌더) ── */
+/* ── New goal modal (OKR builder) ── */
 function AddGoalModal({ areas, onClose, onAdd }) {
   const [title, setTitle] = useState("");
   const [areaId, setPartId] = useState(areas[0]?.id);
@@ -2985,7 +2985,7 @@ function AddGoalModal({ areas, onClose, onAdd }) {
   );
 }
 
-/* ── 지표 체크인 모달 ── */
+/* ── Metrics check-in modal ── */
 function MetricsModal({ metrics, onClose, onSave }) {
   const [v, setV] = useState({ ...metrics });
   return (
@@ -3008,7 +3008,7 @@ function MetricsModal({ metrics, onClose, onSave }) {
   );
 }
 
-/* ── 토스트 — 자체 상태를 가진 별도 컴포넌트. 표시·소멸이 App 렌더를 건드리지 않는다 ── */
+/* ── Toast — separate component with its own state. Showing and expiring never re-render App ── */
 const ToastHost = forwardRef(function ToastHost(_, ref) {
   const [toast, setToast] = useState(null);
   const timer = useRef(null);
@@ -3030,7 +3030,7 @@ const ToastHost = forwardRef(function ToastHost(_, ref) {
   );
 });
 
-/* ── 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) ── */
+/* ── Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) ── */
 function EvidenceViewModal({ task, onClose }) {
   const [imgs, setImgs] = useState(null);
   useEffect(() => {
@@ -3068,7 +3068,7 @@ function EvidenceViewModal({ task, onClose }) {
   );
 }
 
-/* ── 성취 도감 — 자격·시험 실지급 P 조회 ── */
+/* ── Achievement catalogue — actual payout P for certifications and exams ── */
 function CatalogModal({ state, initialCat, onClose }) {
   const [mode, setMode] = useState("cert");
   const [cat, setCat] = useState(initialCat || "전체");
@@ -3080,7 +3080,7 @@ function CatalogModal({ state, initialCat, onClose }) {
   }, [cat, q]);
   const list = hits.slice(0, 60);
   const total = hits.length;
-  // 자격 실행 제목은 "전기기사 취득"처럼 종목명 + 접미어라 완전일치로는 안 잡힌다 — certByTitle로 종목을 역추적한다.
+  // Certification task titles are "<name> 취득" (name + suffix), so an exact match fails — certByTitle traces the qualification back.
   const ownedCerts = useMemo(
     () => new Set(state.tasks.filter((x) => x.isCert && x.status === "done").map((x) => certByTitle(x.title)?.n).filter(Boolean)),
     [state.tasks]);
@@ -3155,7 +3155,7 @@ function CatalogModal({ state, initialCat, onClose }) {
   );
 }
 
-/* ── 롤모델 방향 제안 ── */
+/* ── Role-model direction advice ── */
 function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
   const rg = roleGap(state);
   const gaps = (rg?.items || []).filter((i) => i.gap > 0);
@@ -3242,7 +3242,7 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
   );
 }
 
-/* ───────────────────────── 실행 탭 — 목표별 실행 ───────────────────────── */
+/* ───────────────────────── Tasks tab — tasks per goal ───────────────────────── */
 function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onAddFor, onViewEvidence }) {
   const active = (state.goals || []).filter((g) => g.status === "active");
   const orphan = state.tasks.filter((q) => !q.goalId || !(state.goals || []).find((g) => g.id === q.goalId));
@@ -3613,7 +3613,7 @@ function EvidenceModal({ task, onClose, onSubmit }) {
   );
 }
 
-/* ── 일상 활동 기록 모달 — 독서·운동·미팅 ── */
+/* ── Daily activity log modal — reading, exercise, meetings ── */
 function ActivityLogModal({ task, onClose, onDone, onSpawn }) {
   const k = task.kind;
   const [rating, setRating] = useState(0);
@@ -3716,7 +3716,7 @@ function ActivityLogModal({ task, onClose, onDone, onSpawn }) {
   );
 }
 
-/* ── 학습 검증 모달 — 등급별 산출물 증거 (확정 2026-08-29) ── */
+/* ── Study verification modal — output evidence per grade (decided 2026-08-29) ── */
 const STUDY_REQ = {
   E: { sum: 30, art: 0, crit: false, label: "요약·새 지식 기재" },
   D: { sum: 30, art: 1, crit: false, label: "기재 + 산출물 1건" },
@@ -3829,7 +3829,7 @@ function StudyVerifyModal({ task, onClose, onDone }) {
   );
 }
 
-/* ───────────────────────── 성장 탭 ───────────────────────── */
+/* ───────────────────────── Growth tab ───────────────────────── */
 
 function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMetrics }) {
   const rg = roleGap(state);
@@ -3999,7 +3999,7 @@ function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMet
   );
 }
 
-/* ───────────────────────── 승급 모달 (클릭형) ───────────────────────── */
+/* ───────────────────────── Promotion modal (click-driven) ───────────────────────── */
 
 function PromoteModal({ area, onClose, onSubmit }) {
   const next = RANKS[area.grade + 1];
@@ -4074,7 +4074,7 @@ function RoleModelModal({ state, onClose, onSave }) {
   );
 }
 
-/* ───────────────────────── 오버레이 연출 ───────────────────────── */
+/* ───────────────────────── Overlay effects ───────────────────────── */
 
 function Overlay({ data, onClose }) {
   useEffect(() => {
@@ -4126,7 +4126,7 @@ function Overlay({ data, onClose }) {
   );
 }
 
-/* ───────────────────────── 앱 루트 ───────────────────────── */
+/* ───────────────────────── App root ───────────────────────── */
 export default function LifeManager() {
   const [phase, setPhase] = useState("loading");
   const [state, setState] = useState(null);
@@ -4159,7 +4159,7 @@ export default function LifeManager() {
     store.set(KEY, state);
   }, [state]);
 
-  /* 사진 */
+  /* Photos */
   const askUpload = (slot) => { slotRef.current = slot; fileRef.current?.click(); };
   const onFile = async (e) => {
     const fl = e.target.files?.[0];
@@ -4175,7 +4175,7 @@ export default function LifeManager() {
   };
   const clearImg = (slot) => { setImgs((p) => ({ ...p, [slot]: null })); store.del(`liferpg-img-${slot}`); };
 
-  /* 실행 */
+  /* Tasks */
   const addQuest = (q) => {
     if (q.isCert && state.tasks.some((x) => x.isCert && x.title === q.title)) {
       setModal(null);
@@ -4191,7 +4191,7 @@ export default function LifeManager() {
     showToast({ msg: "실행이 추가됐어요" });
   };
   const removeTask = (id) => {
-    // 증거 사진 키(규칙 16)를 함께 정리한다 — 남겨두면 저장소에 계속 쌓인다.
+    // Also clears the evidence photo keys (rule 16) — left behind they keep piling up in storage.
     store.del(`liferpg-img-ev-${id}`);
     for (let n = 1; n <= 2; n++) store.del(`liferpg-img-study-${id}-${n}`);
     setState((prev) => ({ ...prev, tasks: prev.tasks.filter((q) => q.id !== id) }));
@@ -4247,7 +4247,7 @@ export default function LifeManager() {
       }
       if (evidence) q.evidence = evidence;
 
-      /* 스트릭 (보호권 자동 소모) */
+      /* Streak (shields consumed automatically) */
       const a = s.act;
       let shield = false;
       if (a.lastActive !== today) {
@@ -4352,7 +4352,7 @@ export default function LifeManager() {
     setModal(null);
   };
 
-  /* 승급 */
+  /* Promotion */
   const promoteArea = (areaId, evidenceText) => {
     setState((prev) => {
       const s = structuredClone(prev);
@@ -4371,7 +4371,7 @@ export default function LifeManager() {
     setModal(null);
   };
 
-  /* 목표 */
+  /* Goals */
   const addGoal = (g) => {
     setState((prev) => {
       const p0 = Math.round(goalProgress(g, prev) * 100);
@@ -4424,7 +4424,7 @@ export default function LifeManager() {
   };
 
   const resetAll = async () => {
-    // 상태와 함께 증거 사진 키(규칙 16)·프로필 사진도 지운다 — 남기면 저장소에 계속 쌓인다.
+    // Clears the evidence photo keys (rule 16) and the profile photo along with the state — left behind they keep piling up.
     for (const t of state?.tasks || []) {
       store.del(`liferpg-img-ev-${t.id}`);
       for (let n = 1; n <= 2; n++) store.del(`liferpg-img-study-${t.id}-${n}`);

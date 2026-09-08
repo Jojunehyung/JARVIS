@@ -1,5 +1,6 @@
 // Language policy check: English everywhere except UI copy and Korean-required data.
 // Flags Hangul inside comments (src/, tools/) and, for tools/e2e, inside step names / error messages / logs.
+// Korean data vocabulary (cert/exam/job/category names from the tables) is allowed inside comments.
 // Selector-helper arguments (text that must match Korean UI copy) are allowed.
 //
 // Modes:
@@ -14,6 +15,26 @@ const { ROOT, listSourceFiles, rel } = require("./lib/source");
 const HANGUL = /[가-힣]/;
 // Functions whose string arguments legitimately contain Korean UI copy (E2E selectors/assertions).
 const SELECTOR_FNS = ["clickText", "clickInModal", "clickInModalExact", "assertDone", "completeQuest", "clickTab", "hasText", "expectText", "typeInto", "typeExact", "findByText", "includes", "startsWith", "test", "match", "innerText"];
+// Data vocabulary: Korean strings that ARE data (certification/exam names, job and category names, option lists)
+// may appear in comments because they name table rows. They are stripped before the Hangul test.
+const VOCAB_CONSTS = ["CERTS", "EXAMS", "WEIGHT_MATRIX", "CERT_W_EXC", "DIR_ALIAS", "DIR_CATS", "JOB_FIELDS", "KNOWLEDGE_FIELDS"];
+const TIER_WORDS = ["기술사", "기능장", "산업기사", "기능사", "기사"]; // qualification ladder terms used in the data itself
+let dataVocab = null;
+function loadVocab() {
+  if (dataVocab) return dataVocab;
+  const { evalConst } = require("./lib/source");
+  const set = new Set(TIER_WORDS);
+  const walk = (v) => {
+    if (typeof v === "string") { if (HANGUL.test(v)) set.add(v); }
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) { if (HANGUL.test(k)) set.add(k); walk(x); }
+  };
+  for (const name of VOCAB_CONSTS) { try { walk(evalConst(name)); } catch { /* constant not evaluable — skip */ } }
+  dataVocab = [...set].sort((a, b) => b.length - a.length);
+  return dataVocab;
+}
+const stripVocab = (text) => { let out = text; for (const w of loadVocab()) if (out.includes(w)) out = out.split(w).join(" "); return out; };
+
 const E2E_MSG_FNS = /\b(step|Error|console\.log|errors\.push|log)\s*\(\s*([`"'])/;
 
 // Remove string/template literal bodies and JSX text so only code + comments remain.
@@ -49,7 +70,7 @@ function scanFile(file) {
         else rest = "";
       }
     }
-    if (HANGUL.test(commentText)) findings.push({ file: rel(file), line: lineNo, kind: "comment", text: raw.trim().slice(0, 100) });
+    if (HANGUL.test(commentText) && HANGUL.test(stripVocab(commentText))) findings.push({ file: rel(file), line: lineNo, kind: "comment", text: raw.trim().slice(0, 100) });
     if (isE2E) {
       const m = raw.match(E2E_MSG_FNS);
       if (m) {

@@ -59,6 +59,7 @@ Main-agent responsibilities that are not delegated: choosing the route, showing 
 
 ## 6. Language policy
 English everywhere — code comments, identifiers, docs, commit messages, E2E step names and log strings — **except**: UI copy (Korean, 해요체), the data tables (`CERTS`, `EXAMS`, `JOB_FIELDS`, `KNOWLEDGE_FIELDS`, option lists, `TASK_TEMPLATES`, `GATE_CHIPS`), `demoState` content, E2E selector/assert arguments that must match UI copy, regexes that match Korean UI text, and storage keys (ASCII, frozen).
+Comments may name data rows in Korean (certification, exam, job and category names exactly as they appear in the tables); `lang-check` strips this data vocabulary before flagging Hangul, so any other Korean in a comment is a finding.
 Glossary for English prose: `실행` task · `영역` area · 등급 grade · 성취 achievement · 마일스톤 milestone · 관문 gate · 보호권 streak shield · 인생 지표 life metrics. Quote Korean UI copy verbatim in backticks.
 
 ## 7. What agents must never do (rule numbers → `docs/design-docs/core-beliefs.md`)

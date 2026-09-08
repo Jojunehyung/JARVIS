@@ -1,5 +1,5 @@
-// A/B 성능 비교 — 두 빌드를 한 프로세스에서 번갈아 측정해 머신 부하 편차를 상쇄한다
-// 사용: node ab.js <urlA> <urlB> [반복]
+// A/B performance comparison — measures two builds alternately in one process to cancel machine-load drift
+// Usage: node ab.js <urlA> <urlB> [repeats]
 const fs = require("fs");
 const { sleep, med, launchThrottled } = require("./bench-lib");
 const A = process.argv[2] || "http://localhost:5001/";

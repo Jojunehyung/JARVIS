@@ -1,7 +1,7 @@
 // UserPromptSubmit hook: when the user phrases a request as "~해줘" (please do X),
 // inject the prompt-first protocol so the plan/prompt is written before any edit.
 // Input: JSON on stdin ({ prompt, session_id, ... }). Output: JSON with additionalContext, or nothing.
-// Any Korean verb + 줘/주세요/줄래 ("고쳐줘", "추가해줘", "만들어 줘", "정리해주세요") counts as a task request.
+// Any Korean verb followed by a request suffix (the alternatives in TRIGGER below) counts as a task request.
 const TRIGGER = /[가-힣]\s?줘(?![가-힣])|주세요|줄래|주라|줄\s?수\s?있|부탁/;
 const SKIP = /^\s*\/|바로 해|no plan|plan 없이/i;
 

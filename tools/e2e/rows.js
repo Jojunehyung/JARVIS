@@ -1,4 +1,4 @@
-// 온보딩 4단계(자격 선택)에서 실제로 마운트되는 행 수 확인 — run.js 플로우 재사용
+// Counts the rows actually mounted in onboarding step 4 (certification picker) — reuses the run.js flow
 const puppeteer = require("puppeteer-core");
 const fs = require("fs");
 const URL = process.argv[2];
@@ -17,14 +17,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.goto(URL, { waitUntil: "networkidle2" });
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle2" }); await sleep(400);
-  console.log("시작:", await click(START));
+  console.log("start:", await click(START));
   await sleep(400);
   const nick = await page.$('input[placeholder*="닉네임"]'); if (nick) await nick.type("AB");
   for (const t of ["20대 후반", "남성", "취업 준비", "학사 졸", "공학"]) { await click(t); await sleep(70); }
-  await click("다음"); await sleep(400);                       // → 2단계
-  await click("다음"); await sleep(400);                       // → 3단계
+  await click("다음"); await sleep(400);                       // → step 2
+  await click("다음"); await sleep(400);                       // → step 3
   for (const t of ["기본지식", "IT·개발"]) { await click(t); await sleep(90); }
-  await click("다음"); await sleep(600);                       // → 4단계
+  await click("다음"); await sleep(600);                       // → step 4
   const step = await page.evaluate(() => (document.body.innerText.match(/\d \/ 6/) || [""])[0]);
   const rows = await page.evaluate(() => document.querySelectorAll(".max-h-56 button").length);
   const nodes = await page.evaluate(() => document.querySelectorAll("*").length);
@@ -37,6 +37,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     keys.push(Date.now() - t0);
   }
   const m = keys.sort((a,b)=>a-b)[keys.length>>1];
-  console.log(`단계 ${step} · 자격 목록 행 ${rows} · 전체 DOM 노드 ${nodes} · 검색 키입력 중앙값 ${m}ms (${keys.join(",")})`);
+  console.log(`step ${step} · cert list rows ${rows} · total DOM nodes ${nodes} · search keystroke median ${m}ms (${keys.join(",")})`);
   await b.close();
 })();

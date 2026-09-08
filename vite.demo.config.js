@@ -1,5 +1,5 @@
-// 데모 배포용 단일 HTML 빌드 — JS·CSS를 전부 내장해 폰/PC에서 파일 하나로 열 수 있게 한다.
-// 사용: npm run build:demo  →  release/life-demo.html
+// Single-file HTML build for demo distribution — inlines all JS and CSS so the app opens from one file on a phone or PC.
+// Usage: npm run build:demo  →  release/life-demo.html
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -19,7 +19,7 @@ function singleFileDemo() {
         if (f.type === "chunk") {
           const re = new RegExp(`<script[^>]*src="[^"]*${esc(f.fileName)}"[^>]*></script>`);
           const code = f.code.replace(/<\/script/gi, "<\\/script");
-          // 클래식 스크립트는 defer가 없으므로 #root 뒤(</body> 직전)에 배치
+          // classic scripts have no defer, so place it after #root (just before </body>)
           html = html.replace(re, "").replace("</body>", () => `<script>${code}</script>\n  </body>`);
           delete bundle[key];
         } else if (f.type === "asset" && f.fileName.endsWith(".css")) {
@@ -30,13 +30,13 @@ function singleFileDemo() {
         }
       }
 
-      // file:// 환경에서 의미 없는 링크 제거
+      // remove links that mean nothing under file://
       html = html
         .replace(/\s*<link rel="manifest"[^>]*>/g, "")
         .replace(/\s*<link rel="modulepreload"[^>]*>/g, "");
 
       if (/(?:src|href)="(?!data:)/.test(html)) {
-        this.warn("외부 참조가 남아 있습니다 — 단일 파일이 아닐 수 있음");
+        this.warn("external references remain — the output may not be a single file");
       }
 
       delete bundle[htmlKey];
@@ -58,7 +58,7 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     rollupOptions: {
       output: {
-        format: "iife", // 클래식 스크립트 — file:// 에서 모듈 CORS 제약 없이 실행
+        format: "iife", // classic script — runs from file:// without module CORS restrictions
         inlineDynamicImports: true,
       },
     },

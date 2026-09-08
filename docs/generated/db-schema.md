@@ -112,21 +112,21 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 |---|---|
 | < v11 → v11 | (see source) |
 | < v12 → v12 | (see source) |
-| < v13 → v13 | v13: 트로피 종류 이름에서 게임 잔재 제거 — "boss"(구 보스 처치 연출)를 "ach"(성취)로 변환. 값·표시는 동일. |
-| < v14 → v14 | v14: 게임 용어 정리 — quests→tasks, parts→areas, partId→areaId. 값·의미는 그대로다(저장 키 liferpg-*는 데이터 호환상 유지). |
+| < v13 → v13 | v13: removes the game residue from trophy kind names — "boss" (old boss-defeat effect) becomes "ach" (achievement). Values and display unchanged. |
+| < v14 → v14 | v14: game vocabulary cleanup — quests→tasks, parts→areas, partId→areaId. Values and meaning unchanged (storage keys liferpg-* kept for data compatibility). |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
-| `liferpg-state-v1` | 1225 | 저장소 (localStorage + 메모리 폴백) — §3-1 시밍 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3039 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
-| `liferpg-img-study-${task.id}-1` | 3039 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
-| `liferpg-img-study-${task.id}-2` | 3039 | 증거 열람 — 완료 기록에 저장된 텍스트·사진 확인(규칙 16의 키 규약을 읽는 쪽) |
-| `liferpg-img-profile` | 4152 | 앱 루트 |
-| `liferpg-img-${slot}` | 4172 | 앱 루트 |
-| `liferpg-img-ev-${id}` | 4195 | 앱 루트 |
-| `liferpg-img-ev-${t.id}` | 4429 | 앱 루트 |
+| `liferpg-state-v1` | 1225 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
+| `liferpg-img-ev-${task.id}` | 3039 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 3039 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 3039 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-profile` | 4152 | App root |
+| `liferpg-img-${slot}` | 4172 | App root |
+| `liferpg-img-ev-${id}` | 4195 | App root |
+| `liferpg-img-ev-${t.id}` | 4429 | App root |
 
 ## Demo data (`demoState`)
 
