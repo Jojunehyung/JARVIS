@@ -92,6 +92,21 @@ const expectText = async (t) => {
     throw new Error(`"${t}" not found · current screen: ${body}`);
   }
 };
+// Set a controlled React input/textarea directly — needed for <input type="date"> and long pastes,
+// where per-character typing is slow or unsupported. Uses the native setter so React sees the change.
+const setValue = async (selector, value) => {
+  const ok = await page.evaluate((sel, val) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, val);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, selector, value);
+  if (!ok) throw new Error(`setValue target not found: ${selector}`);
+  await sleep(150);
+};
 const typeExact = async (placeholder, value) => {
   const el = await page.$(`input[placeholder="${placeholder}"], textarea[placeholder="${placeholder}"]`);
   if (!el) throw new Error(`input not found (exact match): ${placeholder}`);
@@ -225,7 +240,7 @@ const typeInto = async (placeholder, value) => {
     await sleep(1000); await closeModal();
     await assertDone(title);
   };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, reload, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, reload, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

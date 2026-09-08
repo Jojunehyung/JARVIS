@@ -1,6 +1,8 @@
 # Tasks tab
 <!-- src: SPEC-4-4 -->
 
+Open rows carry a `DueChip` when the task has a `due` date, and `AddTaskModal` offers `기한 (선택)` (a date input) for `오늘 1회` tasks and for study tasks; a milestone created from a KR defaults its `due` to the goal deadline.
+
 `TaskTab` shows every 실행 (task) grouped under its active goal — daily rows first, then the 마일스톤 (milestone) rows for certification, exam, and study tasks — plus a 미분류 (unassigned) section for legacy tasks whose goal no longer resolves. New tasks are created only through `AddTaskModal`, opened from a goal and sized to one day ([Rule 18](../design-docs/core-beliefs.md#rule-18)); certification and exam milestones come only from the goal's KR bridge ([Rule 19](../design-docs/core-beliefs.md#rule-19)). The 도감 (catalogue) `CatalogModal` is a read-only browser of the payout tables. Hierarchy: `information-architecture.md`; payouts: `scoring-engine.md` (both under `../design-docs/`).
 
 ## `TaskTab`

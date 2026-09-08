@@ -30,7 +30,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version", async () => {
     const v = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1"))?.v; } catch { return null; } });
-    if (v !== 14) throw new Error("fresh save schema v" + v + " (expected 14)");
+    if (v !== 15) throw new Error("fresh save schema v" + v + " (expected 15)");
   });
 
   // ── Goal (OKR) creation — metric, count and cert KRs
@@ -138,6 +138,7 @@ module.exports = async (h) => {
   await require("./flow2.js")(h);
 
   await require("./flow3.js")(h);
+  await require("./flow5.js")(h);
   await require("./flow4.js")(h);
 
   // ── Demo data path (separate session)

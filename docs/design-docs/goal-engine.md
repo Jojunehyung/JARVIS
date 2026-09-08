@@ -29,7 +29,8 @@ paceOf(goal, state):
   gap <= −5                       → { label: "{−gap}%p 뒤처짐",  cls: text-rose-400 }
   gap >=  5                       → { label: "{gap}%p 앞섬",     cls: text-emerald-400 }
   otherwise                       → { label: "궤도 유지",        cls: text-zinc-400 }
-ddayStr(deadline) = ceil((Date(deadline + "T23:59") − Date.now()) / 86400000) → "D-{n}" | "D-DAY" | "D+{n}"
+daysBetween(a, b)  = whole days from a to b, both "YYYY-MM-DD", anchored at noon so DST cannot shift the count
+ddayStr(deadline)  = daysBetween(dstr(), deadline) → "D-{n}" | "D-DAY" | "D+{n}"   // due today reads D-DAY
 ```
 `paceOf` returns `p` as well, so a caller that already has the pace must not call `goalProgress` again.
 
@@ -63,5 +64,7 @@ Scope: template chips and activity-kind chips appear only for kinds in `gk.kinds
 **Difficulty caps** ([Rule 18](core-beliefs.md#rule-18)): daily and activity tasks may be E, D or C — 60 pts stays below `EVIDENCE_MIN` (150), so a kind task can never bypass the evidence gate ([Rule 17](core-beliefs.md#rule-17)). Study tasks may be E or D only. Milestones get their difficulty from `scoreTier` of the payout, which is how they reach B and A.
 
 **Title/kind conflict** is refused when `detectKind(title)` and the selected kind are both set and differ. With no kind selected, the detected kind is assigned automatically — including a kind outside `gk.kinds`.
+
+A `once` task may carry an optional `due` date (`기한 (선택)` in the modal); `daily` tasks never do, and a milestone created from a KR defaults its `due` to the goal deadline. `agendaOf(state, today)` buckets the open tasks by that date into overdue, due today, daily, this week and later — derived at render, never stored ([Rule 9](core-beliefs.md#rule-9)).
 
 `type` is `daily` (`매일 반복`) or `once` (`오늘 1회`); study tasks, milestones and meeting follow-ups are always `once`. The 영역 (area) is inherited (`areaId = goal.areaId || areas[0].id`), never chosen in the modal. New tasks start `status: "todo"`, `doneDates: []`, with `createdAt` and a fresh `uid()`, and are inserted at the front of the list.

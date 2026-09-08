@@ -31,7 +31,8 @@ The three goals cover all four KR types, a deadline in the near and far future, 
 
 | Task | area / goal | diff | pts | type | doneDates | flags |
 |---|---|---|---|---|---|---|
-| `전기기사 취득` | 직업·커리어 / 하네스 | B | 900 | once | — | `isCert`, `certD: 67`, created today − 14 |
+| `전기기사 취득` | 직업·커리어 / 하네스 | B | 900 | once | — | `isCert`, `certD: 67`, `due` = the goal deadline, created today − 14 |
+| `이력서 초안 작성` | 직업·커리어 / 하네스 | D | — | once | — | `due: today − 1`, so the agenda and the briefing both open with an overdue row |
 | `CATIA·도면 연습 1시간` | 직업·커리어 / 하네스 | D | — | daily | today − 2, today − 1 | created today − 14 |
 | `영어 스터디 참석` | 기본지식 / 어학 | D | — | daily | today − 5, − 3, − 1 | created today − 7 |
 | `TOEIC L&R 800 달성` | 기본지식 / 어학 | B | 720 | once | — | `isExam`, `famId: "toeic"`, band `{ 800, 60, 720, B }`, created today − 7 |
@@ -44,6 +45,9 @@ Every task carries a `goalId` ([Rule 18](core-beliefs.md#rule-18)), so the demo 
 - `metrics`: `{ asset: 24, infl: 14, body: 20 }`, written directly rather than derived from the achievement history.
 - `exams`: `best.toeic = { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: today − 60 }`, `dim.toeic = 1`, empty `spec`. So the TOEIC 800 milestone pays the difference only — 720 − 480 = 240 P at multiplier 1 — which is exactly the same-family upgrade rule ([Rule 2](core-beliefs.md#rule-2)) on screen.
 - `certBest`: empty, so 전기기사 (no stage group) pays its full `certP(67) = 900` before job weighting.
+- `journal`: one entry dated yesterday with an `ai` reply, so the journal list and the stored-reply block are both visible.
+- `reviews`: one entry for last week (`weekOf` = that Monday), which leaves this week's review outstanding.
+- `act.lastCheckin = today − 10` and `lastReview = today − 7`, `briefingSeen: null` — the demo briefing therefore opens with an overdue task, a stale metrics check-in and a due weekly review.
 - `room.trophies`: one `{ kind: "rank", label: "직업·커리어 실무자", date: today − 20 }`, so the achievement wall is not empty on first open.
 - `role`: `{ name: "완성차 1차사 하네스 설계 책임", targets: { 직업·커리어: 6, 기본지식: 4 } }` — two targeted areas, which makes `roleGap` computable and the RANK UP proximity line meaningful.
 

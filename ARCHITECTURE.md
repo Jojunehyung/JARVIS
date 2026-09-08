@@ -8,7 +8,7 @@ Vite 5 · React 18 · Tailwind v3 (core utilities only) · lucide-react. Node 24
 
 ## Files
 ```
-src/LifeManager.jsx    the app (≈ 4,500 lines) — see "File regions"
+src/LifeManager.jsx    the app (≈ 4,600 lines) — see "File regions"
 src/main.jsx           React root
 src/index.css          Tailwind directives
 index.html             shell; data-URI favicon; manifest link
@@ -30,7 +30,8 @@ docs/                  product, design, engine, plans, generated tables
 | Exam engine | `EXAMS` (17 families), `EXAM_BY_ID`, `examOf`, `LANG_KO`, `DIM_STEPS`, `calcExamPayout`, `POINT_POLICY_VERSION` | `function calcExamPayout` |
 | Goal engine | `needsEvidence`, `METRICS_META`, `ddayStr`, `krProgress`, `krDoneCount`, `goalProgress`, `elapsedRatio`, `paceOf`, `krRemainText`, `roleGap`, `certGainOf`, `examBandGain` | `const paceOf =` |
 | Job-fit weighting | `DIR_CATS`, `JOB_FIELDS`, `areaCatHints`, `TIER_MULT`, `TIER_CLS`, `WEIGHT_MATRIX`, `CERT_W_EXC`, lookup indexes (`CERT_BY_NAME`, `CERTS_LONGEST_FIRST`, `CERT_NAME_LC`, `CERTS_BY_CAT`, `certOf`, `certByTitle`), `DIR_ALIAS`, `normDirs`, `jobWeightForCert` | `const WEIGHT_MATRIX = {` |
-| State lifecycle | `migrate` (v11 → v14 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
+| Daily assistant | `daysBetween`, `mondayOf`, `doneTodayCount`, `agendaOf` (briefing and bridge helpers land here in phases B and C) | `const agendaOf =` |
+| State lifecycle | `migrate` (v11 → v15 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
 | Onboarding | `Onboarding` (6 steps: basics → appearance → areas & directions → qualifications/exams → experience → computed grades) | `function Onboarding` |
 | Tabs | `HomeTab`, `GoalsTab`, `TaskTab`, `GrowthTab` | `function GoalsTab` |
 | Modals | `AddGoalModal`, `MetricsModal`, `EvidenceViewModal`, `CatalogModal`, `RoleAdviceModal`, `AddTaskModal`, `EvidenceModal`, `ActivityLogModal`, `StudyVerifyModal`, `PromoteModal`, `RoleModelModal` | `function AddTaskModal` |

@@ -1,6 +1,18 @@
 // Wrap-up — goal status changes and legacy migrations (last, because they affect later steps)
 module.exports = async (h) => {
   const { step, shot, clickText, clickTab, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
+
+  // Plant a legacy save, reload, and read back the migrated state.
+  const migrateFixture = async (save) => {
+    await page.evaluate((s) => localStorage.setItem("liferpg-state-v1", JSON.stringify(s)), save);
+    await h.reload();
+    await sleep(900);
+    await clickTab("성장"); await sleep(400);
+    const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
+    if (!st) throw new Error("no state");
+    if (st.v !== 15) throw new Error("schema version " + st.v + " (expected 15)");
+    return st;
+  };
   // ── Goal status change and removal
   await step("create goal to finish (count KR ×1)", async () => {
     await clickTab("목표");
@@ -69,7 +81,7 @@ module.exports = async (h) => {
       try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; }
     });
     if (!st) throw new Error("no state after migration");
-    if (st.v !== 14) throw new Error("schema version " + st.v + " (expected 14)");
+    if (st.v !== 15) throw new Error("schema version " + st.v + " (expected 15)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     const kinds = (st.room?.trophies || []).map((t) => t.kind);
@@ -93,36 +105,43 @@ module.exports = async (h) => {
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 14) throw new Error("schema version " + st.v + " (expected 14)");
+    if (st.v !== 15) throw new Error("schema version " + st.v + " (expected 15)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     if (typeof st.metrics?.body !== "number") throw new Error("metrics.body missing — v12 conversion skipped");
     if ((st.room?.trophies || []).some((t) => t.kind === "boss")) throw new Error("trophy kind boss remains");
   });
   await step("v13 save → v14 field rename", async () => {
-    await page.evaluate(() => {
-      const s13 = {
-        v: 13,
-        profile: { nick: "v13세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
-        parts: [{ id: "pa", name: "커리어", grade: 2, achievements: [] }],
-        quests: [{ id: "qa", title: "레거시 실행", partId: "pa", diff: "D", type: "daily", status: "todo", doneDates: [] }],
-        goals: [{ id: "ga", title: "레거시 목표", partId: "pa", status: "active", createdAt: "2026-01-01", krs: [] }],
-        act: { streak: 2, lastActive: "2026-01-02", shieldMonth: "2026-01", shieldsLeft: 2 },
-        metrics: { asset: 10, infl: 5, body: 15 }, exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
-        certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
-      };
-      localStorage.setItem("liferpg-state-v1", JSON.stringify(s13));
-    });
-    await h.reload();
-    await sleep(900);
-    await clickTab("성장"); await sleep(400);
-    const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
-    if (!st) throw new Error("no state");
-    if (st.v !== 14) throw new Error("schema version " + st.v + " (expected 14)");
+    const s13 = {
+      v: 13,
+      profile: { nick: "v13세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
+      parts: [{ id: "pa", name: "커리어", grade: 2, achievements: [] }],
+      quests: [{ id: "qa", title: "레거시 실행", partId: "pa", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [{ id: "ga", title: "레거시 목표", partId: "pa", status: "active", createdAt: "2026-01-01", krs: [] }],
+      act: { streak: 2, lastActive: "2026-01-02", shieldMonth: "2026-01", shieldsLeft: 2 },
+      metrics: { asset: 10, infl: 5, body: 15 }, exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s13);
     if (st.quests || st.parts) throw new Error("legacy fields remain");
     if (st.tasks?.[0]?.areaId !== "pa") throw new Error("task areaId conversion failed: " + JSON.stringify(st.tasks?.[0]));
     if (st.goals?.[0]?.areaId !== "pa") throw new Error("goal areaId conversion failed");
     if (st.areas?.[0]?.name !== "커리어") throw new Error("area migration failed");
+  });
+  await step("v14 save → v15 assistant fields", async () => {
+    const s14 = {
+      v: 14,
+      profile: { nick: "v14세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, directions: [] },
+      areas: [{ id: "ar", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "ta", title: "레거시 실행", areaId: "ar", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [], act: { streak: 1, lastActive: "2026-01-02", shieldMonth: "2026-01", shieldsLeft: 2 },
+      metrics: { asset: 10, infl: 5, body: 15 }, exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s14);
+    if (!Array.isArray(st.journal) || !Array.isArray(st.reviews)) throw new Error("v15 records (journal, reviews) missing");
+    if (!("briefingSeen" in st.act) || !("lastCheckin" in st.act) || !("lastReview" in st.act)) throw new Error("v15 act stamps missing");
+    if (st.tasks?.[0]?.due !== undefined) throw new Error("migration invented a due date");
   });
   await shot("migrated");
 };

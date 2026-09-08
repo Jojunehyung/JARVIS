@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 14 |
+| State schema version (`freshState.v`) | 15 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,22 +11,25 @@
 ## Field reference
 
 ```js
-@schema v14 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v15 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 14,
+  v: 15,
   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
             isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?,
-            kind?("book"|"fit"|"meet"), createdAt }],
+            kind?("book"|"fit"|"meet"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only) }],
   goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
             krs: [{ id, type:"metric", title, start, target, current, unit }
                 | { id, type:"count",  title, need }
                 | { id, type:"exam",   title, famId, band{label,d,p,conf} }
                 | { id, type:"cert",   title, certName, done? }] }],
-  act: { streak, lastActive, shieldMonth, shieldsLeft },   // shields: 2 per month, one consumed per missed day
+  journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
+  reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
+  act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
+         lastCheckin?, briefingSeen?, lastReview? },        // dates only — facts, never verdicts
   metrics: { asset, infl, body },                           // 0-100; body = appearance (exercise/care), self-assessed only
   exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
   certBest: { sg: { p, name, d } },
@@ -34,18 +37,21 @@
   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
   lastTick, dModel
 }
-Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`).
+Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
+agenda buckets (`agendaOf`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 14,
+  v: 15,
   profile: null,
   areas,
   tasks: [],
   goals: [],
-  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2 },
+  journal: [],
+  reviews: [],
+  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
   metrics: { asset: 10, infl: 5, body: 15 },
   exams: { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION },
   certBest: {},
@@ -89,13 +95,23 @@ const demoState = () => {
   };
   s.goals = [gHarness, gEng, gFit];
   s.tasks = [
-    { id: uid(), title: "전기기사 취득", areaId: p2.id, goalId: gHarness.id, diff: "B", pts: 900, certD: 67, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -14), isCert: true },
+    { id: uid(), title: "전기기사 취득", areaId: p2.id, goalId: gHarness.id, diff: "B", pts: 900, certD: 67, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -14), due: gHarness.deadline, isCert: true },
+    { id: uid(), title: "이력서 초안 작성", areaId: p2.id, goalId: gHarness.id, diff: "D", type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -5), due: shiftDay(today, -1) },
     { id: uid(), title: "CATIA·도면 연습 1시간", areaId: p2.id, goalId: gHarness.id, diff: "D", type: "daily", status: "todo", doneDates: [shiftDay(today, -2), shiftDay(today, -1)], createdAt: shiftDay(today, -14) },
     { id: uid(), title: "영어 스터디 참석", areaId: p3.id, goalId: gEng.id, diff: "D", type: "daily", status: "todo", doneDates: [shiftDay(today, -5), shiftDay(today, -3), shiftDay(today, -1)], createdAt: shiftDay(today, -7) },
     { id: uid(), title: "TOEIC L&R 800 달성", areaId: p3.id, goalId: gEng.id, diff: "B", pts: 720, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -7), isExam: true, famId: "toeic", band: { label: "800", d: 60, p: 720, conf: "B" } },
     { id: uid(), title: "아침 운동 30분", areaId: p4.id, goalId: gFit.id, kind: "fit", diff: "E", type: "daily", status: "todo", doneDates: [shiftDay(today, -1)], createdAt: shiftDay(today, -10) },
   ];
-  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2 };
+  s.journal = [{
+    id: uid(), date: shiftDay(today, -1),
+    text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
+    ai: "점검: 연속 4일, 체중 KR 4.2kg 남음. 다음 단계: 전기기사 필기 기출 1회분.", aiDate: shiftDay(today, -1),
+  }];
+  s.reviews = [{
+    id: uid(), weekOf: mondayOf(shiftDay(today, -7)), date: shiftDay(today, -7),
+    wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
+  }];
+  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: shiftDay(today, -10), briefingSeen: null, lastReview: shiftDay(today, -7) };
   s.metrics = { asset: 24, infl: 14, body: 20 };
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60) } };
   s.exams.dim = { toeic: 1 };
@@ -114,20 +130,21 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v12 → v12 | (see source) |
 | < v13 → v13 | v13: removes the game residue from trophy kind names — "boss" (old boss-defeat effect) becomes "ach" (achievement). Values and display unchanged. |
 | < v14 → v14 | v14: game vocabulary cleanup — quests→tasks, parts→areas, partId→areaId. Values and meaning unchanged (storage keys liferpg-* kept for data compatibility). |
+| < v15 → v15 | v15: daily assistant — journal[] and reviews[] records, optional tasks[].due, act stamps (lastCheckin, briefingSeen, lastReview). Nothing derived is stored. |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1225 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3039 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 3039 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 3039 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-profile` | 4152 | App root |
-| `liferpg-img-${slot}` | 4172 | App root |
-| `liferpg-img-ev-${id}` | 4195 | App root |
-| `liferpg-img-ev-${t.id}` | 4429 | App root |
+| `liferpg-img-ev-${task.id}` | 3093 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 3093 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 3093 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-profile` | 4220 | App root |
+| `liferpg-img-${slot}` | 4240 | App root |
+| `liferpg-img-ev-${id}` | 4263 | App root |
+| `liferpg-img-ev-${t.id}` | 4497 | App root |
 
 ## Demo data (`demoState`)
 
-Areas: 4 · goals: 3 · tasks with a goal: 5 · cert milestones: 1 · exam milestones: 1.
+Areas: 4 · goals: 3 · tasks with a goal: 6 · cert milestones: 1 · exam milestones: 1.

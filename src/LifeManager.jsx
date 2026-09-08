@@ -1271,6 +1271,17 @@ function DiffBadge({ d }) {
   );
 }
 
+function DueChip({ due, today }) {
+  if (!due) return null;
+  const overdue = due < today;
+  const tone = overdue ? "text-rose-400 border-rose-800" : due === today ? "text-amber-300 border-amber-700" : "text-zinc-400 border-zinc-700";
+  return (
+    <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${tone}`}>
+      {overdue ? "기한 지남" : ddayStr(due)}
+    </span>
+  );
+}
+
 function CertBadge({ g }) {
   return (
     <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg border font-mono text-sm font-bold ${GRADE_TEXT[g]} ${GRADE_BORDER[g]} bg-zinc-900 shrink-0`}>
@@ -1778,9 +1789,15 @@ const DIFF_TONE = { E: "border-zinc-600 text-zinc-300", D: "border-emerald-700 t
 const DIFF_SEL = { E: "border-zinc-400 text-zinc-200", D: "border-emerald-400 text-emerald-300", C: "border-sky-400 text-sky-300" };
 const DIFF_PT_TEXT = { E: "text-zinc-300", D: "text-emerald-300", C: "text-sky-300" };
 
+// Whole days from `a` to `b`, both "YYYY-MM-DD". Noon-anchored like shiftDay so DST cannot shift the count.
+const daysBetween = (a, b) => Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000);
+const mondayOf = (date) => { const d = new Date(date + "T12:00:00"); return shiftDay(date, -((d.getDay() + 6) % 7)); };
+const doneTodayCount = (state, today) => (state.tasks || []).reduce(
+  (n, q) => n + (q.type === "daily" ? (q.doneDates?.includes(today) ? 1 : 0) : q.doneAt === today ? 1 : 0), 0);
+
 const ddayStr = (deadline) => {
   if (!deadline) return "";
-  const diff = Math.ceil((new Date(deadline + "T23:59") - new Date()) / 86400000);
+  const diff = daysBetween(dstr(), deadline);
   return diff > 0 ? `D-${diff}` : diff === 0 ? "D-DAY" : `D+${-diff}`;
 };
 
@@ -2036,24 +2053,41 @@ const jobWeightForCert = (state, areaId, cert) => {
   return { ...worst, mult: TIER_MULT[worst.tier], inter: dirs.length > 1 };
 };
 
+/* ───────────────────────── Daily assistant — agenda · briefing · bridge ───────────────────────── */
+// Buckets the open tasks by date. Pure: derived at render, never stored (rule 9).
+const agendaOf = (state, today) => {
+  const open = (state.tasks || []).filter((q) => (q.type === "daily" ? !q.doneDates?.includes(today) : q.status !== "done"));
+  const weekEnd = shiftDay(mondayOf(today), 6);
+  const overdue = open.filter((q) => q.type !== "daily" && q.due && q.due < today);
+  const dueToday = open.filter((q) => q.type !== "daily" && q.due === today);
+  const daily = open.filter((q) => q.type === "daily");
+  const week = open.filter((q) => q.type !== "daily" && q.due && q.due > today && q.due <= weekEnd);
+  const picked = new Set([...overdue, ...dueToday, ...daily, ...week].map((q) => q.id));
+  const later = open.filter((q) => !picked.has(q.id));
+  return { overdue, dueToday, daily, week, later, all: [...overdue, ...dueToday, ...daily, ...week, ...later] };
+};
+
 /* ── State lifecycle ── */
 /**
- * @schema v14 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v15 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 14,
+ *   v: 15,
  *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
  *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
  *             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
  *             isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?,
- *             kind?("book"|"fit"|"meet"), createdAt }],
+ *             kind?("book"|"fit"|"meet"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only) }],
  *   goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
  *             krs: [{ id, type:"metric", title, start, target, current, unit }
  *                 | { id, type:"count",  title, need }
  *                 | { id, type:"exam",   title, famId, band{label,d,p,conf} }
  *                 | { id, type:"cert",   title, certName, done? }] }],
- *   act: { streak, lastActive, shieldMonth, shieldsLeft },   // shields: 2 per month, one consumed per missed day
+ *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
+ *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
+ *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
+ *          lastCheckin?, briefingSeen?, lastReview? },        // dates only — facts, never verdicts
  *   metrics: { asset, infl, body },                           // 0-100; body = appearance (exercise/care), self-assessed only
  *   exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
  *   certBest: { sg: { p, name, d } },
@@ -2061,7 +2095,8 @@ const jobWeightForCert = (state, areaId, cert) => {
  *   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
  *   lastTick, dModel
  * }
- * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`).
+ * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
+ * agenda buckets (`agendaOf`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -2102,6 +2137,15 @@ const migrate = (s) => {
     delete next.parts; delete next.quests;
     s = next;
   }
+  if (s.v < 15) {
+    // v15: daily assistant — journal[] and reviews[] records, optional tasks[].due, act stamps (lastCheckin, briefingSeen, lastReview). Nothing derived is stored.
+    s = {
+      ...s, v: 15,
+      journal: s.journal || [],
+      reviews: s.reviews || [],
+      act: { ...(s.act || {}), lastCheckin: s.act?.lastCheckin ?? null, briefingSeen: s.act?.briefingSeen ?? null, lastReview: s.act?.lastReview ?? null },
+    };
+  }
   return s;
 };
 
@@ -2113,12 +2157,14 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 14,
+  v: 15,
   profile: null,
   areas,
   tasks: [],
   goals: [],
-  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2 },
+  journal: [],
+  reviews: [],
+  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
   metrics: { asset: 10, infl: 5, body: 15 },
   exams: { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION },
   certBest: {},
@@ -2162,13 +2208,23 @@ const demoState = () => {
   };
   s.goals = [gHarness, gEng, gFit];
   s.tasks = [
-    { id: uid(), title: "전기기사 취득", areaId: p2.id, goalId: gHarness.id, diff: "B", pts: 900, certD: 67, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -14), isCert: true },
+    { id: uid(), title: "전기기사 취득", areaId: p2.id, goalId: gHarness.id, diff: "B", pts: 900, certD: 67, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -14), due: gHarness.deadline, isCert: true },
+    { id: uid(), title: "이력서 초안 작성", areaId: p2.id, goalId: gHarness.id, diff: "D", type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -5), due: shiftDay(today, -1) },
     { id: uid(), title: "CATIA·도면 연습 1시간", areaId: p2.id, goalId: gHarness.id, diff: "D", type: "daily", status: "todo", doneDates: [shiftDay(today, -2), shiftDay(today, -1)], createdAt: shiftDay(today, -14) },
     { id: uid(), title: "영어 스터디 참석", areaId: p3.id, goalId: gEng.id, diff: "D", type: "daily", status: "todo", doneDates: [shiftDay(today, -5), shiftDay(today, -3), shiftDay(today, -1)], createdAt: shiftDay(today, -7) },
     { id: uid(), title: "TOEIC L&R 800 달성", areaId: p3.id, goalId: gEng.id, diff: "B", pts: 720, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -7), isExam: true, famId: "toeic", band: { label: "800", d: 60, p: 720, conf: "B" } },
     { id: uid(), title: "아침 운동 30분", areaId: p4.id, goalId: gFit.id, kind: "fit", diff: "E", type: "daily", status: "todo", doneDates: [shiftDay(today, -1)], createdAt: shiftDay(today, -10) },
   ];
-  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2 };
+  s.journal = [{
+    id: uid(), date: shiftDay(today, -1),
+    text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
+    ai: "점검: 연속 4일, 체중 KR 4.2kg 남음. 다음 단계: 전기기사 필기 기출 1회분.", aiDate: shiftDay(today, -1),
+  }];
+  s.reviews = [{
+    id: uid(), weekOf: mondayOf(shiftDay(today, -7)), date: shiftDay(today, -7),
+    wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
+  }];
+  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: shiftDay(today, -10), briefingSeen: null, lastReview: shiftDay(today, -7) };
   s.metrics = { asset: 24, infl: 14, body: 20 };
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60) } };
   s.exams.dim = { toeic: 1 };
@@ -2608,11 +2664,8 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
   const a = state.act;
   const active = (state.goals || []).filter((g) => g.status === "active");
   const focus = [...active].sort((x, y) => (x.deadline || "9999").localeCompare(y.deadline || "9999")).slice(0, 3);
-  const todayQuests = state.tasks.filter((q) =>
-    q.type === "daily" ? !q.doneDates?.includes(today) : q.status !== "done"
-  );
-  const doneToday = state.tasks.reduce(
-    (n, q) => n + (q.type === "daily" ? (q.doneDates?.includes(today) ? 1 : 0) : q.doneAt === today ? 1 : 0), 0);
+  const todayQuests = agendaOf(state, today).all;
+  const doneToday = doneTodayCount(state, today);
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
@@ -2696,6 +2749,7 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
                       {area?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{!goal && <span className="text-zinc-600"> · 목표 연결 없음</span>}
                     </div>
                   </div>
+                  <DueChip due={q.due} today={today} />
                   {q.isExam && <span className={`text-xs font-mono font-bold border bg-zinc-900 rounded-lg px-1.5 py-1 shrink-0 ${GRADE_TEXT[achGrade(q.band?.d ?? 0)]} ${GRADE_BORDER[achGrade(q.band?.d ?? 0)]}`}>시험 D{q.band?.d}</span>}
                   {q.isCert && <span className={`text-xs font-mono font-bold border bg-zinc-900 rounded-lg px-1.5 py-1 shrink-0 ${GRADE_TEXT[achGrade(q.certD ?? 0)]} ${GRADE_BORDER[achGrade(q.certD ?? 0)]}`}>자격 D{q.certD}</span>}
                   {!q.isExam && !q.isCert && <DiffBadge d={q.diff} />}
@@ -3279,6 +3333,7 @@ function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onA
               : <>{area?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{q.isStudy ? " · 📖 산출물검증" : ev ? " · 증거 필요" : ""}{!goal && <span className="text-zinc-600"> · 목표 기여 없음</span>}</>}
           </div>
         </div>
+        {!doneToday && <DueChip due={q.due} today={today} />}
         {q.isExam ? <span className="text-xs font-mono font-bold text-sky-300 border border-sky-700 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">시험</span>
           : q.isCert ? (
             <span className="flex items-center gap-1 shrink-0">
@@ -3361,6 +3416,7 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
   const [type, setType] = useState("daily");
   const [sDiff, setSDiff] = useState("D");
   const [sScope, setSScope] = useState("");
+  const [due, setDue] = useState("");
   const [err, setErr] = useState("");
   const areaId = goal?.areaId || areas[0]?.id;
   const areaName = areas.find((p) => p.id === areaId)?.name || "—";
@@ -3370,10 +3426,10 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
 
   const addExamKR = (kr) => {
     const fam = examOf(kr.famId);
-    onAdd({ goalId, title: `${fam?.n || "시험"} ${kr.band.label} 달성`, areaId, diff: scoreTier(kr.band.p), pts: kr.band.p, type: "once", isExam: true, famId: kr.famId, band: kr.band });
+    onAdd({ goalId, title: `${fam?.n || "시험"} ${kr.band.label} 달성`, areaId, diff: scoreTier(kr.band.p), pts: kr.band.p, type: "once", ...(goal?.deadline ? { due: goal.deadline } : {}), isExam: true, famId: kr.famId, band: kr.band });
   };
   const addCertKR = (c) => {
-    onAdd({ goalId, title: `${c.n} 취득`, areaId, diff: scoreTier(certP(c.d)), pts: certP(c.d), certD: c.d, ...(c.sg ? { sg: c.sg } : {}), type: "once", isCert: true });
+    onAdd({ goalId, title: `${c.n} 취득`, areaId, diff: scoreTier(certP(c.d)), pts: certP(c.d), certD: c.d, ...(c.sg ? { sg: c.sg } : {}), type: "once", ...(goal?.deadline ? { due: goal.deadline } : {}), isCert: true });
   };
   const fillCount = (kr) => {
     setMode("normal"); setTitle(kr.title);
@@ -3386,12 +3442,12 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
     const nm = { book: "📚 독서", fit: "💪 운동", meet: "🤝 미팅" };
     if (dk && kind && dk !== kind) { setErr(`제목은 ${nm[dk]} 활동으로 보이는데 유형이 ${nm[kind]}(으)로 선택돼 있어요 — 맞춰 주세요.`); return; }
     const ek = kind || dk;
-    onAdd({ goalId, ...(ek ? { kind: ek } : {}), title: title.trim(), areaId, diff, pts: DIFFS[diff].pts, type });
+    onAdd({ goalId, ...(ek ? { kind: ek } : {}), title: title.trim(), areaId, diff, pts: DIFFS[diff].pts, type, ...(due && type === "once" ? { due } : {}) });
   };
   const submitStudy = () => {
     setErr("");
     if (!title.trim()) { setErr("책·논문·강의명을 입력해 주세요."); return; }
-    onAdd({ goalId, title: title.trim(), areaId, diff: sDiff, pts: DIFFS[sDiff].pts, type: "once", isStudy: true, source: title.trim(), scope: sScope.trim() || undefined });
+    onAdd({ goalId, title: title.trim(), areaId, diff: sDiff, pts: DIFFS[sDiff].pts, type: "once", ...(due ? { due } : {}), isStudy: true, source: title.trim(), scope: sScope.trim() || undefined });
   };
 
   return (
@@ -3512,6 +3568,13 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
             <Chip on={type === "daily"} onClick={() => setType("daily")}>매일 반복</Chip>
             <Chip on={type === "once"} onClick={() => setType("once")}>오늘 1회</Chip>
           </div>
+          {type === "once" && (
+            <div>
+              <div className="text-xs text-zinc-500 mb-1">기한 (선택)</div>
+              <input type="date" value={due} onChange={(e) => setDue(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+            </div>
+          )}
           {err && <p className="text-xs text-rose-400">{err}</p>}
           <button onClick={submitNormal}
             className="w-full py-3 rounded-xl bg-cyan-400 text-zinc-950 font-black text-sm active:translate-y-0.5 transition-all">
@@ -3533,6 +3596,11 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
             <p className="text-xs text-zinc-600 mt-1">하루 학습 분량만: 아티클 E · 챕터/강의 1개 D. 책 한 권은 매일 챕터(D)로 쪼개고, 완독은 목표의 횟수 KR로 측정하세요.</p>
           </div>
           <p className="text-xs text-zinc-500">완료 검증: E = 요약·새 지식 기재 · D = 기재 + 산출물 1건(정리 사진/링크).</p>
+          <div>
+            <div className="text-xs text-zinc-500 mb-1">기한 (선택)</div>
+            <input type="date" value={due} onChange={(e) => setDue(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+          </div>
           {err && <p className="text-xs text-rose-400">{err}</p>}
           <button onClick={submitStudy}
             className="w-full py-3 rounded-xl bg-violet-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
