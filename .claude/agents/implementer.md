@@ -18,5 +18,6 @@ You implement one exec plan at a time for Life Manager.
 ## Limits (AGENTS.md §7)
 - No edits to data-table rows (CERTS/EXAMS/WEIGHT_MATRIX/CERT_W_EXC/DIR_*), existing migrate blocks, or `liferpg-*` keys.
 - No UI copy changes in translation or refactor tasks — E2E selectors match Korean copy.
-- Code comments, commit messages, docs: English. Use the `setState(prev => { const s = structuredClone(prev); …; return s; })` pattern. Tailwind v3 core utilities only.
+- Everything you write is English — code comments, identifiers, docs, plan updates, commit messages, your report — whatever language the request used. Korean only where AGENTS.md §6 requires it (UI copy, data tables, `demoState`, E2E selector arguments, regexes matching UI text, storage keys), quoted verbatim in backticks.
+- Use the `setState(prev => { const s = structuredClone(prev); …; return s; })` pattern. Tailwind v3 core utilities only.
 - Never mark a plan completed yourself; docs-syncer moves it after verification passes.

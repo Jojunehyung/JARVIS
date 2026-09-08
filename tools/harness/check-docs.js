@@ -1,4 +1,4 @@
-// Documentation integrity: links resolve, exactly 19 canonical rules, agents listed, indexes complete,
+// Documentation integrity: links resolve, exactly 19 canonical rules, agents listed, indexes complete, exec plans in English,
 // source-coverage manifest satisfied, generated files fresh, retired filenames absent (--final).
 //   node check-docs.js [--final] [--no-links]
 const fs = require("fs");
@@ -95,6 +95,21 @@ if (args.includes("--final")) {
   const retired = ["PLANNING.md", "KICKOFF_PROMPT.md", "기획안", "클로드디자인", "LifeRPG"];
   for (const f of files) { const t = read(f); for (const r of retired) if (t.includes(r) && !/decision-log|completed\//.test(rel(f))) P(`${rel(f)}: references retired "${r}"`); }
   for (const r of ["PLANNING.md", "KICKOFF_PROMPT.md"]) if (exists(path.join(ROOT, r))) P(`${r} still exists`);
+}
+
+// 8) exec plans are written in English (AGENTS.md §4/§6): Hangul only inside backticks or fenced code
+{
+  const HANGUL = /[가-힣]/;
+  for (const f of files.filter((x) => rel(x).startsWith("docs/exec-plans/"))) {
+    const lines = read(f).split("\n");
+    let inFence = false;
+    lines.forEach((raw, i) => {
+      if (/^\s*```/.test(raw)) { inFence = !inFence; return; }
+      if (inFence) return;
+      const prose = raw.replace(/`[^`]*`/g, "");
+      if (HANGUL.test(prose)) P(`${rel(f)}:${i + 1}: Korean prose in an exec plan — write it in English, or quote UI copy/data in backticks`);
+    });
+  }
 }
 
 for (const w of warnings) console.log("warn:", w);

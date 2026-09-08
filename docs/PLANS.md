@@ -6,11 +6,14 @@ Every task request produces a written plan **before** any edit. The plan's core 
 ## Protocol
 1. **Detect.** A request that contains 해줘 / 주세요 (the `UserPromptSubmit` hook injects this protocol) or an imperative (implement, add, fix, change, refactor, translate, optimise) is a task.
 2. **Plan before edit.** The `planner` agent writes `docs/exec-plans/active/<YYYY-MM-DD>-<slug>.md` from the template below. Trivial task (≤ 1 file, ≤ 20 lines, no rule touched) → a 3-line inline plan — still before any edit.
+   **The plan is written in English**, whatever language the request used — including its `Prompt` section, the summary shown to the user, and every delegation prompt. Korean appears only where AGENTS.md §6 requires it, quoted verbatim in backticks. `npm run docs:check` fails on Korean prose in a file under `docs/exec-plans/`.
 3. **Show** the user a ≤ 10-line summary (plan path, agents, rules touched, approval needed?).
 4. **Execute immediately.** Ask the user first only when the plan touches rules 1–19 data (`CERTS`/`EXAMS`/matrix rows), `migrate` blocks, `liferpg-*` keys, or deletes user data (`needs-approval: true`).
 5. **Finish protocol** (AGENTS.md §5): cleanup → verifier → docs-syncer → report with a proposed commit message. Commits happen only at user-approved gates.
 
 ## Exec-plan template
+Written in English; Korean only inside backticks (UI copy, data names).
+
 ```markdown
 # <Title>
 - Status: active | completed

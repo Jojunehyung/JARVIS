@@ -51,6 +51,8 @@ Main-agent responsibilities that are not delegated: choosing the route, showing 
 4. **Execute immediately** — ask the user first only when the plan touches rules 1–19 data (CERTS/EXAMS/matrix rows), `migrate` blocks, `liferpg-*` storage keys, or deletes user data.
 5. **Finish protocol** (§5).
 
+The request may be Korean; **the plan, its Prompt section, the summary, every delegation prompt and every resulting edit are written in English** (§6). `npm run docs:check` fails on Korean prose in a file under `docs/exec-plans/`.
+
 ## 5. Finish protocol (mandatory, in this order)
 1. **cleanup** → `npm run finish` exit 0 (dead code, duplicates, residue, language). Intentional findings go to `tools/harness/finish-allowlist.json` with a reason and are mirrored in `docs/exec-plans/tech-debt-tracker.md`.
 2. **verifier** → `npm run verify` (build, preview, full E2E, 0 console errors); `npm run verify -- --smoke` when engine or data changed.
@@ -58,7 +60,7 @@ Main-agent responsibilities that are not delegated: choosing the route, showing 
 4. **Report**: what changed, commands run with results, findings, proposed commit message. Commit only when the user asked or at an approved phase gate.
 
 ## 6. Language policy
-English everywhere — code comments, identifiers, docs, commit messages, E2E step names and log strings — **except**: UI copy (Korean, 해요체), the data tables (`CERTS`, `EXAMS`, `JOB_FIELDS`, `KNOWLEDGE_FIELDS`, option lists, `TASK_TEMPLATES`, `GATE_CHIPS`), `demoState` content, E2E selector/assert arguments that must match UI copy, regexes that match Korean UI text, and storage keys (ASCII, frozen).
+English everywhere — code comments, identifiers, docs, exec plans and the prompts inside them, agent delegation prompts, plan summaries, commit messages, E2E step names and log strings — **except**: UI copy (Korean, 해요체), the data tables (`CERTS`, `EXAMS`, `JOB_FIELDS`, `KNOWLEDGE_FIELDS`, option lists, `TASK_TEMPLATES`, `GATE_CHIPS`), `demoState` content, E2E selector/assert arguments that must match UI copy, regexes that match Korean UI text, and storage keys (ASCII, frozen).
 Comments may name data rows in Korean (certification, exam, job and category names exactly as they appear in the tables); `lang-check` strips this data vocabulary before flagging Hangul, so any other Korean in a comment is a finding.
 Glossary for English prose: `실행` task · `영역` area · 등급 grade · 성취 achievement · 마일스톤 milestone · 관문 gate · 보호권 streak shield · 인생 지표 life metrics. Quote Korean UI copy verbatim in backticks.
 
