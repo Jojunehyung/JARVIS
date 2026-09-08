@@ -49,7 +49,7 @@ The `readyRef` guard exists so the persist effect cannot overwrite a real save w
 | `v < 13` | trophy `kind: "boss"` (the old boss-defeat effect) becomes `"ach"`; values and display unchanged |
 | `v < 14` | terminology rename: `quests` → `tasks`, `parts` → `areas`, `partId` → `areaId` on tasks and goals; the old keys are deleted. Storage keys stay as they are |
 
-Rules for changing this ([Rule 12](core-beliefs.md#rule-12)): add a new `if (s.v < N)` block, bump `v` in `freshState`, never edit an existing block, and never rename a storage key. Migration paths are covered by the E2E harness (`flow4.js` exercises a v10 save, a save with no `v`, and a v13 → v14 rename).
+Rules for changing this ([Rule 12](core-beliefs.md#rule-12)): add a new `if (s.v < N)` block, bump `v` in `freshState`, never edit an existing block, and never rename a storage key. Migration paths are covered by the E2E harness (`tools/e2e/flow4.js` exercises a v10 save, a save with no `v`, and a v13 → v14 rename).
 
 ## `freshState(areas)` and `applyDailyTick(s)`
 `freshState` builds a v14 state with the areas produced by onboarding, empty `tasks` / `goals` / `trophies`, `act` at streak 0 with 2 shields for the current month, `metrics` `{ asset: 10, infl: 5, body: 15 }`, an empty `exams` bundle stamped with `POINT_POLICY_VERSION`, `role: null`, `lastTick: dstr()` and `dModel: DIFF_RAW_VERSION`. It passes through `applyDailyTick` once. Callers: onboarding's `onStart` and `demoState`. Exact values: [../generated/db-schema.md](../generated/db-schema.md).

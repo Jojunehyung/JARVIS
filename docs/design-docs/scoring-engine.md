@@ -67,7 +67,7 @@ Duplicate protection: adding a certification task is refused when a task with th
 
 ## Exams (`EXAMS`)
 
-17 families of `{ id, n, lang, cat, sk, bands: [[label, d, p, conf]] }` — 10 English, 2 Japanese, 1 Chinese, 4 academic — with 115 bands in total. Full listing: [../generated/exam-table.md](../generated/exam-table.md). Band `p` equals `certP(d)` for 113 of the 115 bands; TOEIC L&R 850 (`d65`, `p840` vs `certP(65) = 850`) and OPIc NM (`d25`, `p120` vs `certP(25) = 130`) differ. The table values are authoritative and frozen ([Rule 6](core-beliefs.md#rule-6)).
+17 families of `{ id, n, lang, cat, sk, bands: [[label, d, p, conf]] }` — 10 English, 2 Japanese, 1 Chinese, 4 academic — with 115 bands in total. Full listing: [../generated/exam-table.md](../generated/exam-table.md). Band `p` equals `certP(d)` for 113 of the 115 bands; TOEIC L&R 850 (D 65, P 840 against `certP(65) = 850`) and OPIc NM (D 25, P 120 against `certP(25) = 130`) differ. The table values are authoritative and frozen ([Rule 6](core-beliefs.md#rule-6)).
 
 Skill buckets `sk`: languages use RL (reading/listening), S (speaking), W (writing); academic exams use their own name, so they never overlap. `LANG_KO` maps `English` → `영어`, `Japanese` → `일본어`, `Chinese` → `중국어`. `DIM_STEPS = [1, 0.7, 0.5, 0.3]` is the decay by overlap count 0/1/2/3+.
 
