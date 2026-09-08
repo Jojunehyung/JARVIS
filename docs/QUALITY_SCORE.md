@@ -14,7 +14,7 @@ How we know the app is right: gates that must be green at every phase end, and a
 | Demo | `npm run build:demo` | `release/life-demo.html` is a single file and opens from `file://` |
 
 ## Rule compliance ledger
-Verdicts against the current code (refreshed by the reviewer agent; last refresh pending — Phase 4 of the harness restructure). `verified` = confirmed by smoke/E2E; `by-review` = confirmed by reading; `partial` = known gap listed in tech-debt-tracker.
+Verdicts against the current code, last refreshed 2026-09-08 against the Phase 4 specs (every rule re-read against its implementing symbols). `verified` = confirmed by smoke/E2E; `by-review` = confirmed by reading; `partial` = known gap listed in tech-debt-tracker.
 
 | Rule | Where | Verdict |
 |---|---|---|

@@ -26,6 +26,20 @@ Grade letters: A amber · B violet · C sky · D emerald · E zinc (`GRADE_TEXT`
 
 Badges: dark background + light text (-300) + strong border (-600/700), `w-7 h-7 rounded-lg font-mono`. Buttons: filled (-400/500) with `text-zinc-950`; primary `rounded-xl`; large CTA has the pressed effect `border-b-4` (`bg-amber-400 border-amber-600`). Chips: on cyan `bg-cyan-500 text-zinc-950 border-cyan-400` / on amber `bg-amber-400 text-zinc-950 border-amber-300` / off `bg-zinc-950 text-zinc-400 border-zinc-700`.
 
+## Component tokens
+| Element | Classes / values |
+|---|---|
+| Chip on (cyan) | `bg-cyan-500 text-zinc-950 border-cyan-400` |
+| Chip on (amber) | `bg-amber-400 text-zinc-950 border-amber-300` |
+| Chip off | `bg-zinc-950 text-zinc-400 border-zinc-700` |
+| Badge | `w-7 h-7 rounded-lg font-mono` |
+| Progress bar | `h-2`, 700 ms transition; area grade and goal `cyan-400` (achieved goal `emerald-400`), KR `zinc-400` |
+| Life-metric bars | asset `amber-400` · influence `violet-400` · appearance `emerald-400` |
+| Pace text | behind `rose-400` · ahead `emerald-400` · on track `zinc-400` · no deadline `zinc-500` |
+| Job-fit tier (`TIER_CLS`) | S `emerald-400` · A `cyan-300` · B `zinc-500` · C `rose-400` |
+| Modal | `max-w-md bg-zinc-900`, `anim-pop`, `z-40`; backdrop `fixed inset-0 bg-black/70` closes on click, the card stops propagation, header X closes, `max-h-full overflow-y-auto`; bottom sheet on mobile, centred from `sm` |
+| Overlay | `z-50` over `bg-black/75`, `anim-bigpop` card, auto-closes after 2,400 ms |
+
 ## Typography and rhythm
 Numbers, D values, P, percentages, D-day, and system labels (`LIFE MANAGER`, `PROFILE SETUP`, `RANK UP`, `ACHIEVEMENT`) are `font-mono`; section captions `text-xs tracking-widest`. Body mostly `text-xs`–`text-sm`; modal titles `text-base font-bold`; overlay hero `text-2xl font-black`. Vertical rhythm `space-y-4` (sections) / `space-y-3` (inside cards). Progress bar (`Bar`): `h-2 rounded-full`, track `bg-zinc-800`, fill in the context colour, width transition 0.7 s ease-out.
 
