@@ -125,6 +125,20 @@ function listSourceFiles() {
   return files;
 }
 
+
+// Shared by the icon and screenshot generators: the Chrome the E2E already drives, with puppeteer-core
+// borrowed from tools/e2e. Exits with a clear message rather than a stack trace when either is missing.
+function launchBrowser() {
+  const pup = path.join(ROOT, "tools", "e2e", "node_modules", "puppeteer-core");
+  const chrome = [
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+  ].find((p2) => fs.existsSync(p2));
+  if (!fs.existsSync(pup)) { console.error("puppeteer-core missing — run: cd tools/e2e && npm i"); process.exit(1); }
+  if (!chrome) { console.error("no Chrome or Edge found"); process.exit(1); }
+  return require(pup).launch({ executablePath: chrome, headless: true, args: ["--no-sandbox"] });
+}
 function rel(p) { return path.relative(ROOT, p).split(path.sep).join("/"); }
 
-module.exports = { ROOT, SRC, DATA_TABLES, readSrc, grabBlock, evalConst, dataRegions, inRegions, collectDecls, collectImports, countRefs, sectionOf, listSourceFiles, rel };
+module.exports = { ROOT, SRC, DATA_TABLES, launchBrowser, readSrc, grabBlock, evalConst, dataRegions, inRegions, collectDecls, collectImports, countRefs, sectionOf, listSourceFiles, rel };

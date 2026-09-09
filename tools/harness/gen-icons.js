@@ -3,14 +3,8 @@
 // Outputs public/icons/*.png — committed, because the build copies public/ verbatim.
 const fs = require("fs");
 const path = require("path");
-const { ROOT } = require("./lib/source");
+const { ROOT, launchBrowser } = require("./lib/source");
 
-const PUP = path.join(ROOT, "tools", "e2e", "node_modules", "puppeteer-core");
-const CHROME = [
-  "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-  "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-].find((p) => fs.existsSync(p));
 
 // size = pixels, pad = fraction of the canvas left empty around the art (maskable icons need a safe zone)
 const TARGETS = [
@@ -21,14 +15,11 @@ const TARGETS = [
 ];
 
 (async () => {
-  if (!fs.existsSync(PUP)) { console.error("puppeteer-core missing — run: cd tools/e2e && npm i"); process.exit(1); }
-  if (!CHROME) { console.error("no Chrome or Edge found"); process.exit(1); }
-  const puppeteer = require(PUP);
   const svg = fs.readFileSync(path.join(ROOT, "public", "icon.svg"), "utf8");
   const outDir = path.join(ROOT, "public", "icons");
   fs.mkdirSync(outDir, { recursive: true });
 
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"] });
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
     for (const t of TARGETS) {
