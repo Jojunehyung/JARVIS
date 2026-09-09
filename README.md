@@ -2,13 +2,13 @@
 
 A local-only web app that turns life goals into OKRs, day-sized tasks, and evidence-backed achievements priced against market standards. It installs to an Android home screen and runs offline. Every record stays in the browser on the device — there is no account, no server, and no network call.
 
-- **Live app:** enable Pages once (below), then `https://jojunehyung.github.io/JARVIS/`
+- **Live app:** https://jojunehyung.github.io/JARVIS/ (after Pages is switched on, below)
 - **What it is and why:** [docs/PRODUCT_SENSE.md](docs/PRODUCT_SENSE.md)
 - **Installing, offline behaviour, backups:** [docs/product-specs/install-and-backup.md](docs/product-specs/install-and-backup.md)
 - **Working on it:** [AGENTS.md](AGENTS.md) — routing, protocols, and the 19 invariant rules in [docs/design-docs/core-beliefs.md](docs/design-docs/core-beliefs.md)
 
 ## Deploying
-`.github/workflows/deploy.yml` builds the app and publishes `dist/` on every push to `main`. It runs once the repository's **Settings → Pages → Source** is set to **GitHub Actions**.
+`.github/workflows/deploy.yml` builds the app and publishes `dist/` on every push to `main`. Switch it on once: **Settings → Pages → Build and deployment → Source → GitHub Actions**, then re-run the latest workflow (or push again).
 
 ## Local development
 ```bash

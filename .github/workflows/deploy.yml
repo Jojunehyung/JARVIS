@@ -29,10 +29,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       # The app is a plain static bundle; dist/ holds the service worker, manifest and icons too.
-      # enablement turns Pages on the first time, so no manual switch is needed in Settings.
+      # Pages itself is switched on once by hand: Settings → Pages → Source → GitHub Actions.
+      # (Turning it on from here needs a permission the workflow token is not granted.)
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
