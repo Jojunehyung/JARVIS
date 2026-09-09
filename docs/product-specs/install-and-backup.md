@@ -12,7 +12,7 @@ The build is a progressive web app: an Android phone installs it to the home scr
 `tools/harness/gen-sw.js` is a build plugin that emits `dist/sw.js` carrying the hashed asset list and a build id:
 - **Hashed assets** (`assets/*.js`, `*.css`) are immutable, so they are served cache-first and filled in on a miss.
 - **The document** is network-first with a cache fallback. A deploy is picked up as soon as the phone has a connection, and airplane mode still opens the last build.
-- On activate, every cache whose name does not match this build id is deleted, then `clients.claim()` takes over the open page. `src/main.jsx` reloads once on `controllerchange`, so the running page never mixes old markup with new assets.
+- On activate, every cache whose name does not match this build id is deleted, then `clients.claim()` takes over the open page. `src/main.jsx` reloads once on `controllerchange`, **but only when a worker was already in charge when the page loaded** — the first install has nothing to refresh, and reloading for it would discard whatever the user tapped while the precache was still running.
 
 Registration happens in production only (`import.meta.env.PROD`), from `./sw.js` resolved against the document, so a subpath deploy works. The single-file demo (`vite.demo.config.js`) has no service worker and is unaffected. The app also calls `navigator.storage.persist()` on start, which asks the browser not to evict the records under storage pressure.
 

@@ -57,5 +57,7 @@ Severity: **S1** cannot run / data loss / wrong payout · **S2** behaviour contr
 
 | R-14 | S1 | The backup file input was inserted into `EvidenceModal` instead of the app root, so `importRef` was undefined at render and the growth tab crashed | 2026-09-09 — caught by the E2E (22 knock-on step failures from one page error), fixed by moving the input into the root render |
 
+| R-15 | S1 | The service worker's first claim triggered `location.reload()`, so on a slow phone the app reloaded seconds after opening and discarded the user's first tap — reported as `시작하기` doing nothing in the installed app | 2026-09-09 — reload only when a controller was already in charge (a real update); reproduced at 700 kbps and covered by an E2E step asserting a first visit does not reload itself |
+
 ## Allowlist mirror (`tools/harness/finish-allowlist.json`)
 _None yet._

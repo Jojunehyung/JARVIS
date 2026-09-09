@@ -20,6 +20,24 @@ module.exports = async (h) => {
     if (ok !== "ok") throw new Error(ok);
   });
 
+  await step("a first visit does not reload itself", async () => {
+    // The first service worker claiming the page must not trigger a reload: on a slow phone it lands
+    // seconds in and throws away whatever the user just tapped (reported 2026-09-09: the start button did nothing).
+    const ctx = await page.browser().createBrowserContext();
+    const fresh = await ctx.newPage();
+    try {
+      let navs = 0;
+      fresh.on("framenavigated", (f) => { if (f === fresh.mainFrame()) navs++; });
+      await fresh.goto(page.url(), { waitUntil: "domcontentloaded" });
+      await sleep(4000);
+      const registered = await fresh.evaluate(async () => !!(await navigator.serviceWorker.getRegistration()));
+      if (!registered) throw new Error("the service worker did not register on a fresh profile");
+      if (navs > 1) throw new Error(`the page reloaded itself ${navs - 1} time(s) on a first visit`);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("the app opens with the network disabled", async () => {
     await page.setOfflineMode(true);
     try {
