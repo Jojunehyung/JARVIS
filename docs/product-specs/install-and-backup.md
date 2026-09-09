@@ -11,6 +11,7 @@ The build is a progressive web app: an Android phone installs it to the home scr
 ## Offline — the service worker
 `tools/harness/gen-sw.js` is a build plugin that emits `dist/sw.js` carrying the hashed asset list and a build id:
 - **Hashed assets** (`assets/*.js`, `*.css`) are immutable, so they are served cache-first and filled in on a miss.
+- The precache is split: the document and the hashed bundle are added together and a failure there fails the install, while the manifest and icons are added one by one. One missing icon must never cost the app its ability to open offline.
 - **The document** is network-first with a cache fallback. A deploy is picked up as soon as the phone has a connection, and airplane mode still opens the last build.
 - On activate, every cache whose name does not match this build id is deleted, then `clients.claim()` takes over the open page. `src/main.jsx` reloads once on `controllerchange`, **but only when a worker was already in charge when the page loaded** — the first install has nothing to refresh, and reloading for it would discard whatever the user tapped while the precache was still running.
 

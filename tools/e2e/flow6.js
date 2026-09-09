@@ -33,6 +33,18 @@ module.exports = async (h) => {
       const registered = await fresh.evaluate(async () => !!(await navigator.serviceWorker.getRegistration()));
       if (!registered) throw new Error("the service worker did not register on a fresh profile");
       if (navs > 1) throw new Error(`the page reloaded itself ${navs - 1} time(s) on a first visit`);
+
+      // The precache is what makes the app open offline. An empty or partial one fails silently
+      // otherwise: the app looks fine online and simply will not start without a network.
+      const cached = await fresh.evaluate(async () => {
+        const names = await caches.keys();
+        if (!names.length) return null;
+        const c = await caches.open(names[0]);
+        return (await c.keys()).map((r) => new URL(r.url).pathname);
+      });
+      if (!cached) throw new Error("the first visit cached nothing — the app would not open offline");
+      if (!cached.some((p) => p.endsWith("/"))) throw new Error("the document is not precached: " + cached.join(", "));
+      if (!cached.some((p) => p.endsWith(".js"))) throw new Error("the bundle is not precached: " + cached.join(", "));
     } finally {
       await ctx.close();
     }
