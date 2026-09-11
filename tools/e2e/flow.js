@@ -30,7 +30,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version", async () => {
     const v = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1"))?.v; } catch { return null; } });
-    if (v !== 18) throw new Error("fresh save schema v" + v + " (expected 18)");
+    if (v !== 19) throw new Error("fresh save schema v" + v + " (expected 19)");
   });
 
   // ── Goal (OKR) creation — metric, count and cert KRs
@@ -105,12 +105,8 @@ module.exports = async (h) => {
   await shot("catalog");
   await step("close catalogue", async () => { await page.keyboard.press("Escape"); await sleep(200); await h.closeModal(); });
 
-  // ── Growth tab — metrics check-in, promotion gate, role model
-  await step("go to growth tab", async () => { await clickTab("성장"); await expectText("인생 지표"); });
-  await step("save metrics check-in", async () => {
-    await clickText("체크인"); await sleep(300);
-    await clickText("저장"); await sleep(400);
-  });
+  // ── Growth tab — achievement wall, promotion gate, role model
+  await step("go to growth tab", async () => { await clickTab("성장"); await expectText("성취의 벽"); });
   await step("open promotion gate modal", async () => {
     try { await clickText("관문 증명하기"); } catch { errors.push("승급 버튼 없음"); }
     await sleep(400); await h.closeModal();
@@ -126,6 +122,11 @@ module.exports = async (h) => {
   for (const tab of ["홈", "실행", "목표", "성장"]) {
     await step(`switch tab: ${tab}`, async () => { await clickTab(tab); });
   }
+  await step("bottom nav order (home, goals, tasks, schedule, growth)", async () => {
+    const labels = await page.evaluate(() => [...document.querySelectorAll("nav button")].map((b) => (b.innerText || "").trim()));
+    const want = ["홈", "목표", "실행", "일정", "성장"];
+    if (labels.join("·") !== want.join("·")) throw new Error("nav order: " + labels.join("·"));
+  });
   await step("state persists after reload", async () => {
     const before = await page.evaluate(() => localStorage.length);
     await h.reload();

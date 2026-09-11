@@ -56,8 +56,6 @@ prevP   = sg ? (certBest[sg].p || 0) : 0
 basePay = Math.max(0, cp - prevP)
 pay     = jw ? Math.round(basePay * jw.mult / 10) * 10 : basePay     // jw = jobWeightForCert(...)
 certBest[sg] ← { p: cp, name, d }                                    // when sg && cp > stored p
-wD      = Math.round((certD ?? Math.round(Math.sqrt(cp * 5))) * (jw?.mult ?? 1))
-if (wD > 0) metricsGain(wD)                                          // 인생 지표 (life metrics)
 ```
 The achievement text reads `{title} — D{d} · +{pay}P (단계 차액) · 직무 {tier} ×{mult} ({field} 기준·교집합)`, keeping only the parts that apply. A trophy is stored as `{ kind: "ach", label: title, tier: achGrade(certD) ?? legacyCertGrade(cp) }`. Every `cert` KR whose title contains the certification name is marked done, in every goal, regardless of `goalId`.
 
@@ -81,7 +79,7 @@ Bands are stored as snapshots: the task and the KR carry `band { label, d, p, co
 5. Returns `{ payout: Math.round(diffP * mult), mult, prevP, prevLabel, reason }`.
 
 ### Caller responsibilities (`completeTask`, and the onboarding prefill)
-Store `r.mult` into `dim[famId]` only when it was undefined (that is the lock) → update `best` when `band.p` exceeds the stored `p` → achievement text `{fam.n} {label} — D{d} · +{payout}P (감쇠 ×{mult})` → trophy `{ kind: "ach", tier: examGrade(d) }` → specialisation check: for a non-academic language with `!spec[lang]`, if `best` holds at least two entries of that language at D ≥ 75, set `spec[lang] = true`, add the trophy `{언어} 전문화`, raise the area named `어학` to grade 5 if it is lower, log the achievement `🎖 {언어} 전문화 — 고난도 시험(D75+) 2종 달성`, and show the toast `🎖 {언어} 전문화 — 고난도 감쇠 하한 70% 적용` after 2,700 ms → `metricsGain(band.d)` on the full band D, independent of decay and difference → the ACHIEVEMENT overlay.
+Store `r.mult` into `dim[famId]` only when it was undefined (that is the lock) → update `best` when `band.p` exceeds the stored `p` → achievement text `{fam.n} {label} — D{d} · +{payout}P (감쇠 ×{mult})` → trophy `{ kind: "ach", tier: examGrade(d) }` → specialisation check: for a non-academic language with `!spec[lang]`, if `best` holds at least two entries of that language at D ≥ 75, set `spec[lang] = true`, add the trophy `{언어} 전문화`, raise the area named `어학` to grade 5 if it is lower, log the achievement `🎖 {언어} 전문화 — 고난도 시험(D75+) 2종 달성`, and show the toast `🎖 {언어} 전문화 — 고난도 감쇠 하한 70% 적용` after 2,700 ms → the ACHIEVEMENT overlay.
 
 Specialisation **forms** at D ≥ 75 while the 70 % floor **applies** from D ≥ 70; the two cuts differ by design.
 

@@ -13,7 +13,7 @@ Self-improvement apps reward self-reported effort; the market does not. Life Man
 3. **Goal-first** — a task cannot exist without a goal; the goal is the frame, and the task-creation screen is scoped to the goal's context (KRs, related kinds). ([Rules 18, 19](design-docs/core-beliefs.md#rule-18))
 
 ## Core loop
-Create a goal (OKR) → register milestones and daily tasks from its KRs (KR–task bridge) → complete with evidence → grade promotion, life metrics, and role-model proximity move → keep the streak daily.
+Create a goal (OKR) → register milestones and daily tasks from its KRs (KR–task bridge) → complete with evidence → grade promotion and role-model proximity move → keep the streak daily.
 
 ## Structure
 ```
@@ -31,7 +31,7 @@ Grades 0–9 per area: 지망생·견습·초심자·실무자·숙련자·전�
 People preparing for a job, a career change, or a certification who want a ledger that will not flatter them: engineering graduates targeting a specific role (the reference scenario is a wiring-harness design engineer — see [product-specs/scenario-harness-engineer.md](product-specs/scenario-harness-engineer.md)), working professionals adding qualifications, and anyone tracking body/finance/influence metrics by evidence rather than mood.
 
 ## Screens
-Home (profile · today's focus = pace · today's tasks) / Goals (OKR cards · KR check-in · direction advice) / Tasks (grouped by goal: daily tasks + milestones · catalog) / Growth (life-metric check-in · skill track gates · role-model proximity · achievement wall). Bottom tab bar with these four; onboarding in six steps; ~10 modals; two full-screen overlays (RANK UP / ACHIEVEMENT); one toast.
+Home (profile · today's focus = pace · today's tasks) / Goals (OKR cards · KR check-in · direction advice) / Tasks (grouped by goal: daily tasks + milestones · catalog) / Growth (skill track gates · role-model proximity · achievement wall). Onboarding in six steps; ~10 modals; two full-screen overlays (RANK UP / ACHIEVEMENT); one toast.
 
 ## Non-goals (what we do not build)
 - In-app AI: generation, judgement, scoring (user decision 2026-08-29). The only AI touchpoint is the copy/paste assistant bridge approved 2026-09-09 ([Rule 7](design-docs/core-beliefs.md#rule-7)): no key, no network, proposals only.

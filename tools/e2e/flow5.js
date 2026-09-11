@@ -1,7 +1,7 @@
 // Daily assistant — due dates, the home agenda, the briefing and the journal. The assistant bridge
 // and the weekly review are appended in phase C.
 module.exports = async (h) => {
-  const { step, clickText, clickInModal, clickInModalExact, clickTab, expectText, typeInto, setValue, openTaskModalFor, closeModal, sleep, page, errors } = h;
+  const { step, clickText, clickInModal, clickInModalExact, clickTab, hasText, expectText, typeInto, setValue, openTaskModalFor, closeModal, sleep, page, errors } = h;
   const readState = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
   const patchAct = (patch) => page.evaluate((p) => {
     const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
@@ -189,39 +189,24 @@ module.exports = async (h) => {
     if (!(st.journal.find((e) => e.date === today)?.ai || "").includes("제안할 실행은 없어요")) throw new Error("plain reply not stored");
   });
 
-  await step("weekly review saves and chains to the check-in", async () => {
+  await step("weekly review saves and stamps its date", async () => {
     await openFrom("홈", "주간 리뷰");
     await typeInto("잘된 것", "운동 3회 · 영어 스터디 2회");
     await typeInto("막힌 것", "CATIA 연습 2일 누락");
     await clickInModalExact("리뷰 저장");
     await sleep(600);
-    let st = await readState();
+    const st = await readState();
     const today = await dstrIn(0);
     if (!st.reviews?.length) throw new Error("review not saved");
     if (st.act.lastReview !== today) throw new Error("lastReview not stamped: " + st.act.lastReview);
     await clickText("주간 리뷰"); await sleep(400);
-    await clickInModal("저장하고 지표 체크인");
-    await sleep(600);
-    await expectText("인생 지표 체크인");
-    await clickInModalExact("저장");
-    await sleep(600);
-    st = await readState();
-    if (st.act.lastCheckin !== today) throw new Error("check-in not stamped after the review chain");
+    if (await hasText("저장하고 지표 체크인")) throw new Error("review still offers the removed check-in");
+    await closeModal();
   });
 
   await step("briefing reflects the saved review", async () => {
     await openFrom("홈", "브리핑 열기");
     await expectText("이번 주 리뷰 완료");
     await closeModal();
-  });
-
-  await step("metrics check-in stamps its date", async () => {
-    await openFrom("성장", "체크인");
-    await clickInModalExact("저장");
-    await sleep(600);
-    const st = await readState();
-    const today = await dstrIn(0);
-    if (st.act.lastCheckin !== today) throw new Error("lastCheckin not stamped: " + st.act.lastCheckin);
-    await expectText("마지막 체크인");
   });
 };

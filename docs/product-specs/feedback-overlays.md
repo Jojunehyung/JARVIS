@@ -25,12 +25,12 @@ Amber-bordered card. Label `ACHIEVEMENT`, `TrophySvg` (`kind || "ach"`, tier col
 - closing sentence `기록에 남았습니다.`
 
 ### Which completions raise an overlay
-| Completion | Overlay | Trophy and 인생 지표 (life metrics) |
+| Completion | Overlay | Trophy |
 |---|---|---|
-| exam (`isExam`) | always, `kind: "ach"`, tier from `examGrade(band.d)` | trophy + `metricsGain`; a specialisation also adds a `spec` trophy |
-| certification (`isCert`) | always, `kind: "ach"` with the job-fit fields | trophy + `metricsGain` on the weighted D |
-| study (`isStudy`) | always, `kind: "spec"` — so an E (10 P) or D (25 P) study task is still shown with `+{pts}P` | trophy and `metricsGain` only when `pts >= EVIDENCE_MIN` (150) |
-| legacy plain task with `pts >= 150` | `kind: "ach"`, tier from `legacyCertGrade(pts)` | trophy + `metricsGain` |
+| exam (`isExam`) | always, `kind: "ach"`, tier from `examGrade(band.d)` | trophy; a specialisation also adds a `spec` trophy |
+| certification (`isCert`) | always, `kind: "ach"` with the job-fit fields | trophy |
+| study (`isStudy`) | always, `kind: "spec"` — so an E (10 P) or D (25 P) study task is still shown with `+{pts}P` | trophy only when `pts >= EVIDENCE_MIN` (150) |
+| legacy plain task with `pts >= 150` | `kind: "ach"`, tier from `legacyCertGrade(pts)` | trophy |
 | activity (`kind`) and plain task under 150 P | none — toast only | none |
 
 ## Toast (`ToastHost`)
@@ -45,10 +45,10 @@ Messages, verbatim:
 | language specialisation, 2,700 ms later | `🎖 {language} 전문화 — 고난도 감쇠 하한 70% 적용` |
 | KR check-in that moved a goal | `체크인 · 🎯 {title} {from}% → {to}%` |
 | goal created | `목표 생성 · 시작 진행률 {p0}% · {D-day}` or ` · 기한 없음` |
+| active goal deleted (confirmed) | `목표를 삭제했어요 · 미완료 실행 {n}건 삭제 · 완료 기록 {m}건 유지` |
 | task added | `실행이 추가됐어요` |
 | certification already paid | `{title} — 이미 등록된 자격입니다. 자격 지급은 영역과 무관하게 1회입니다.` |
 | profile photo saved / unreadable | `📷 사진이 등록됐어요` / `이미지를 읽지 못했어요` |
-| metrics check-in saved | `지표를 갱신했어요` |
 | role model saved | `롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다` |
 | journal saved | `일지를 저장했어요` |
 | weekly review saved | `주간 리뷰를 저장했어요` |

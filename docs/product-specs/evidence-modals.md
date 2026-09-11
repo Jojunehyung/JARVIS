@@ -43,7 +43,7 @@ Evidence: `독후감 ★{rating} · {review, 60 chars}` plus ` · "{quote, 40 ch
 Lead line: `기록은 전부 선택입니다 — 측정한 날만 적으세요. 수치는 활성 목표의 같은 이름 수치 KR("체중"·"골격근량")에 자동 반영돼요.`
 Fields: `오늘 운동 — 예: 하체 + 유산소 40분`, numeric `체중 kg` and `골격근량 kg` (`step 0.1`). Nothing is required, so the button reads `완료 (기록은 선택)`. Footer: `이후의 일일 완료는 원탭이에요. 측정 갱신은 목표 탭의 수치 KR 체크인으로 언제든 가능합니다.`
 Evidence: `운동 기록 · {workout, 40 chars} · 체중 {w}kg · 골격근량 {m}kg` from whichever parts were filled, or `null` when nothing was.
-Measurements go to `applyMeasures`, which writes each value through `checkinKR` into the first `metric` KR of an active goal whose title contains that label — never into 인생 지표 (life metrics) directly ([Rule 17](../design-docs/core-beliefs.md#rule-17), [Rule 8](../design-docs/core-beliefs.md#rule-8)).
+Measurements go to `applyMeasures`, which writes each value through `checkinKR` into the first `metric` KR of an active goal whose title contains that label — the only place a measurement can land ([Rule 17](../design-docs/core-beliefs.md#rule-17), [Rule 8](../design-docs/core-beliefs.md#rule-8)).
 
 ## `StudyVerifyModal`
 Title `학습 검증 — {source || title}`; `req = STUDY_REQ[task.diff] || STUDY_REQ.D`.

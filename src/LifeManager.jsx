@@ -1765,14 +1765,8 @@ function Modal({ onClose, children, title }) {
 
 /* ───────────────────────── Main app ───────────────────────── */
 
-/* ═══════ v3 minimal engine — metrics · goals (OKR) · state lifecycle ═══════ */
+/* ═══════ v3 minimal engine — goals (OKR) · state lifecycle ═══════ */
 const needsEvidence = (q) => q.isCert || q.isExam || (q.pts ?? DIFFS[q.diff].pts) >= EVIDENCE_MIN;
-
-const METRICS_META = [
-  { k: "asset", n: "자산", c: "bg-amber-400", tc: "text-amber-300", d: "경제력·자본. 성취와 수익 목표로 상승" },
-  { k: "infl", n: "영향력", c: "bg-violet-400", tc: "text-violet-300", d: "실력·평판·네트워크. 승급과 전문 성취로 상승" },
-  { k: "body", n: "외형", c: "bg-emerald-400", tc: "text-emerald-300", d: "운동·식단·컨디션 관리의 결과. 체크인으로 스스로 평가" },
-];
 
 /* KR type chips · difficulty selector colours (the five grade colours — design hand-off 2026-09-02) */
 const KR_CHIP = {
@@ -2151,7 +2145,6 @@ const upcomingEvents = (state, from, days = EVENT_HORIZON_DAYS) => {
 
 const lastDoneDate = (q) => (q.type === "daily" ? (q.doneDates || []).slice(-1)[0] || null : q.doneAt || null);
 const KIND_LABEL = { book: "📚 독서", fit: "💪 운동" };
-const CHECKIN_STALE_DAYS = 7;
 const AREA_STALE_DAYS = 30;
 const ACTIVITY_GAP_DAYS = 7;
 const CAP = 5;
@@ -2215,17 +2208,7 @@ const buildBriefing = (state, today) => {
     });
   add("goals", "목표 페이스", goalItems.length ? goalItems : [{ kind: "none", severity: 1, text: "활성 목표 없음" }]);
 
-  /* Metrics check-in, stagnant areas, activity gaps */
-  const m = state.metrics || {};
-  const metricItems = [];
-  const ci = act.lastCheckin;
-  const ciDays = ci ? daysBetween(ci, today) : null;
-  if (!ci || ciDays >= CHECKIN_STALE_DAYS) {
-    metricItems.push({
-      kind: "checkin", severity: 2, action: { type: "metrics" },
-      text: `${ci ? `지표 체크인 ${ciDays}일 경과 (마지막 ${ci})` : "지표 체크인 기록 없음"} · 자산 ${m.asset} · 영향력 ${m.infl} · 외형 ${m.body}`,
-    });
-  }
+  /* Stagnant areas, activity gaps */
   const targeted = state.role?.targets || {};
   const stale = [...(state.areas || [])]
     .sort((a, b) => ((targeted[b.id] || 0) > 0) - ((targeted[a.id] || 0) > 0))
@@ -2246,8 +2229,9 @@ const buildBriefing = (state, today) => {
       }
     }
   }
-  const metricsAll = [...metricItems, ...stale, ...drops.slice(0, 3)];
-  add("metrics", "지표·영역", metricsAll.length ? metricsAll : [{ kind: "none", severity: 1, text: `지표 체크인 최신 (${ci}) · 정체 영역 없음` }]);
+  const areaAll = [...stale, ...drops.slice(0, 3)];
+  add("areas", "영역·활동", areaAll.length ? areaAll : [{ kind: "none", severity: 1,
+    text: `최근 ${AREA_STALE_DAYS}일 정체 영역 없음 · 최근 ${ACTIVITY_GAP_DAYS}일 활동 공백 없음` }]);
 
   /* Next step — the same recommendation the direction advice screen shows */
   const { rg, gaps } = roleRecommendations(state);
@@ -2307,7 +2291,6 @@ const PACKET_HEAD = [
 const buildAssistantPacket = (state, today) => {
   const brief = buildBriefing(state, today);
   const act = state.act || {};
-  const m = state.metrics || {};
   const rg = roleGap(state);
   const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
   const sec = (title, lines) => (lines.length ? [`## ${title}`, ...lines] : [`## ${title}`, "- 없음"]);
@@ -2331,7 +2314,6 @@ const buildAssistantPacket = (state, today) => {
   const review = [...(state.reviews || [])].sort((a, b) => b.weekOf.localeCompare(a.weekOf))[0];
   const reviewLines = review ? [`- ${review.weekOf} 주 · 잘된 것: ${review.wins} · 막힌 것: ${review.blocks}`] : [];
   const stateLines = [
-    `- 자산 ${m.asset} · 영향력 ${m.infl} · 외형 ${m.body} · 마지막 체크인 ${act.lastCheckin || "없음"}`,
     `- 연속 ${act.streak}일 · 마지막 완료 ${act.lastActive || "없음"} · 보호권 ${act.shieldsLeft}`,
     rg ? `- 롤모델 ${rg.name} 근접도 ${rg.match}%` : "- 롤모델 미설정",
   ];
@@ -2340,7 +2322,7 @@ const buildAssistantPacket = (state, today) => {
     `[인생 관리 — 오늘 점검 요청 ${today}]`, ...PACKET_HEAD, "",
     ...sec("오늘 브리핑", briefLines), ...sec("목표", goalLines), ...sec("열린 실행", taskLines),
     ...sec(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines),
-    ...sec("최근 일지 (7일)", jl), ...sec("최근 주간 리뷰", reviewLines), ...sec("지표·연속", stateLines),
+    ...sec("최근 일지 (7일)", jl), ...sec("최근 주간 리뷰", reviewLines), ...sec("연속·롤모델", stateLines),
   ].join("\n");
 
   let lines = journalLines;
@@ -2379,10 +2361,10 @@ const parseAssistantReply = (text, state) => {
 
 /* ── State lifecycle ── */
 /**
- * @schema v18 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v19 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 18,
+ *   v: 19,
  *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
  *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -2400,8 +2382,7 @@ const parseAssistantReply = (text, state) => {
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
- *          lastCheckin?, briefingSeen?, lastReview? },        // dates only — facts, never verdicts
- *   metrics: { asset, infl, body },                           // 0-100; body = appearance (exercise/care), self-assessed only
+ *          briefingSeen?, lastReview? },                      // dates only — facts, never verdicts
  *   exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -2473,6 +2454,14 @@ const migrate = (s) => {
     // v18: the `meet` activity kind is gone — a meeting belongs to the `일정` tab, not to a goal. Only `kind` is dropped; everything the user recorded (title, difficulty, points, completion dates, minutes evidence) is kept, and an unknown kind is left alone.
     s = { ...s, v: 18, tasks: (s.tasks || []).map((q) => { if (q.kind !== "meet") return q; const { kind, ...rest } = q; return rest; }) };
   }
+  if (s.v < 19) {
+    // v19: life metrics are gone (user decision 2026-09-11). A global self-assessed triple that also grew from
+    // unrelated achievements measured nothing; objective measures belong to a goal's metric KR (rule 8). The stored
+    // numbers and the check-in stamp are dropped; every other act stamp, record and payout is kept untouched.
+    const { metrics, ...rest } = s;
+    const { lastCheckin, ...act } = rest.act || {};
+    s = { ...rest, v: 19, act };
+  }
   return s;
 };
 
@@ -2484,7 +2473,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 18,
+  v: 19,
   profile: null,
   areas,
   tasks: [],
@@ -2492,8 +2481,7 @@ const freshState = (areas) => applyDailyTick({
   events: [],
   journal: [],
   reviews: [],
-  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
-  metrics: { asset: 10, infl: 5, body: 15 },
+  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
   exams: { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION },
   certBest: {},
   room: { trophies: [] },
@@ -2558,8 +2546,7 @@ const demoState = () => {
     id: uid(), weekOf: mondayOf(shiftDay(today, -7)), date: shiftDay(today, -7),
     wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
   }];
-  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: shiftDay(today, -10), briefingSeen: null, lastReview: shiftDay(today, -7) };
-  s.metrics = { asset: 24, infl: 14, body: 20 };
+  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: shiftDay(today, -7) };
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60) } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
@@ -3235,6 +3222,9 @@ function GoalsTab({ state, onAddGoal, onCheckin, onGoalStatus, onRemoveGoal, onA
                   {st === "done" && (
                     <button onClick={() => onRemoveGoal(g.id)} className="mt-3 text-xs text-zinc-600">기록에서 제거</button>
                   )}
+                  {st === "active" && (
+                    <button onClick={() => onRemoveGoal(g.id)} className="mt-3 text-xs text-rose-400">목표 삭제</button>
+                  )}
 
                 </section>
               );
@@ -3387,29 +3377,6 @@ function AddGoalModal({ areas, onClose, onAdd }) {
           목표 만들기
         </button>
         <p className="text-xs text-zinc-600">KR이 없으면 진행률은 0%로 고정됩니다 — 측정할 수 없는 목표는 관리되지 않습니다.</p>
-      </div>
-    </Modal>
-  );
-}
-
-/* ── Metrics check-in modal ── */
-function MetricsModal({ metrics, onClose, onSave }) {
-  const [v, setV] = useState({ ...metrics });
-  return (
-    <Modal title="인생 지표 체크인" onClose={onClose}>
-      <div className="space-y-4">
-        {METRICS_META.map((m) => (
-          <div key={m.k}>
-            <div className="flex justify-between text-sm mb-1">
-              <span className="font-bold">{m.n}</span>
-              <span className="font-mono text-zinc-400">{v[m.k]}</span>
-            </div>
-            <input type="range" min="0" max="100" value={v[m.k]}
-              onChange={(e) => setV({ ...v, [m.k]: Number(e.target.value) })} className="w-full" />
-            <p className="text-xs text-zinc-600 mt-0.5">{m.d}</p>
-          </div>
-        ))}
-        <button onClick={() => onSave(v)} className="w-full py-3 rounded-xl bg-violet-500 text-zinc-950 font-black text-sm">저장</button>
       </div>
     </Modal>
   );
@@ -3582,7 +3549,7 @@ function BridgeModal({ state, today, initialMode, onClose, onImport, onStoreRepl
 }
 
 /* ── Weekly review — what worked, what blocked, beside the numbers of that week ── */
-function ReviewModal({ state, today, onClose, onSave, onCheckin }) {
+function ReviewModal({ state, today, onClose, onSave }) {
   const weekOf = mondayOf(today);
   const mine = (state.reviews || []).find((r) => r.weekOf === weekOf);
   const [wins, setWins] = useState(mine?.wins || "");
@@ -3592,9 +3559,9 @@ function ReviewModal({ state, today, onClose, onSave, onCheckin }) {
     ? (q.doneDates || []).filter((d) => d >= weekOf).length
     : q.doneAt && q.doneAt >= weekOf ? 1 : 0), 0);
   const achThisWeek = (state.areas || []).reduce((n, p) => n + (p.achievements || []).filter((a) => a.date >= weekOf).length, 0);
-  const submit = (thenCheckin) => {
+  const submit = () => {
     if (!wins.trim() && !blocks.trim()) { setErr("잘된 것 또는 막힌 것을 한 줄 이상 적어요."); return; }
-    onSave({ wins: wins.trim(), blocks: blocks.trim() }, thenCheckin);
+    onSave({ wins: wins.trim(), blocks: blocks.trim() });
   };
   return (
     <Modal title={`주간 리뷰 — ${weekOf} 주`} onClose={onClose}>
@@ -3605,8 +3572,7 @@ function ReviewModal({ state, today, onClose, onSave, onCheckin }) {
         <textarea value={blocks} onChange={(e) => setBlocks(e.target.value)} rows={3}
           placeholder="막힌 것 — 원인" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
         {err && <p className="text-xs text-rose-400">{err}</p>}
-        <button onClick={() => submit(false)} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">리뷰 저장</button>
-        <button onClick={() => submit(true)} className="w-full py-2.5 rounded-xl border border-violet-800 text-violet-300 font-bold text-xs">저장하고 지표 체크인 ›</button>
+        <button onClick={() => submit()} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">리뷰 저장</button>
       </div>
     </Modal>
   );
@@ -4400,7 +4366,7 @@ function StudyVerifyModal({ task, onClose, onDone }) {
 
 /* ───────────────────────── Growth tab ───────────────────────── */
 
-function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMetrics, onExport, onImport }) {
+function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onExport, onImport }) {
   const rg = roleGap(state);
   return (
     <>
@@ -4441,23 +4407,6 @@ function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onMet
               })}
             </div>
           )}
-      </section>
-
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <div className="flex items-center justify-between">
-          <SectionLabel tone="text-violet-400">인생 지표</SectionLabel>
-          <button onClick={onMetrics} className="text-xs text-violet-300 border border-violet-800 rounded-lg px-2 py-1">체크인</button>
-        </div>
-        <div className="space-y-2.5 mt-1">
-          {METRICS_META.map((m) => (
-            <div key={m.k} className="flex items-center gap-2.5 text-xs">
-              <span className="w-11 shrink-0 text-zinc-400">{m.n}</span>
-              <div className="flex-1"><Bar ratio={(state.metrics?.[m.k] ?? 0) / 100} color={m.c} /></div>
-              <span className={`font-mono font-bold w-6 text-right ${m.tc}`} title={`${state.metrics?.[m.k] ?? 0} / 100`}>{state.metrics?.[m.k] ?? 0}</span>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-zinc-600 mt-2">성취·승급 시 자동 반영되고, 체크인으로 직접 보정할 수 있어요. · 마지막 체크인 {state.act?.lastCheckin || "없음"}</p>
       </section>
 
       <SectionLabel tone="text-cyan-400">실력 트랙 — 영역별 승급 관문</SectionLabel>
@@ -5196,15 +5145,6 @@ export default function LifeManager() {
     completeTask(q.id, null);
   };
 
-  const metricsGain = (s, dVal, areaName) => {
-    const g = Math.max(1, Math.round(dVal / 10));
-    const aG = areaName === "사업" ? g : areaName === "직업·커리어" ? Math.ceil(g * 0.6) : Math.ceil(g * 0.3);
-    const iG = areaName === "사업" || areaName === "직업·커리어" ? Math.ceil(g * 0.6) : Math.ceil(g * 0.8);
-    s.metrics.asset = statClamp(s.metrics.asset + aG);
-    s.metrics.infl = statClamp(s.metrics.infl + iG);
-    return { aG, iG };
-  };
-
   const completeTask = (id, evidence) => {
     setState((prev) => {
       const s = structuredClone(prev);
@@ -5264,7 +5204,6 @@ export default function LifeManager() {
             }
           }
         }
-        metricsGain(s, q.band.d, area?.name);
         ach = { name: `${fam.n} ${q.band.label}`, d: q.band.d, p: r.payout, tier: examGrade(q.band.d), kind: "ach" };
       } else if (q.isCert) {
         const cp = q.certD != null ? certP(q.certD) : (q.pts ?? 0);
@@ -5282,8 +5221,6 @@ export default function LifeManager() {
         for (const g of s.goals || []) for (const kr of g.krs || []) {
           if (kr.type === "cert" && !kr.done && kr.certName && q.title.includes(kr.certName)) kr.done = true;
         }
-        const wD = Math.round((q.certD ?? Math.round(Math.sqrt(cp * 5))) * (jw?.mult ?? 1));
-        if (wD > 0) metricsGain(s, wD, area?.name);
         ach = { name: q.title, d: q.certD, p: pay, tier, kind: "ach", jwTier: jw?.tier, jwField: jw?.field, jwMult: jw?.mult, jwInter: jw?.inter };
       } else if (q.isStudy) {
         const pts = q.pts ?? DIFFS[q.diff].pts;
@@ -5293,7 +5230,6 @@ export default function LifeManager() {
         }];
         if (pts >= EVIDENCE_MIN) {
           s.room.trophies = [...s.room.trophies, { id: uid(), kind: "spec", label: `📖 ${q.title}`, date: today }];
-          metricsGain(s, Math.min(100, Math.round(Math.sqrt(pts * 5))), area?.name);
         }
         ach = { name: q.title, p: pts, kind: "spec" };
       } else if (q.kind) {
@@ -5306,7 +5242,6 @@ export default function LifeManager() {
         if (area) area.achievements = [...area.achievements, { id: uid(), grade: area.grade, date: today, text: `${q.title} — 증거와 함께 완료`, }];
         const tier = legacyCertGrade(pts);
         s.room.trophies = [...s.room.trophies, { id: uid(), kind: "ach", label: q.title, tier, date: today }];
-        metricsGain(s, Math.min(100, Math.round(Math.sqrt(pts * 5))), area?.name);
         ach = { name: q.title, p: pts, tier, kind: "ach" };
       }
 
@@ -5335,7 +5270,6 @@ export default function LifeManager() {
       p.grade += 1;
       p.achievements = [...p.achievements, { id: uid(), text: evidenceText, date: dstr(), grade: p.grade }];
       s.room.trophies = [...s.room.trophies, { id: uid(), kind: "rank", label: `${p.name} ${RANKS[p.grade].name}`, date: dstr() }];
-      s.metrics.infl = statClamp(s.metrics.infl + 3);
       const rAfter = roleGap(s)?.match ?? null;
       const roleTargeted = (prev.role?.targets?.[areaId] || 0) > 0;
       queueMicrotask(() => setOverlay({ type: "gradeup", area: p.name, rank: RANKS[p.grade].name, look: s.profile?.look, gender: s.profile?.gender, roleFrom: rBefore, roleTo: rAfter, roleTargeted }));
@@ -5353,15 +5287,33 @@ export default function LifeManager() {
     });
     setModal(null);
   };
-  const removeGoal = (id) => setState((prev) => ({ ...prev, goals: prev.goals.filter((g) => g.id !== id) }));
+  // `기록에서 제거` (done) removes a record and destroys nothing. `목표 삭제` (active) is the destructive path:
+  // the work that never happened goes with the goal, and anything already completed stays — it carries evidence,
+  // paid points and an achievement entry (rules 4, 16), and shows up in `미분류` afterwards (rule 18).
+  const removeGoal = (id) => {
+    const g = (state.goals || []).find((x) => x.id === id);
+    if (!g) return;
+    if (g.status !== "active") { setState((prev) => ({ ...prev, goals: prev.goals.filter((x) => x.id !== id) })); return; }
+    const mine = (state.tasks || []).filter((q) => q.goalId === id);
+    const drop = mine.filter((q) => q.status !== "done" && !(q.doneDates || []).length);
+    const kept = mine.length - drop.length;
+    if (!window.confirm(`${g.title} 목표를 삭제해요. 연결된 미완료 실행 ${drop.length}건도 함께 사라져요. 완료 기록 ${kept}건은 미분류로 남아요. 계속할까요?`)) return;
+    for (const q of drop) { store.del(`liferpg-img-ev-${q.id}`); for (let n = 1; n <= 2; n++) store.del(`liferpg-img-study-${q.id}-${n}`); }
+    const dropIds = new Set(drop.map((q) => q.id));
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.goals = (s.goals || []).filter((x) => x.id !== id);
+      s.tasks = (s.tasks || []).filter((q) => !dropIds.has(q.id));
+      return s;
+    });
+    showToast({ msg: `목표를 삭제했어요 · 미완료 실행 ${drop.length}건 삭제 · 완료 기록 ${kept}건 유지` });
+  };
   const goalStatus = (id, status) => {
     setState((prev) => {
       const s = structuredClone(prev);
       const g = s.goals.find((x) => x.id === id);
       if (g) g.status = status;
       if (status === "done" && g) {
-        s.metrics.infl = statClamp(s.metrics.infl + 4);
-        s.metrics.asset = statClamp(s.metrics.asset + 2);
         queueMicrotask(() => setOverlay({ type: "achieve", name: g.title, tier: "A", kind: "rank" }));
       }
       return s;
@@ -5439,16 +5391,6 @@ export default function LifeManager() {
   // The chosen schedule view is a preference, not derived data: only the string is stored (schema v17).
   const setScheduleView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), scheduleView: v } }));
 
-  const saveMetrics = (v) => {
-    setState((prev) => ({
-      ...prev,
-      metrics: { asset: statClamp(v.asset), infl: statClamp(v.infl), body: statClamp(v.body) },
-      act: { ...prev.act, lastCheckin: today },
-    }));
-    setModal(null);
-    showToast({ msg: "지표를 갱신했어요" });
-  };
-
   /* Daily assistant */
   const markBriefingSeen = () => setState((prev) => (prev.act?.briefingSeen === today ? prev : { ...prev, act: { ...prev.act, briefingSeen: today } }));
   const closeBriefing = (next) => {
@@ -5488,7 +5430,7 @@ export default function LifeManager() {
     if (raw) setState((prev) => { const s = structuredClone(prev); upsertReply(s, raw); return s; });
     if (msg) showToast({ msg });
   };
-  const saveReview = ({ wins, blocks }, thenCheckin) => {
+  const saveReview = ({ wins, blocks }) => {
     setState((prev) => {
       const s = structuredClone(prev);
       const weekOf = mondayOf(today);
@@ -5498,7 +5440,7 @@ export default function LifeManager() {
       s.act = { ...s.act, lastReview: today };
       return s;
     });
-    setModal(thenCheckin ? { type: "metrics" } : null);
+    setModal(null);
     showToast({ msg: "주간 리뷰를 저장했어요" });
   };
   const saveJournal = (text, silent) => {
@@ -5587,8 +5529,8 @@ export default function LifeManager() {
     ["home", "홈", Flag],
     ["goals", "목표", Target],
     ["tasks", "실행", ClipboardList],
-    ["growth", "성장", TrendingUp],
     ["schedule", "일정", CalendarDays],
+    ["growth", "성장", TrendingUp],
   ];
 
   return (
@@ -5636,8 +5578,7 @@ export default function LifeManager() {
             onRoleModel={() => setModal({ type: "role" })}
             onRoleAdvice={() => setModal({ type: "roleAdvice" })}
             onReset={resetAll}
-            onExport={exportBackup} onImport={askImport}
-            onMetrics={() => setModal({ type: "metrics" })} />
+            onExport={exportBackup} onImport={askImport} />
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}
@@ -5698,9 +5639,6 @@ export default function LifeManager() {
       {modal?.type === "event" && (
         <EventModal event={modal.event} initialDate={modal.date} onClose={() => setModal(null)}
           onAdd={addEvent} onUpdate={updateEvent} onRemove={removeEvent} />
-      )}
-      {modal?.type === "metrics" && (
-        <MetricsModal metrics={state.metrics} onClose={() => setModal(null)} onSave={saveMetrics} />
       )}
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />

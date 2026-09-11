@@ -10,7 +10,7 @@ module.exports = async (h) => {
     await clickTab("성장"); await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 18) throw new Error("schema version " + st.v + " (expected 18)");
+    if (st.v !== 19) throw new Error("schema version " + st.v + " (expected 19)");
     return st;
   };
   // ── Goal status change and removal
@@ -60,6 +60,45 @@ module.exports = async (h) => {
     if (await hasText("E2E 완주 목표")) throw new Error("제거 후에도 목표가 남아 있음");
   });
 
+  await step("plant a goal with one completed and one open task", async () => {
+    await page.evaluate(() => {
+      const k = "liferpg-state-v1";
+      const s = JSON.parse(localStorage.getItem(k));
+      const areaId = s.areas[0].id;
+      s.goals = [{ id: "gdel", title: "E2E 삭제 목표", areaId, status: "active", createdAt: "2026-01-01",
+        krs: [{ id: "kdel", type: "count", title: "정리 작업", need: 2 }] }, ...s.goals];
+      s.tasks = [
+        { id: "tkeep", title: "남길 실행", areaId, goalId: "gdel", diff: "D", type: "once", status: "done", doneAt: "2026-01-02", doneDates: [], createdAt: "2026-01-01", evidence: "정리 완료" },
+        { id: "tdrop", title: "삭제될 실행", areaId, goalId: "gdel", diff: "D", type: "once", status: "todo", doneDates: [], createdAt: "2026-01-01" },
+        ...s.tasks];
+      localStorage.setItem(k, JSON.stringify(s));
+    });
+    await h.reload();
+    await sleep(700);
+    await clickTab("목표");
+    await expectText("E2E 삭제 목표");
+    await expectText("목표 삭제");
+  });
+  await step("delete an active goal — open task removed, completed task kept", async () => {
+    // the confirmation is a real window.confirm; stub it the way flow6 does for the backup import
+    await page.evaluate(() => { window.confirm = () => false; });
+    await clickText("목표 삭제"); await sleep(500);
+    if (!(await hasText("E2E 삭제 목표"))) throw new Error("cancelling the confirmation still deleted the goal");
+    await page.evaluate(() => { window.confirm = () => true; });
+    await clickText("목표 삭제"); await sleep(800);
+    if (await hasText("E2E 삭제 목표")) throw new Error("goal survived the confirmed deletion");
+    const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
+    if (!st) throw new Error("no state");
+    if ((st.goals || []).some((g) => g.id === "gdel")) throw new Error("goal record remains");
+    if ((st.tasks || []).some((q) => q.id === "tdrop")) throw new Error("open task of the deleted goal remains");
+    const keep = (st.tasks || []).find((q) => q.id === "tkeep");
+    if (!keep) throw new Error("completed task was deleted with its goal");
+    if (keep.goalId !== "gdel" || keep.evidence !== "정리 완료") throw new Error("completed task was rewritten: " + JSON.stringify(keep));
+    await clickTab("실행");
+    await expectText("미분류");
+    await expectText("남길 실행");
+  });
+
   // ── Legacy save migration paths
   await step("v10 save migration", async () => {
     await page.evaluate(() => {
@@ -82,7 +121,7 @@ module.exports = async (h) => {
       try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; }
     });
     if (!st) throw new Error("no state after migration");
-    if (st.v !== 18) throw new Error("schema version " + st.v + " (expected 18)");
+    if (st.v !== 19) throw new Error("schema version " + st.v + " (expected 19)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     const kinds = (st.room?.trophies || []).map((t) => t.kind);
@@ -106,10 +145,12 @@ module.exports = async (h) => {
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 18) throw new Error("schema version " + st.v + " (expected 18)");
+    if (st.v !== 19) throw new Error("schema version " + st.v + " (expected 19)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
-    if (typeof st.metrics?.body !== "number") throw new Error("metrics.body missing — v12 conversion skipped");
+    // v12 built a life-metric store that v19 then deletes, so nothing v12 produced is observable in an end state.
+    if (st.profile?.persona) throw new Error("v11 persona deletion skipped");
+    if ("metrics" in st) throw new Error("v19 left the life-metric store the v11/v12 blocks had built");
     if ((st.room?.trophies || []).some((t) => t.kind === "boss")) throw new Error("trophy kind boss remains");
   });
   await step("v13 save → v14 field rename", async () => {
@@ -141,7 +182,9 @@ module.exports = async (h) => {
     };
     const st = await migrateFixture(s14);
     if (!Array.isArray(st.journal) || !Array.isArray(st.reviews)) throw new Error("v15 records (journal, reviews) missing");
-    if (!("briefingSeen" in st.act) || !("lastCheckin" in st.act) || !("lastReview" in st.act)) throw new Error("v15 act stamps missing");
+    if (!("briefingSeen" in st.act) || !("lastReview" in st.act)) throw new Error("v15 act stamps missing");
+    // v15 also writes lastCheckin, which v19 deletes again — the end state proves both blocks ran.
+    if ("lastCheckin" in st.act) throw new Error("v19 left the check-in stamp the v15 block had written");
     if (st.tasks?.[0]?.due !== undefined) throw new Error("migration invented a due date");
   });
   await step("v15 save → v16 schedule", async () => {
@@ -203,6 +246,34 @@ module.exports = async (h) => {
     if (mt.title !== "거래처 미팅" || mt.diff !== "D" || mt.status !== "done" || mt.doneAt !== "2026-01-02") throw new Error("v18 changed a field it must keep: " + JSON.stringify(mt));
     if (mt.evidence !== "회의록 · ○○상사 김과장 — 안건: 사양 협의") throw new Error("v18 dropped the recorded minutes: " + JSON.stringify(mt));
     if (st.ui?.scheduleView !== "calendar") throw new Error("v18 rewrote the v17 schedule view: " + JSON.stringify(st.ui));
+  });
+  await step("v18 save → v19 life metrics removed", async () => {
+    // shieldMonth and briefingSeen are stamped with today so that the monthly shield reset (applyDailyTick)
+    // and the briefing-on-load cannot move them — what the step compares is then the work of the v19 block alone.
+    const now = await page.evaluate(() => { const d = new Date(); const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; });
+    const s18 = {
+      v: 18,
+      profile: { nick: "v18세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, directions: [] },
+      areas: [{ id: "aw", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tw", title: "레거시 실행", areaId: "aw", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [],
+      events: [],
+      journal: [{ id: "jw", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [{ id: "rw", weekOf: "2025-12-29", date: "2026-01-02", wins: "기록 유지", blocks: "없음" }],
+      ui: { scheduleView: "calendar" },
+      act: { streak: 3, lastActive: "2026-01-02", shieldMonth: now.slice(0, 7), shieldsLeft: 1, lastCheckin: "2026-01-02", briefingSeen: now, lastReview: "2026-01-02" },
+      metrics: { asset: 40, infl: 30, body: 20 }, exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s18);
+    if ("metrics" in st) throw new Error("v19 kept the life-metric store: " + JSON.stringify(st.metrics));
+    if ("lastCheckin" in (st.act || {})) throw new Error("v19 kept the check-in stamp: " + JSON.stringify(st.act));
+    const actKeys = Object.keys(st.act || {}).sort().join(",");
+    if (actKeys !== "briefingSeen,lastActive,lastReview,shieldMonth,shieldsLeft,streak") throw new Error("v19 changed the act key set: " + actKeys);
+    if (st.act?.streak !== 3 || st.act?.shieldsLeft !== 1) throw new Error("v19 changed the streak counters: " + JSON.stringify(st.act));
+    if (st.act?.briefingSeen !== now || st.act?.lastReview !== "2026-01-02") throw new Error("v19 dropped an act stamp it must keep: " + JSON.stringify(st.act));
+    if (st.ui?.scheduleView !== "calendar") throw new Error("v19 rewrote the schedule view: " + JSON.stringify(st.ui));
+    if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v19 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
   });
   await shot("migrated");
 };

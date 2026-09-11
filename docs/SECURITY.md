@@ -10,7 +10,7 @@ Life Manager is a local-only, single-user web app with no backend, no accounts, 
 ## Data in transit
 None by the app. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static.
 
-The assistant bridge (`AI에게 보내기`) is the one place data leaves deliberately: it renders a text packet — goals, open tasks, the last seven journal entries, the last weekly review, life metrics and the streak, never photos — into a textarea and the clipboard. Copying it is a user action, and pasting it into a third-party chat puts that text outside this threat model. The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score ([Rule 7](design-docs/core-beliefs.md#rule-7)).
+The assistant bridge (`AI에게 보내기`) is the one place data leaves deliberately: it renders a text packet — goals, open tasks, the last seven journal entries, the last weekly review, the streak and role-model proximity, never photos — into a textarea and the clipboard. Copying it is a user action, and pasting it into a third-party chat puts that text outside this threat model. The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score ([Rule 7](design-docs/core-beliefs.md#rule-7)).
 
 ## The backup file
 `백업 내보내기` writes the whole save — profile, goals, tasks, achievements and every evidence photo — to a JSON file the user chooses where to keep. It is as sensitive as the app itself, and once it is in a downloads folder, a cloud-synced directory or a chat, it is outside this threat model. Import replaces the current records and asks for confirmation naming the export date first.

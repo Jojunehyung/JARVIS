@@ -3,14 +3,14 @@
 
 Open rows carry a `DueChip` when the task has a `due` date, and `AddTaskModal` offers `기한 (선택)` (a date input) for `오늘 1회` tasks and for study tasks; a milestone created from a KR defaults its `due` to the goal deadline.
 
-`TaskTab` shows every 실행 (task) grouped under its active goal — daily rows first, then the 마일스톤 (milestone) rows for certification, exam, and study tasks — plus a 미분류 (unassigned) section for legacy tasks whose goal no longer resolves. New tasks are created only through `AddTaskModal`, opened from a goal and sized to one day ([Rule 18](../design-docs/core-beliefs.md#rule-18)); certification and exam milestones come only from the goal's KR bridge ([Rule 19](../design-docs/core-beliefs.md#rule-19)). The 도감 (catalogue) `CatalogModal` is a read-only browser of the payout tables. Hierarchy: `information-architecture.md`; payouts: `scoring-engine.md` (both under `../design-docs/`).
+`TaskTab` shows every 실행 (task) grouped under its active goal — daily rows first, then the 마일스톤 (milestone) rows for certification, exam, and study tasks — plus a 미분류 (unassigned) section for legacy tasks whose goal no longer resolves, which now also holds the completed tasks kept when their active goal was deleted through `목표 삭제` ([goals.md](goals.md)). New tasks are created only through `AddTaskModal`, opened from a goal and sized to one day ([Rule 18](../design-docs/core-beliefs.md#rule-18)); certification and exam milestones come only from the goal's KR bridge ([Rule 19](../design-docs/core-beliefs.md#rule-19)). The 도감 (catalogue) `CatalogModal` is a read-only browser of the payout tables. Hierarchy: `information-architecture.md`; payouts: `scoring-engine.md` (both under `../design-docs/`).
 
 ## `TaskTab`
 Props: `state, today, onComplete (tryComplete), onRemove (removeTask), onCatalog, onGoGoals, onAddFor, onViewEvidence (opens EvidenceViewModal)`.
 - Header: `실행 — 목표별 할 일` / `실행은 목표에서만 생성되고, 하루분량으로만 등록됩니다.` / button `도감`.
 - Empty state (no active goal and no unassigned task): `EmptyQuestSvg`, `실행은 목표의 실행 단위입니다 — 목표가 먼저예요.`, button `목표 먼저 세우기 ›` (→ goals tab).
 - One section per active goal: `🎯 {g.title}` + `{round(goalProgress·100)}%`; `dailyQ` rows, then — when any exist — the divider `마일스톤 — 자격·시험·학습 (하루분량 예외 · 증거로만 완료)` and the `mile` rows (`isMile = isCert || isExam || isStudy`); `연결된 실행이 아직 없습니다.` when the goal has no task; `＋ 이 목표에 실행` → `onAddFor(g.id)`.
-- Unassigned section (`opacity-60`, only when `orphan.length > 0`): `미분류 — 목표 연결 전 항목` / `완료·삭제는 가능하지만, 새 실행은 목표에서만 만들 수 있어요.` `orphan` = tasks with no `goalId` or whose `goalId` matches no goal (including goals removed with `기록에서 제거`).
+- Unassigned section (`opacity-60`, only when `orphan.length > 0`): `미분류 — 목표 연결 전 항목` / `완료·삭제는 가능하지만, 새 실행은 목표에서만 만들 수 있어요.` `orphan` = tasks with no `goalId` or whose `goalId` matches no goal (including goals removed with `기록에서 제거`, or deleted with `목표 삭제` — that path removes only the goal's record-less tasks and leaves completed ones here).
 
 ### Row
 `doneToday` = `daily` → `doneDates.includes(today)`, `once` → `status === "done"`; a done row is `opacity-50` with a struck-through title.

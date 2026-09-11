@@ -52,7 +52,7 @@ Completed plans move to `docs/exec-plans/completed/` and are linked from `docs/d
 
 ## Example prompts (Korean requests are fine; the plan is English)
 - File split (backlog 3): "백로그 3번을 진행해줘. `calcExamPayout`, `krProgress`, `migrate`에 단위 테스트를 먼저 만들고, 테스트가 통과하는 상태를 유지하면서 data/engine/components로 분리해."
-- Weekly review (backlog 4): "주간 리뷰 플로우를 기획부터 제안해줘. 지표 체크인(MetricsModal)을 확장하는 방향으로."
+- Weekly review (backlog 4): "주간 리뷰 플로우를 기획부터 제안해줘. 일지(JournalModal)와 어떻게 이어질지까지."
 - Before any feature: "불변 규칙(core-beliefs)과 충돌하는지 먼저 확인하고 시작해."
 - Data change: "○○기사 신설을 반영해줘 — 시행일·근거 URL 포함" → planner marks `needs-approval`, data-curator executes with `HARNESS_DATA_EDIT=1`.
 

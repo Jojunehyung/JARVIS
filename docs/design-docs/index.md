@@ -12,7 +12,7 @@ Engine and structure decisions. Rules are canonical in `core-beliefs.md`; everyt
 | [scoring-engine.md](scoring-engine.md) | Difficulty D, points P, grade cuts, certification and exam payout mechanics |
 | [goal-engine.md](goal-engine.md) | KR progress, goal progress, pace, deadlines, KR check-in, task creation rules |
 | [evidence-and-promotion.md](evidence-and-promotion.md) | Evidence gate, study tiers, activity logs, promotion gates |
-| [metrics-and-role-model.md](metrics-and-role-model.md) | Life metrics sources, role-model proximity curve, streak and shields |
+| [metrics-and-role-model.md](metrics-and-role-model.md) | Role-model proximity curve, streak and shields |
 | [state-lifecycle.md](state-lifecycle.md) | Load → migrate → daily tick, migration policy, storage keys, date/id utilities |
 | [demo-data.md](demo-data.md) | What `demoState` contains and why |
 

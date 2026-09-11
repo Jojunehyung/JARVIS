@@ -17,12 +17,12 @@ Accent colours are bound to roles — do not swap them:
 |---|---|
 | cyan-500/300 | primary action, active tab, focus, goal progress, RANK UP overlay |
 | amber-400/300 | achievement, streak, grade A, onboarding CTA, daily-task registration, ACHIEVEMENT overlay |
-| violet-500/400 | study, life metric "influence", grade B |
+| violet-500/400 | study, grade B |
 | emerald-500/400 | done, achieved, grade D, job-fit S |
 | sky-400/300 | exams, grade C, Saturday in the month grid |
-| rose-400 | error, pace behind, job-fit C (= pays 0), deadline marker, public holiday and Sunday in the month grid |
+| rose-400 | error, destructive action (`목표 삭제`), pace behind, job-fit C (= pays 0), deadline marker, public holiday and Sunday in the month grid |
 
-Grade letters: A amber · B violet · C sky · D emerald · E zinc (`GRADE_TEXT`, `GRADE_BORDER`, `DiffBadge`, `CertBadge`; trophy tier colours `TIER_COLORS`: E `#a1a1aa` D `#34d399` C `#38bdf8` B `#a78bfa` A `#fbbf24`). Job-fit tiers `TIER_CLS`: S emerald-400 · A cyan-300 · B zinc-500 · C rose-400. Pace: behind rose-400 · ahead emerald-400 · on track zinc-400 · no deadline zinc-500. Metric bars: asset amber-400 · influence violet-400 · appearance emerald-400; area grade bar cyan-400; goal bar cyan-400 (achieved emerald-400); KR bar zinc-400.
+Grade letters: A amber · B violet · C sky · D emerald · E zinc (`GRADE_TEXT`, `GRADE_BORDER`, `DiffBadge`, `CertBadge`; trophy tier colours `TIER_COLORS`: E `#a1a1aa` D `#34d399` C `#38bdf8` B `#a78bfa` A `#fbbf24`). Job-fit tiers `TIER_CLS`: S emerald-400 · A cyan-300 · B zinc-500 · C rose-400. Pace: behind rose-400 · ahead emerald-400 · on track zinc-400 · no deadline zinc-500. Area grade bar cyan-400; goal bar cyan-400 (achieved emerald-400); KR bar zinc-400.
 
 Badges: dark background + light text (-300) + strong border (-600/700), `w-7 h-7 rounded-lg font-mono`. Buttons: filled (-400/500) with `text-zinc-950`; primary `rounded-xl`; large CTA has the pressed effect `border-b-4` (`bg-amber-400 border-amber-600`). Chips: on cyan `bg-cyan-500 text-zinc-950 border-cyan-400` / on amber `bg-amber-400 text-zinc-950 border-amber-300` / off `bg-zinc-950 text-zinc-400 border-zinc-700`.
 
@@ -34,7 +34,6 @@ Badges: dark background + light text (-300) + strong border (-600/700), `w-7 h-7
 | Chip off | `bg-zinc-950 text-zinc-400 border-zinc-700` |
 | Badge | `w-7 h-7 rounded-lg font-mono` |
 | Progress bar | `h-2`, 700 ms transition; area grade and goal `cyan-400` (achieved goal `emerald-400`), KR `zinc-400` |
-| Life-metric bars | asset `amber-400` · influence `violet-400` · appearance `emerald-400` |
 | Pace text | behind `rose-400` · ahead `emerald-400` · on track `zinc-400` · no deadline `zinc-500` |
 | Job-fit tier (`TIER_CLS`) | S `emerald-400` · A `cyan-300` · B `zinc-500` · C `rose-400` |
 | Month-grid day number | one tone, first match wins: today `amber-300 font-bold` · public holiday or Sunday `rose-400` · Saturday `sky-400` · other `zinc-300` |

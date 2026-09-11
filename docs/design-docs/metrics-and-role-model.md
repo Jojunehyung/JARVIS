@@ -1,39 +1,11 @@
-# Life metrics, role model, and streak
+# Role model and streak
 <!-- src: SPEC-5 -->
 
-`saveMetrics` stamps `act.lastCheckin` with the date of the check-in, and the growth tab shows it; the stamp is a fact, and the metric values still move only through `metricsGain` and the sliders ([Rule 8](core-beliefs.md#rule-8)). The recommendation logic behind 방향 제안 (direction advice) lives in `roleRecommendations`, shared with the daily briefing ([assistant-bridge.md](assistant-bridge.md)).
+The recommendation logic behind 방향 제안 (direction advice) lives in `roleRecommendations`, shared with the daily briefing ([assistant-bridge.md](assistant-bridge.md)).
 
-Three numbers describe the person behind the areas (영역): life metrics (인생 지표) `metrics.asset / infl / body`, role-model (롤모델) proximity `roleGap`, and the streak with its streak shields (보호권) in `act`. Metrics move only through achievements (성취), promotion (승급), goal completion and manual check-in — never with time ([Rule 8](core-beliefs.md#rule-8)); proximity is derived from area grades and never stored ([Rule 9](core-beliefs.md#rule-9), [Rule 14](core-beliefs.md#rule-14)); `metrics.risk` became `metrics.body` in schema v12 ([Rule 12](core-beliefs.md#rule-12)). Field shapes: [../generated/db-schema.md](../generated/db-schema.md).
+Two numbers describe the person behind the areas (영역): role-model (롤모델) proximity `roleGap`, and the streak with its streak shields (보호권) in `act`. Proximity is derived from area grades and never stored ([Rule 9](core-beliefs.md#rule-9), [Rule 14](core-beliefs.md#rule-14)). Field shapes: [../generated/db-schema.md](../generated/db-schema.md).
 
-## Life metrics (`METRICS_META`)
-| k | name | colour | description |
-|---|---|---|---|
-| asset | 자산 | bg-amber-400 | 경제력·자본. 성취와 수익 목표로 상승 |
-| infl | 영향력 | bg-violet-400 | 실력·평판·네트워크. 승급과 전문 성취로 상승 |
-| body | 외형 | bg-emerald-400 | 운동·식단·컨디션 관리의 결과. 체크인으로 스스로 평가 |
-
-Range 0–100 through `statClamp(v) = Math.max(0, Math.min(100, Math.round(v)))`. `freshState` starts at asset 10 / infl 5 / body 15; the v12 migration also sets `body` to 15 because the meaning inverted from `risk`. `demoState` uses 24 / 14 / 20.
-
-## Automatic gain (`metricsGain`)
-```
-metricsGain(s, dVal, areaName):
-  g  = max(1, round(dVal / 10))
-  aG = areaName === "사업" ? g : areaName === "직업·커리어" ? ceil(g * 0.6) : ceil(g * 0.3)
-  iG = (areaName === "사업" || areaName === "직업·커리어") ? ceil(g * 0.6) : ceil(g * 0.8)
-  asset = statClamp(asset + aG);  infl = statClamp(infl + iG)     // body untouched (self-assessment only)
-```
-The area names `사업` and `직업·커리어` are matched as strings; a renamed or custom area gets the "other" multipliers. `dVal` per caller in `completeTask`:
-
-| Caller | `dVal` |
-|---|---|
-| exam | `band.d` — the band's D, regardless of skill-bucket decay or difference payout |
-| certification | `wD = round((certD ?? round(sqrt(cp * 5))) * (jw?.mult ?? 1))`, called only when `wD > 0` — a C-tier (×0) certification moves nothing |
-| study with pts ≥ 150, legacy general B/A | `min(100, round(sqrt(pts * 5)))` — 150 → 27, 400 → 45 |
-
-Fixed additions outside `metricsGain`: promotion `infl + 3` (`promoteArea`); goal completion `infl + 4` and `asset + 2` (`goalStatus(id, "done")` — moving the goal back to active does not take them back).
-
-## Check-in (`MetricsModal` → `saveMetrics`)
-`인생 지표 체크인` on the growth tab shows one 0–100 slider per metric; `저장` replaces all three keys at once (`statClamp` each) and toasts `지표를 갱신했어요`. This is the only path that changes `body`.
+**2026-09-11:** the life-metric triple this file used to document (`metrics.asset / infl / body`, its automatic gain from achievements/promotion/goal completion, and its manual check-in) was removed by the user's decision, store and all (schema v19 drops `metrics` and `act.lastCheckin`) — see the [decision log](decision-log.md) and [Rule 8](core-beliefs.md#rule-8). What it claimed to track belongs to a goal's metric KR instead.
 
 ## Role-model proximity (`roleGap`)
 `role = { name, targets{areaId: 1–8} } | null`. `RoleModelModal` offers `ROLE_PRESETS` (대기업 현직 전문가 · 월 500 1인 사업가 · 프리랜서 전문가 · 창업가·대표) or a free name (empty → `롤모델`) and, per area, `제외` (0) or a required grade from 견습 (1) to 거장 (8) — 정점 (9) cannot be required.

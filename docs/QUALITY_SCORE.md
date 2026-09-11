@@ -25,7 +25,7 @@ Verdicts against the current code, last refreshed 2026-09-08 against the Phase 4
 | 5 grade cuts | `achGrade` | verified |
 | 6 frozen tables | `data-guard` hook, data-curator only | verified (hook denies) |
 | 7 no game mechanics | code and copy scan (`finish-check` residue) | verified |
-| 8 metrics sources | `metricsGain`, `saveMetrics` | by-review; promotion/goal-done use fixed increments (+3 / +4 +2), documented in tech-debt |
+| 8 no global metric store | `migrate` v19 (drops `metrics`, `act.lastCheckin`), `checkinKR` | verified — the global store and its check-in were removed 2026-09-11; objective measures live only in a goal's metric KR |
 | 9 derived progress | `krProgress`, `goalProgress` | verified |
 | 10 evidence gate | `needsEvidence`, `tryComplete` | verified (E2E: submit disabled without photo) |
 | 11 promotion by evidence | `PromoteModal`, `promoteArea` | verified (E2E) |

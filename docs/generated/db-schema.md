@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 18 |
+| State schema version (`freshState.v`) | 19 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v18 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v19 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 18,
+  v: 19,
   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -32,8 +32,7 @@
   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
-         lastCheckin?, briefingSeen?, lastReview? },        // dates only — facts, never verdicts
-  metrics: { asset, infl, body },                           // 0-100; body = appearance (exercise/care), self-assessed only
+         briefingSeen?, lastReview? },                      // dates only — facts, never verdicts
   exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -49,7 +48,7 @@ the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacke
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 18,
+  v: 19,
   profile: null,
   areas,
   tasks: [],
@@ -57,8 +56,7 @@ the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacke
   events: [],
   journal: [],
   reviews: [],
-  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
-  metrics: { asset: 10, infl: 5, body: 15 },
+  act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
   exams: { best: {}, dim: {}, spec: {}, policy: POINT_POLICY_VERSION },
   certBest: {},
   room: { trophies: [] },
@@ -123,8 +121,7 @@ const demoState = () => {
     id: uid(), weekOf: mondayOf(shiftDay(today, -7)), date: shiftDay(today, -7),
     wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
   }];
-  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: shiftDay(today, -10), briefingSeen: null, lastReview: shiftDay(today, -7) };
-  s.metrics = { asset: 24, infl: 14, body: 20 };
+  s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: shiftDay(today, -7) };
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60) } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
@@ -146,21 +143,23 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v16 → v16 | v16: schedule — events[] records real-life appointments and deadlines. Not tasks: no payout, no metric, no evidence gate; repeat occurrences stay derived, only the rule and the user's stamps are stored. |
 | < v17 → v17 | v17: the schedule tab remembers the chosen view (list or calendar). A preference only — the month, the selection and the occurrences stay derived. |
 | < v18 → v18 | v18: the `meet` activity kind is gone — a meeting belongs to the `일정` tab, not to a goal. Only `kind` is dropped; everything the user recorded (title, difficulty, points, completion dates, minutes evidence) is kept, and an unknown kind is left alone. |
+| < v19 → v19 | v19: life metrics are gone (user decision 2026-09-11). A global self-assessed triple that also grew from unrelated achievements measured nothing; objective measures belong to a goal's metric KR (rule 8). The stored numbers and the check-in stamp are dropped; every other act stamp, record and payout is kept untouched. |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1221 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3643 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 3643 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 3643 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-profile` | 5114 | App root |
-| `liferpg-img-${slot}` | 5151 | App root |
-| `liferpg-img-ev-${id}` | 5174 | App root |
-| `liferpg-img-ev-${t.id}` | 5529 | App root |
-| `liferpg-img-study-${t.id}-1` | 5529 | App root |
-| `liferpg-img-study-${t.id}-2` | 5529 | App root |
+| `liferpg-img-ev-${task.id}` | 3609 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 3609 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 3609 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-profile` | 5063 | App root |
+| `liferpg-img-${slot}` | 5100 | App root |
+| `liferpg-img-ev-${id}` | 5123 | App root |
+| `liferpg-img-ev-${q.id}` | 5301 | App root |
+| `liferpg-img-ev-${t.id}` | 5471 | App root |
+| `liferpg-img-study-${t.id}-1` | 5471 | App root |
+| `liferpg-img-study-${t.id}-2` | 5471 | App root |
 
 ## Demo data (`demoState`)
 
