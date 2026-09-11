@@ -6,6 +6,7 @@ Opening the app on a new day shows a briefing: what the saved state says about t
 ## Home card
 A card above 오늘의 초점 (today's focus), labelled `오늘 브리핑`:
 - counts line: `기한 지남 {n} · 오늘 기한 {n} · 매일 남음 {n} · 뒤처짐 {n}`
+- schedule line, a button that switches to the 일정 tab: `오늘 일정 {n}건 · 3일 내 마감 {n}건 ›` — today's occurrence count and the `마감` occurrences inside `EVENT_SOON_DAYS` (3 days, today included)
 - the first severity-3 line of the briefing, in rose, when there is one
 - buttons `브리핑 열기 ›` and `일지 쓰기`
 
@@ -15,6 +16,7 @@ Title `오늘 브리핑 — {today}`. One block per section, each with a `Sectio
 | Section | Lines |
 |---|---|
 | `오늘 할 일` | overdue, due today, then open daily tasks; `해당 없음` when there are none. Tapping a line runs the normal completion path (`tryComplete`), so evidence gates still apply ([Rule 10](../design-docs/core-beliefs.md#rule-10)) |
+| `오늘 일정` | today's deadlines and appointments, the deadlines already past, and the ones inside the next 3 days; `해당 없음` when there are none. Every line switches to the 일정 tab ([schedule.md](schedule.md)) — an event is a record, so nothing here can be completed from the briefing |
 | `연속 기록` | one line stating whether today is recorded, whether the streak breaks tonight, or whether a 보호권 (streak shield) will be spent |
 | `목표 페이스` | one line per active goal: D-day, progress, pace verdict, and the unmet KRs when the deadline is within 7 days or already past |
 | `지표·영역` | metrics check-in age, 영역 (areas) with no achievement in 30 days, and goals whose activity kind has no completion in 7 days |

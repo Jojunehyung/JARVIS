@@ -40,6 +40,19 @@ The three goals cover all four KR types, a deadline in the near and far future, 
 
 Every task carries a `goalId` ([Rule 18](core-beliefs.md#rule-18)), so the demo also exercises the goal-progress deltas: completing the CATIA task moves 하네스 설계 엔지니어 취업, completing the exercise task moves 체력 기반 만들기.
 
+## Events
+
+| Event | kind | date | time | other |
+|---|---|---|---|---|
+| `부품사 1차 면접` | `약속` | today + 3 | 14:00 | `place: "판교 본사"`, `note: "도면 출력본 지참"`, created today − 2 |
+| `전기기사 실기 원서 접수 마감` | `마감` | today + 9 | — | `note: "접수 후 수험표 확인"`, created today − 3 |
+| `영어 스터디 모임` | `약속` | today + 1 | 20:00 | `place: "온라인"`, `repeat: { freq: "weekly" }`, created today − 7 |
+
+The three cover both kinds, a timed and an untimed row, and a repeat. None of them carries a `goalId`, points or
+a flag: an event is a record, not a 실행 (task) ([../product-specs/schedule.md](../product-specs/schedule.md)).
+The weekly appointment is what the `이후` group collapses — expanded it would produce twelve rows over the 90-day
+horizon, so the demo tab shows four rows in total (`내일` 1, `이후` 3) instead of fifteen.
+
 ## Remaining state
 - `act`: `{ streak: 4, lastActive: today − 1, shieldMonth: monthStr(), shieldsLeft: 2 }` — a live streak that continues on the first completion instead of breaking.
 - `metrics`: `{ asset: 24, infl: 14, body: 20 }`, written directly rather than derived from the achievement history.

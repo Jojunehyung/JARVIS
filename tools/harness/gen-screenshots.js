@@ -16,6 +16,7 @@ const SHOTS = [
   { file: "home.png", tab: "홈" },
   { file: "tasks.png", tab: "실행" },
   { file: "goals.png", tab: "목표" },
+  { file: "schedule.png", tab: "일정" },
 ];
 
 (async () => {

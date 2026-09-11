@@ -62,4 +62,4 @@ Severity: **S1** cannot run / data loss / wrong payout · **S2** behaviour contr
 | R-16 | S2 | The service worker precached with a single `cache.addAll`, so one missing file — a deploy replacing assets mid-visit, say — left no cache at all and the app silently would not open offline | 2026-09-09 — the document and bundle stay all-or-nothing, icons and manifest are added individually; an E2E step now asserts the cache actually holds the document and the bundle |
 
 ## Allowlist mirror (`tools/harness/finish-allowlist.json`)
-_None yet._
+_Empty._ Entries here are two-phase artefacts, not accepted debt: `finish-check` counts references corpus-wide, so a constant that only the next phase renders is flagged, and the alternative — a fake reference — is worse. The last one (`EVENT_SOON_DAYS`, schedule Phase A) was removed on 2026-09-11, when Phase C wired it into `buildBriefing` and the home briefing card.

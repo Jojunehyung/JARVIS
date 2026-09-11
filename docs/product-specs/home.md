@@ -1,13 +1,20 @@
 # Home tab
 <!-- src: SPEC-4-2 -->
 
-The first section is the 오늘 브리핑 card (see [daily-briefing.md](daily-briefing.md)). `HomeTab` is the landing screen after onboarding: a profile card, the three most urgent active goals with their 페이스 (pace), and up to five of today's open 실행 (tasks) with a one-tap completion that still goes through the evidence gate. Everything is derived from `state` at render time — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onUpload (askUpload), onClearImg (clearImg), onComplete (tryComplete), onGoGoals, onGoQuests` — the last two switch the bottom tab to 목표 / 실행.
+The first section is the 오늘 브리핑 card (see [daily-briefing.md](daily-briefing.md)). `HomeTab` is the landing screen after onboarding: a profile card, the three most urgent active goals with their 페이스 (pace), and up to five of today's open 실행 (tasks) with a one-tap completion that still goes through the evidence gate. Everything is derived from `state` at render time — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onUpload (askUpload), onClearImg (clearImg), onComplete (tryComplete), onGoGoals, onGoQuests, onGoSchedule` — the last three switch the bottom tab to 목표 / 실행 / 일정.
 
 ## Profile card
 - Portrait: `Portrait` at size 72 renders `imgs.profile` when a photo exists, otherwise the parametric `PortraitSprite` from `profile.look` and `profile.gender`. With a photo present a `✕` button calls `onClearImg("profile")` → `clearImg` clears it from memory and deletes the `liferpg-img-profile` key.
 - Upload: the `업로드` button (Camera icon) calls `onUpload("profile")` → `askUpload` records the slot and clicks the hidden `<input type="file" accept="image/*">` owned by `App`; `onFile` runs `resizeImage` (256×320 cover crop, JPEG quality 0.82, data URL), stores it under `liferpg-img-profile`, and toasts `📷 사진이 등록됐어요` — on a decode failure `이미지를 읽지 못했어요`.
 - Text: `profile.nick`; one line listing every 영역 (area) as `{area.name} {RANKS[grade].name}` joined by ` · `; `오늘 {doneToday}건 완료`, where `doneToday` = `daily` tasks whose `doneDates` includes `today` + `once` tasks with `doneAt === today`.
 - The streak `🔥 {act.streak}일` (amber) and 보호권 (streak shields) `🛡 {act.shieldsLeft}` are not on this card: `App` renders them in the header of every tab, next to `nick · status`.
+
+## 오늘 브리핑 card
+Two mono lines and, when one exists, the first severity-3 line of the briefing in rose. The second mono line is a
+button: `오늘 일정 {n}건 · 3일 내 마감 {n}건 ›` (`brief.counts.events` / `brief.counts.dueSoon`, the 3 read from
+`EVENT_SOON_DAYS`) → `onGoSchedule` switches to the 일정 tab. Today's events are date facts that belong beside the
+other today numbers, which is why they are a line here instead of a sixth card. Full card:
+[daily-briefing.md](daily-briefing.md); the tab itself: [schedule.md](schedule.md).
 
 ## 오늘의 초점 (today's focus)
 `SectionLabel` in cyan with `전체 보기 ›` (→ goals tab). `focus` = active goals sorted ascending by `deadline || "9999"` (undated goals last), first 3.

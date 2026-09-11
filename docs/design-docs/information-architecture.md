@@ -1,7 +1,7 @@
 # Information architecture
 <!-- src: SPEC-3 -->
 
-The app is a four-level hierarchy — 영역 (area) → 목표 (goal) → KR (key result) → 실행 (task) — shown through four tabs, eleven modals, and two overlays. Every other spec assumes this vocabulary. Field shapes are generated in [../generated/db-schema.md](../generated/db-schema.md); per-screen behaviour lives in [../product-specs/index.md](../product-specs/index.md).
+The app is a four-level hierarchy — 영역 (area) → 목표 (goal) → KR (key result) → 실행 (task) — shown through five tabs, sixteen modals, and two overlays. The fifth tab, 일정 (schedule), sits outside the hierarchy: an event is a dated record with no goal above it ([../product-specs/schedule.md](../product-specs/schedule.md)). Every other spec assumes this vocabulary. Field shapes are generated in [../generated/db-schema.md](../generated/db-schema.md); per-screen behaviour lives in [../product-specs/index.md](../product-specs/index.md).
 
 ## Hierarchy: area → goal → KR → task
 ```
@@ -40,15 +40,16 @@ The modal opens from a goal (`modal.type === "addQuest"`, `goalId`) and shows `�
 - Tasks of a goal with `status === "done"` appear nowhere: the goal is not active, and it still exists so the task is not an orphan. Current behaviour, not a design intent.
 - Tab header: `실행 — 목표별 할 일` / `실행은 목표에서만 생성되고, 하루분량으로만 등록됩니다.` plus the `도감` (catalogue) button → `CatalogModal`. Empty state: `실행은 목표의 실행 단위입니다 — 목표가 먼저예요.` → `목표 먼저 세우기 ›`. Each goal section shows `{progress}%`, `연결된 실행이 아직 없습니다.` when empty, and `＋ 이 목표에 실행`.
 
-## Screen map (`NAV`, four tabs)
+## Screen map (`NAV`, five tabs)
 | Tab key | Label | Icon | Component | Composition |
 |---|---|---|---|---|
 | home | 홈 | Flag | `HomeTab` | profile card (`Portrait` 72 — photo or sprite, area grade names, `업로드`, `오늘 {n}건 완료`) · `오늘의 초점` (up to 3 active goals by nearest deadline, with 페이스 (pace)) · `오늘 할 일` (5 rows) |
 | goals | 목표 | Target | `GoalsTab` | `목표 (OKR)` cards (progress, pace, KR rows, check-in) · `새 목표` · `＋ 실행 연결` · `달성 처리` · `기록에서 제거` |
 | tasks | 실행 | ClipboardList | `TaskTab` | per-goal groups (daily + milestones) · 미분류 · `도감` · `＋ 이 목표에 실행` |
 | growth | 성장 | TrendingUp | `GrowthTab` | `성취의 벽` · `인생 지표` + `체크인` · `실력 트랙 — 영역별 승급 관문` (`관문 증명하기`) · `롤모델` (근접도, `롤모델 설정` / `롤모델 수정`, `방향 제안`) · `데이터 초기화` |
+| schedule | 일정 | CalendarDays | `ScheduleTab` | `다가오는 일정` + `일정 추가` · counts line · day groups `지난 마감` / `오늘` / `내일` / `이번 주` / `이후` (the last one collapsed to one row per event) |
 
-- Modals, one at a time (`modal.type`, 11 values): `addQuest` (renders `AddTaskModal`; the type string keeps the legacy name) / `addGoal` / `evidence` / `promote` / `role` / `activity` / `study` / `evidenceView` / `catalog` / `roleAdvice` / `metrics`.
+- Modals, one at a time (`modal.type`, 16 values): `addQuest` (renders `AddTaskModal`; the type string keeps the legacy name) / `addGoal` / `evidence` / `promote` / `role` / `activity` / `study` / `evidenceView` / `catalog` / `roleAdvice` / `metrics` / `briefing` / `journal` / `bridge` / `review` / `event`.
 - Overlays (`overlay.type`): `gradeup` / `achieve`. Toast: `ToastHost` holds one slot with no queue — a new `show` replaces the current message and restarts the 2600 ms timer.
 - Header on every tab: `LIFE MANAGER` · `{nick}` · `{status}` · `🔥 {streak}일` · `🛡 {shieldsLeft}` (보호권, streak shield).
 - Phases: `loading` (`불러오는 중...`) → `onboard` (`Onboarding`, rendered without `Shell`) → `main`.

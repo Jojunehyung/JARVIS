@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 15 |
+| State schema version (`freshState.v`) | 16 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v15 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v16 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 15,
+  v: 16,
   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -26,6 +26,9 @@
                 | { id, type:"count",  title, need }
                 | { id, type:"exam",   title, famId, band{label,d,p,conf} }
                 | { id, type:"cert",   title, certName, done? }] }],
+  events: [{ id, title, kind("appt"|"due"), date("YYYY-MM-DD"), time?("HH:MM"), note?, place?,   // schedule records: appointments and deadlines —
+             repeat?{ freq("daily"|"weekly"|"monthly"), until? },                                // never tasks, never paid, never a metric source
+             skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt }],                        // occurrences are expanded at render, not stored
   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -38,17 +41,19 @@
   lastTick, dModel
 }
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
-agenda buckets (`agendaOf`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
+agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
+the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 15,
+  v: 16,
   profile: null,
   areas,
   tasks: [],
   goals: [],
+  events: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
@@ -102,6 +107,11 @@ const demoState = () => {
     { id: uid(), title: "TOEIC L&R 800 달성", areaId: p3.id, goalId: gEng.id, diff: "B", pts: 720, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -7), isExam: true, famId: "toeic", band: { label: "800", d: 60, p: 720, conf: "B" } },
     { id: uid(), title: "아침 운동 30분", areaId: p4.id, goalId: gFit.id, kind: "fit", diff: "E", type: "daily", status: "todo", doneDates: [shiftDay(today, -1)], createdAt: shiftDay(today, -10) },
   ];
+  s.events = [
+    { id: uid(), title: "부품사 1차 면접", kind: "appt", date: shiftDay(today, 3), time: "14:00", place: "판교 본사", note: "도면 출력본 지참", createdAt: shiftDay(today, -2) },
+    { id: uid(), title: "전기기사 실기 원서 접수 마감", kind: "due", date: shiftDay(today, 9), note: "접수 후 수험표 확인", createdAt: shiftDay(today, -3) },
+    { id: uid(), title: "영어 스터디 모임", kind: "appt", date: shiftDay(today, 1), time: "20:00", place: "온라인", repeat: { freq: "weekly" }, createdAt: shiftDay(today, -7) },
+  ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
     text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
@@ -131,21 +141,22 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v13 → v13 | v13: removes the game residue from trophy kind names — "boss" (old boss-defeat effect) becomes "ach" (achievement). Values and display unchanged. |
 | < v14 → v14 | v14: game vocabulary cleanup — quests→tasks, parts→areas, partId→areaId. Values and meaning unchanged (storage keys liferpg-* kept for data compatibility). |
 | < v15 → v15 | v15: daily assistant — journal[] and reviews[] records, optional tasks[].due, act stamps (lastCheckin, briefingSeen, lastReview). Nothing derived is stored. |
+| < v16 → v16 | v16: schedule — events[] records real-life appointments and deadlines. Not tasks: no payout, no metric, no evidence gate; repeat occurrences stay derived, only the rule and the user's stamps are stored. |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1225 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 3539 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-profile` | 4664 | App root |
-| `liferpg-img-${slot}` | 4701 | App root |
-| `liferpg-img-ev-${id}` | 4724 | App root |
-| `liferpg-img-ev-${t.id}` | 5027 | App root |
-| `liferpg-img-study-${t.id}-1` | 5027 | App root |
-| `liferpg-img-study-${t.id}-2` | 5027 | App root |
+| `liferpg-img-ev-${task.id}` | 3636 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 3636 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 3636 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-profile` | 4943 | App root |
+| `liferpg-img-${slot}` | 4980 | App root |
+| `liferpg-img-ev-${id}` | 5003 | App root |
+| `liferpg-img-ev-${t.id}` | 5361 | App root |
+| `liferpg-img-study-${t.id}-1` | 5361 | App root |
+| `liferpg-img-study-${t.id}-2` | 5361 | App root |
 
 ## Demo data (`demoState`)
 

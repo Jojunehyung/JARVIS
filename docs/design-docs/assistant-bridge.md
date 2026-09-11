@@ -22,12 +22,23 @@ Open tasks are `daily` tasks not completed today plus `once` tasks that are not 
 | `week` | `once` with `today < due <= mondayOf(today) + 6` |
 | `later` | every remaining open task (undated, or due after this week) |
 
+Events are not tasks and are not in these buckets. They are expanded by three pure helpers next to `agendaOf`, which the 일정 tab, the briefing and the packet all read ([../product-specs/schedule.md](../product-specs/schedule.md)):
+
+| Helper | Returns |
+|---|---|
+| `occurrencesOf(ev, from, to)` | the dates `ev` falls on inside the window — no `repeat` is the single date, `daily` every day, `weekly` the weekday of `date`, `monthly` its day of month clamped to the month length; stops at `repeat.until`, drops `skip` dates, never iterates past `MAX_OCC` 400 |
+| `eventsOn(state, date)` | `{ ev, date, done }` for that date, `마감` first, then `약속` by time with untimed last, ties by title |
+| `upcomingEvents(state, from, days)` | the same rows flattened date-ascending over `from … from + days − 1` (`days` defaults to `EVENT_HORIZON_DAYS` 90) |
+
+Windows are named constants: `EVENT_SOON_DAYS` 3 (an imminent deadline), `EVENT_HORIZON_DAYS` 90 (how far repeats are expanded), `EVENT_PAST_DAYS` 30 (how long a missed deadline stays listed).
+
 ## `buildBriefing(state, today)`
-Returns `{ counts, sections }`. `counts` is `{ overdue, dueToday, dailyOpen, behind }` for the home card. Each section is `{ key, title, items }` and each item `{ kind, severity 3 | 2 | 1, text, action? }`, capped at five items.
+Returns `{ counts, sections }`. `counts` is `{ overdue, dueToday, dailyOpen, behind, events, dueSoon }` for the home card — `events` is today's occurrence count and `dueSoon` the `마감` occurrences inside `EVENT_SOON_DAYS`, today included. Each section is `{ key, title, items }` and each item `{ kind, severity 3 | 2 | 1, text, action? }`, capped at five items.
 
 | Section | Rule | Severity |
 |---|---|---|
 | `today` | overdue → `{title} — 기한 {due} 지남 ({D+n})`; due today → `{title} — 오늘 기한`; open daily → `{title} — 매일 · 미완료` | 3 / 3 / 1 |
+| `events` | today's schedule and the deadlines around it, in this order: today's `마감` → `{title} — 오늘 마감`; a `마감` already past → `{title} — 마감 {date} 지남 (D+{n})`; a `마감` inside `EVENT_SOON_DAYS` → `{title} — D-{n} 마감`; today's `약속` → `{title} — {HH:MM} 약속` or `{title} — 시간 미정 · 약속`; `해당 없음` when there is none. Ticked occurrences are left out — the tab keeps them so `완료 취소` stays reachable. Every line carries `action: { type: "schedule" }`, which `closeBriefing` routes to the 일정 tab | 3 / 3 / 2 / 2 / 1 |
 | `streak` | `lastActive === today` → recorded; `=== today − 1` → the streak breaks unless something is completed today; `=== today − 2` with a shield left → completing today spends one 보호권 (streak shield); otherwise the next completion resets the streak to 1. Mirrors what `completeTask` actually does | 1 / 3 / 3 / 2 |
 | `goals` | every active goal, nearest deadline first: `{title} — {D-day} · 진행 {n}% · {pace}`. Severity 3 when `paceOf.gap <= −5`, when the deadline is within 7 days and progress is below 100 %, or when it has passed; those cases append the unmet KRs via `krRemainText` (at most two) | 3 / 1 |
 | `metrics` | check-in absent or `lastCheckin` at least 7 days old; 영역 (areas) with no achievement in 30 days (role-model targets first, at most 3); goals whose activity kind has no completion in 7 days (at most 3) | 2 |
@@ -48,11 +59,12 @@ A text packet the user copies into an external chat. It opens with the role and 
 | `## 오늘 브리핑` | briefing lines of severity 2 and above | 12 |
 | `## 목표` | active goals: deadline, D-day, progress, pace, KR remainders | 5 goals × 4 KRs |
 | `## 열린 실행` | the agenda in order: goal, title, difficulty, cadence, due | 12 |
+| `## 다가오는 일정 (14일)` | `- {date} {HH:MM\|시간 미정} · {약속\|마감} · {title}{ · 반복 {매일\|매주\|매월}}`, date-ascending from `upcomingEvents(state, today, PACKET_EVENT_DAYS)`; the heading and the window read the same constant | 8 |
 | `## 최근 일지 (7일)` | journal entries clipped to 200 characters | 7 |
 | `## 최근 주간 리뷰` | the newest review | 1 |
 | `## 지표·연속` | metrics, last check-in, streak, shields, role-model proximity | 3 lines |
 
-The whole packet is capped at 4,000 characters; journal entries are dropped oldest-first until it fits. Photos are never included.
+The whole packet is capped at 4,000 characters; journal entries are dropped oldest-first until it fits — the schedule lines are built before that loop, so the cap behaves exactly as before. Photos are never included.
 
 `BridgeModal` always renders the packet in a read-only textarea, which doubles as the fallback when the clipboard is unavailable: `navigator.clipboard.writeText` first, then `select()` + `execCommand("copy")` inside the click gesture, which is what makes the copy work from `file://` where there is no secure context.
 
@@ -72,4 +84,4 @@ A proposal is refused, greyed out with a reason, when the title matches a certif
 Confirming calls `importTasks`, which prepends plain tasks built exactly like `addQuest` builds them and stores the raw reply on today's journal entry. A reply with no JSON block, or with an empty list, is stored as text only. Re-pasting on the same day overwrites the stored reply; the latest one wins.
 
 ## What the assistant never does
-It reads. It does not complete tasks, promote areas, submit evidence, or change metrics, payouts, D values, or grades. Tapping a briefing line routes into the normal path — `tryComplete` for a task, a tab switch, or an existing modal — so every gate still applies.
+It reads. It does not complete tasks, promote areas, submit evidence, or change metrics, payouts, D values, or grades. Tapping a briefing line routes into the normal path — `tryComplete` for a task, a tab switch, or an existing modal — so every gate still applies. It cannot touch the schedule either: `PACKET_HEAD` asks only for tasks and `parseAssistantReply` reads only `tasks`, so a pasted reply can never create, change or tick an event.

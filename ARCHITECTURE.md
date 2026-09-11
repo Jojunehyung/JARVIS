@@ -30,10 +30,11 @@ docs/                  product, design, engine, plans, generated tables
 | Exam engine | `EXAMS` (17 families), `EXAM_BY_ID`, `examOf`, `LANG_KO`, `DIM_STEPS`, `calcExamPayout`, `POINT_POLICY_VERSION` | `function calcExamPayout` |
 | Goal engine | `needsEvidence`, `METRICS_META`, `ddayStr`, `krProgress`, `krDoneCount`, `goalProgress`, `elapsedRatio`, `paceOf`, `krRemainText`, `roleGap`, `certGainOf`, `examBandGain` | `const paceOf =` |
 | Job-fit weighting | `DIR_CATS`, `JOB_FIELDS`, `areaCatHints`, `TIER_MULT`, `TIER_CLS`, `WEIGHT_MATRIX`, `CERT_W_EXC`, lookup indexes (`CERT_BY_NAME`, `CERTS_LONGEST_FIRST`, `CERT_NAME_LC`, `CERTS_BY_CAT`, `certOf`, `certByTitle`), `DIR_ALIAS`, `normDirs`, `jobWeightForCert` | `const WEIGHT_MATRIX = {` |
-| Daily assistant | `daysBetween`, `mondayOf`, `doneTodayCount`, `agendaOf` (briefing and bridge helpers land here in phases B and C) | `const agendaOf =` |
-| State lifecycle | `migrate` (v11 → v15 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
+| Daily assistant | `daysBetween`, `mondayOf`, `doneTodayCount`, `agendaOf`, the event helpers (`occurrencesOf`, `eventsOn`, `upcomingEvents` + `EVENT_*` constants), `buildBriefing`, `PACKET_HEAD`, `buildAssistantPacket`, `parseAssistantReply` | `const agendaOf =` |
+| State lifecycle | `migrate` (v11 → v16 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
 | Onboarding | `Onboarding` (6 steps: basics → appearance → areas & directions → qualifications/exams → experience → computed grades) | `function Onboarding` |
-| Tabs | `HomeTab`, `GoalsTab`, `TaskTab`, `GrowthTab` | `function GoalsTab` |
+| Tabs | `HomeTab`, `GoalsTab`, `TaskTab`, `GrowthTab` (the fifth tab, `ScheduleTab`, has its own region below) | `function GoalsTab` |
+| Schedule | `ScheduleTab` (day groups, occurrence rows) and `EventModal` — appointments and deadlines, never tasks | `function ScheduleTab` |
 | Modals | `AddGoalModal`, `MetricsModal`, `EvidenceViewModal`, `CatalogModal`, `RoleAdviceModal`, `AddTaskModal`, `EvidenceModal`, `ActivityLogModal`, `StudyVerifyModal`, `PromoteModal`, `RoleModelModal` | `function AddTaskModal` |
 | Feedback | `ToastHost` (ref API), `Overlay` (`gradeup` / `achieve`) | `const ToastHost =` |
 | App root | `LifeManager`: load → migrate → render; handlers `completeTask`, `tryComplete`, `promoteArea`, `addGoal`, `goalStatus`, `checkinKR`, `saveMetrics`, `setAreaDir`, `spawnTask`, `applyMeasures`, `removeTask`, `removeGoal`, `resetAll`; `Shell`, `NAV` | `export default function LifeManager` |
@@ -59,7 +60,7 @@ Schema and storage keys: [docs/generated/db-schema.md](docs/generated/db-schema.
 | `npm run docs:gen` / `docs:check` / `lang:check` | regenerate generated docs / doc integrity / language policy |
 | `node tools/harness/gen-icons.js` | re-render the app icons from `public/icon.svg` (after an icon change) |
 
-Current status (2026-09-08): schema **v14**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 67 steps green, real-device smoke still pending (backlog 2).
+Current status (2026-09-11): schema **v16**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 102 steps green, real-device smoke still pending (backlog 2).
 
 ## Platform notes
 - The app was originally an artifact that used `window.storage`; it was shimmed to `localStorage` on 2026-09-03 behind the same `store` interface — that interface is the seam if a different backend is ever needed.
@@ -81,3 +82,4 @@ Current status (2026-09-08): schema **v14**, difficulty table **V1.3** (`DIFF_RA
 | 직무 적합 (S/A/B/C) | job fit tier (`WEIGHT_MATRIX`, `TIER_MULT`) |
 | 증거 | evidence (`task.evidence`, `liferpg-img-ev-*`) |
 | 도감 | catalog (`CatalogModal`) |
+| 일정 (약속 · 마감) | schedule event — appointment / deadline (`events`, `ScheduleTab`, `EventModal`); a record, never a task |

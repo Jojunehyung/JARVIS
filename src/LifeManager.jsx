@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useId, forwardRef, useImperativeHandle } from "react";
 import {
   Trophy, Target, Plus, X, Lock, RotateCcw, TrendingUp, Check, Star,
-  Flag, ClipboardList, Camera, Paperclip, Link as LinkIcon,
+  Flag, ClipboardList, CalendarDays, Camera, Paperclip, Link as LinkIcon,
 } from "lucide-react";
 
 /* ───────────────────────── Constants: grade and verdict rules ───────────────────────── */
@@ -2095,6 +2095,64 @@ const agendaOf = (state, today) => {
   return { overdue, dueToday, daily, week, later, all: [...overdue, ...dueToday, ...daily, ...week, ...later] };
 };
 
+// Schedule records: appointments and deadlines the user keeps outside the goal ladder. An event is never a task —
+// it pays nothing, moves no metric and passes no evidence gate (rules 1, 8, 10), so nothing here touches the task path.
+const EVENT_KIND_LABEL = { appt: "약속", due: "마감" };
+const REPEAT_LABEL = { daily: "매일", weekly: "매주", monthly: "매월" };
+const EVENT_SOON_DAYS = 3;     // a deadline this close is named in the briefing and on the home card
+const EVENT_HORIZON_DAYS = 90; // how far ahead repeats are expanded for the tab and the packet
+const EVENT_PAST_DAYS = 30;    // how far back a missed deadline stays listed
+const MAX_OCC = 400;           // hard iteration stop, so a distant `until` or a wide window cannot spin
+
+// Dates on which `ev` falls inside [from, to]. Expanded at render, never written back (rule 9): state holds
+// the repeat rule plus the user's own skip dates, never an occurrence list.
+const occurrencesOf = (ev, from, to) => {
+  if (!ev?.date || !from || !to || to < from) return [];
+  const until = ev.repeat?.until;
+  const end = until && until < to ? until : to;
+  if (end < from || end < ev.date) return [];
+  const skip = new Set(ev.skip || []);
+  const freq = ev.repeat?.freq;
+  if (!freq) return ev.date >= from && !skip.has(ev.date) ? [ev.date] : [];
+  const first = from > ev.date ? from : ev.date;
+  const out = [];
+  if (freq === "monthly") {
+    const dom = Number(ev.date.slice(8, 10));
+    let y = Number(first.slice(0, 4));
+    let m = Number(first.slice(5, 7)) - 1;
+    for (let i = 0; i < MAX_OCC; i++, m++) {
+      if (m > 11) { m -= 12; y++; }
+      const d = dstr(new Date(y, m, Math.min(dom, new Date(y, m + 1, 0).getDate()), 12)); // day 31 clamps to 28/29/30
+      if (d > end) break;
+      if (d >= first && !skip.has(d)) out.push(d);
+    }
+    return out;
+  }
+  const step = freq === "weekly" ? 7 : 1; // weekly keeps the weekday of ev.date
+  const lag = daysBetween(ev.date, first);
+  for (let d = shiftDay(ev.date, Math.ceil(lag / step) * step), i = 0; d <= end && i < MAX_OCC; d = shiftDay(d, step), i++) {
+    if (!skip.has(d)) out.push(d);
+  }
+  return out;
+};
+
+// What happens on one date: deadlines first, then appointments by time with untimed last, ties by title.
+const eventsOn = (state, date) => {
+  const rank = (o) => `${o.ev.kind === "due" ? 0 : 1}|${o.ev.time || "99:99"}|${o.ev.title || ""}`;
+  return (state.events || [])
+    .filter((ev) => occurrencesOf(ev, date, date).length)
+    .map((ev) => ({ ev, date, done: (ev.doneDates || []).includes(date) }))
+    .sort((a, b) => rank(a).localeCompare(rank(b)));
+};
+
+// The same rows for the `days`-day window starting at `from` (`from` included), date-ascending —
+// the schedule list and the assistant packet read the same expansion.
+const upcomingEvents = (state, from, days = EVENT_HORIZON_DAYS) => {
+  const out = [];
+  for (let i = 0; i < days; i++) out.push(...eventsOn(state, shiftDay(from, i)));
+  return out;
+};
+
 const lastDoneDate = (q) => (q.type === "daily" ? (q.doneDates || []).slice(-1)[0] || null : q.doneAt || null);
 const KIND_LABEL = { book: "📚 독서", fit: "💪 운동", meet: "🤝 미팅" };
 const CHECKIN_STALE_DAYS = 7;
@@ -2117,6 +2175,20 @@ const buildBriefing = (state, today) => {
     ...ag.daily.map((q) => ({ kind: "task", severity: 1, text: `${q.title} — 매일 · 미완료`, action: { type: "task", id: q.id } })),
   ];
   add("today", "오늘 할 일", todayItems.length ? todayItems : [{ kind: "none", severity: 1, text: "해당 없음" }]);
+
+  /* Today's schedule — records, never tasks: a line here completes nothing, pays nothing and moves no metric
+     (rules 1, 8, 10). A ticked occurrence is left out; the schedule tab keeps it so `완료 취소` stays reachable. */
+  const todayOcc = eventsOn(state, today);
+  const pastDue = upcomingEvents(state, shiftDay(today, -EVENT_PAST_DAYS), EVENT_PAST_DAYS).filter((o) => o.ev.kind === "due" && !o.done);
+  const soonDue = upcomingEvents(state, today, EVENT_SOON_DAYS).filter((o) => o.ev.kind === "due");
+  const eventItems = [
+    ...todayOcc.filter((o) => o.ev.kind === "due" && !o.done).map((o) => ({ kind: "event", severity: 3, text: `${o.ev.title} — 오늘 마감` })),
+    ...pastDue.map((o) => ({ kind: "event", severity: 3, text: `${o.ev.title} — 마감 ${o.date} 지남 (${ddayStr(o.date)})` })),
+    ...soonDue.filter((o) => o.date > today && !o.done).map((o) => ({ kind: "event", severity: 2, text: `${o.ev.title} — ${ddayStr(o.date)} 마감` })),
+    ...todayOcc.filter((o) => o.ev.kind === "appt" && !o.done).map((o) => ({ kind: "event", severity: 2, text: `${o.ev.title} — ${o.ev.time ? `${o.ev.time} 약속` : "시간 미정 · 약속"}` })),
+  ];
+  add("events", "오늘 일정", (eventItems.length ? eventItems : [{ kind: "none", severity: 1, text: "해당 없음" }])
+    .map((it) => ({ ...it, action: { type: "schedule" } })));
 
   /* Streak — mirrors the rule completeTask applies */
   const streakItem = act.lastActive === today
@@ -2215,6 +2287,7 @@ const buildBriefing = (state, today) => {
     counts: {
       overdue: ag.overdue.length, dueToday: ag.dueToday.length, dailyOpen: ag.daily.length,
       behind: goalItems.filter((g) => g.severity === 3).length,
+      events: todayOcc.length, dueSoon: soonDue.length, // today's occurrences, and the deadlines inside EVENT_SOON_DAYS (today included)
     },
     sections,
   };
@@ -2223,6 +2296,7 @@ const buildBriefing = (state, today) => {
 /* ── Assistant bridge — the app writes a text packet, the user talks to an external chat, the reply comes back as text.
    No key, no network (rule 7 amendment). A reply can only propose plain tasks; it never completes, promotes or scores. ── */
 const PACKET_MAX = 4000;
+const PACKET_EVENT_DAYS = 14; // the schedule window the packet states — its heading and its rows read the same constant
 const PACKET_HEAD = [
   "역할: 이 사용자의 목표·실행·기록을 점검하는 비서예요. 아래 데이터만 근거로 답해요.",
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
@@ -2252,6 +2326,10 @@ const buildAssistantPacket = (state, today) => {
     const g = state.goals?.find((x) => x.id === q.goalId);
     return `- [${g?.title || "목표 없음"}] ${q.title} · ${q.diff} · ${q.type === "daily" ? "매일" : "1회"} · 기한 ${q.due || "없음"}`;
   });
+  // Schedule facts only: `parseAssistantReply` reads `tasks` and nothing else, so a pasted reply can never
+  // create, complete or change an event (rule 7 amendment).
+  const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).slice(0, 8).map(({ ev, date }) =>
+    `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
   const journal = [...(state.journal || [])].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
   const journalLines = journal.map((e) => `- ${e.date}: ${e.text.slice(0, 200)}${e.ai ? " (AI 답변 있음)" : ""}`);
   const review = [...(state.reviews || [])].sort((a, b) => b.weekOf.localeCompare(a.weekOf))[0];
@@ -2265,6 +2343,7 @@ const buildAssistantPacket = (state, today) => {
   const build = (jl) => [
     `[인생 관리 — 오늘 점검 요청 ${today}]`, ...PACKET_HEAD, "",
     ...sec("오늘 브리핑", briefLines), ...sec("목표", goalLines), ...sec("열린 실행", taskLines),
+    ...sec(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines),
     ...sec("최근 일지 (7일)", jl), ...sec("최근 주간 리뷰", reviewLines), ...sec("지표·연속", stateLines),
   ].join("\n");
 
@@ -2303,10 +2382,10 @@ const parseAssistantReply = (text, state) => {
 
 /* ── State lifecycle ── */
 /**
- * @schema v15 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v16 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 15,
+ *   v: 16,
  *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
  *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -2318,6 +2397,9 @@ const parseAssistantReply = (text, state) => {
  *                 | { id, type:"count",  title, need }
  *                 | { id, type:"exam",   title, famId, band{label,d,p,conf} }
  *                 | { id, type:"cert",   title, certName, done? }] }],
+ *   events: [{ id, title, kind("appt"|"due"), date("YYYY-MM-DD"), time?("HH:MM"), note?, place?,   // schedule records: appointments and deadlines —
+ *              repeat?{ freq("daily"|"weekly"|"monthly"), until? },                                // never tasks, never paid, never a metric source
+ *              skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt }],                        // occurrences are expanded at render, not stored
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -2330,7 +2412,8 @@ const parseAssistantReply = (text, state) => {
  *   lastTick, dModel
  * }
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
- * agenda buckets (`agendaOf`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
+ * agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
+ * the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -2380,6 +2463,10 @@ const migrate = (s) => {
       act: { ...(s.act || {}), lastCheckin: s.act?.lastCheckin ?? null, briefingSeen: s.act?.briefingSeen ?? null, lastReview: s.act?.lastReview ?? null },
     };
   }
+  if (s.v < 16) {
+    // v16: schedule — events[] records real-life appointments and deadlines. Not tasks: no payout, no metric, no evidence gate; repeat occurrences stay derived, only the rule and the user's stamps are stored.
+    s = { ...s, v: 16, events: s.events || [] };
+  }
   return s;
 };
 
@@ -2391,11 +2478,12 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 15,
+  v: 16,
   profile: null,
   areas,
   tasks: [],
   goals: [],
+  events: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
@@ -2448,6 +2536,11 @@ const demoState = () => {
     { id: uid(), title: "영어 스터디 참석", areaId: p3.id, goalId: gEng.id, diff: "D", type: "daily", status: "todo", doneDates: [shiftDay(today, -5), shiftDay(today, -3), shiftDay(today, -1)], createdAt: shiftDay(today, -7) },
     { id: uid(), title: "TOEIC L&R 800 달성", areaId: p3.id, goalId: gEng.id, diff: "B", pts: 720, type: "once", status: "todo", doneDates: [], createdAt: shiftDay(today, -7), isExam: true, famId: "toeic", band: { label: "800", d: 60, p: 720, conf: "B" } },
     { id: uid(), title: "아침 운동 30분", areaId: p4.id, goalId: gFit.id, kind: "fit", diff: "E", type: "daily", status: "todo", doneDates: [shiftDay(today, -1)], createdAt: shiftDay(today, -10) },
+  ];
+  s.events = [
+    { id: uid(), title: "부품사 1차 면접", kind: "appt", date: shiftDay(today, 3), time: "14:00", place: "판교 본사", note: "도면 출력본 지참", createdAt: shiftDay(today, -2) },
+    { id: uid(), title: "전기기사 실기 원서 접수 마감", kind: "due", date: shiftDay(today, 9), note: "접수 후 수험표 확인", createdAt: shiftDay(today, -3) },
+    { id: uid(), title: "영어 스터디 모임", kind: "appt", date: shiftDay(today, 1), time: "20:00", place: "온라인", repeat: { freq: "weekly" }, createdAt: shiftDay(today, -7) },
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -2894,7 +2987,7 @@ function Onboarding({ onStart, onDemo }) {
 }
 
 /* ───────────────────────── Home — today's focus ───────────────────────── */
-function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onBriefing, onJournal, onReview }) {
+function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onGoSchedule, onBriefing, onJournal, onReview }) {
   const a = state.act;
   const brief = buildBriefing(state, today);
   const firstAlert = brief.sections.flatMap((s) => s.items).find((it) => it.severity === 3);
@@ -2932,6 +3025,10 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
         <div className="text-xs font-mono text-zinc-400 mt-1.5">
           기한 지남 {brief.counts.overdue} · 오늘 기한 {brief.counts.dueToday} · 매일 남음 {brief.counts.dailyOpen} · 뒤처짐 {brief.counts.behind}
         </div>
+        {/* Today's date facts belong beside the other today numbers, so the schedule gets a line here, not a sixth card */}
+        <button onClick={onGoSchedule} className="block text-left text-xs font-mono text-zinc-400 mt-1 active:opacity-70">
+          오늘 일정 {brief.counts.events}건 · {EVENT_SOON_DAYS}일 내 마감 {brief.counts.dueSoon}건 ›
+        </button>
         {firstAlert && <div className="text-xs text-rose-400 mt-1 truncate">{firstAlert.text}</div>}
         <div className="flex gap-1.5 mt-2.5">
           <button onClick={onBriefing} className="flex-1 py-2 rounded-xl bg-amber-400 text-zinc-950 font-black text-xs">브리핑 열기 ›</button>
@@ -4579,6 +4676,188 @@ function RoleModelModal({ state, onClose, onSave }) {
   );
 }
 
+/* ───────────────────────── Schedule tab — appointments and deadlines ───────────────────────── */
+/* An event is a record of real life, never a task: nothing here completes, pays, or moves a metric.
+   Occurrences are expanded at render and never stored (rule 9); a missed deadline stays listed with
+   its D+n instead of disappearing (rule 13). */
+function ScheduleTab({ state, today, onAdd, onEdit, onToggleDone, onSkip }) {
+  const tomorrow = shiftDay(today, 1);
+  const weekEnd = shiftDay(mondayOf(today), 6);
+  const { groups, counts } = useMemo(() => {
+    // Past window: deadlines only — an appointment that already happened is not actionable, a missed deadline is.
+    const past = upcomingEvents(state, shiftDay(today, -EVENT_PAST_DAYS), EVENT_PAST_DAYS).filter((o) => o.ev.kind === "due");
+    const ahead = upcomingEvents(state, today, EVENT_HORIZON_DAYS);
+    const onToday = ahead.filter((o) => o.date === today);
+    // `이후` collapses each event to its earliest occurrence in the window — one row per event. Listing every
+    // occurrence buries the single dated deadline: one weekly repeat fills 12 rows over the 90-day horizon and a
+    // daily one 90. The row keeps its `반복 매주` marker, so the repeat is stated, not hidden. The near groups
+    // (`지난 마감` · `오늘` · `내일` · `이번 주`) stay one row per occurrence — those are the ones acted on one by one.
+    const later = [];
+    const seen = new Set();
+    for (const o of ahead) { // `ahead` is date-ascending, so the first hit is the earliest and the group stays sorted
+      if (o.date <= tomorrow || o.date <= weekEnd || seen.has(o.ev.id)) continue;
+      seen.add(o.ev.id);
+      later.push(o);
+    }
+    return {
+      groups: [
+        ["지난 마감", past, "text-rose-400"],
+        ["오늘", onToday, "text-amber-300"],
+        ["내일", ahead.filter((o) => o.date === tomorrow), "text-zinc-400"],
+        ["이번 주", ahead.filter((o) => o.date > tomorrow && o.date <= weekEnd), "text-zinc-400"],
+        ["이후", later, "text-zinc-500"],
+      ],
+      // The week count runs from today to Sunday, so it covers today and tomorrow too: it answers how much is
+      // left this week, not how many rows sit in the group of the same name.
+      counts: { today: onToday.length, week: ahead.filter((o) => o.date <= weekEnd).length, past: past.length },
+    };
+  }, [state, today, tomorrow, weekEnd]);
+  const shown = groups.reduce((n, [, list]) => n + list.length, 0);
+
+  const row = ({ ev, date, done }) => {
+    const due = ev.kind === "due";
+    const lead = due ? ddayStr(date) : ev.time || "시간 미정";
+    const leadTone = !due ? "text-zinc-300 border-zinc-700"
+      : date < today ? "text-rose-400 border-rose-800"
+      : date === today ? "text-amber-300 border-amber-700"
+      : "text-zinc-400 border-zinc-700";
+    return (
+      <div key={`${ev.id}-${date}`} className={`bg-zinc-950 rounded-xl px-3 py-2.5 ${done ? "opacity-50" : ""}`}>
+        <div className="flex items-center gap-2.5">
+          <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${leadTone}`}>{lead}</span>
+          <div className="flex-1 min-w-0">
+            <div className={`text-sm font-semibold truncate ${done ? "line-through" : ""}`}>{ev.title}</div>
+            <div className="text-xs text-zinc-500 truncate">
+              <span className="font-mono">{date}</span>{ev.place ? ` · ${ev.place}` : ""}{ev.note ? ` · ${ev.note}` : ""}
+              {ev.repeat && <span className="text-zinc-400"> · 반복 {REPEAT_LABEL[ev.repeat.freq]}</span>}
+            </div>
+          </div>
+          <span className={`text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${due ? "text-amber-300 border-amber-700" : "text-zinc-300 border-zinc-700"}`}>
+            {EVENT_KIND_LABEL[ev.kind]}
+          </span>
+        </div>
+        <div className="flex gap-1.5 mt-2">
+          <button onClick={() => onToggleDone(ev.id, date)}
+            className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold active:translate-y-0.5 ${done ? "border-emerald-700 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}>
+            {done ? "완료 취소" : "완료 표시"}
+          </button>
+          {ev.repeat && (
+            <button onClick={() => onSkip(ev.id, date)}
+              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">이번 회차 취소</button>
+          )}
+          <button onClick={() => onEdit(ev)}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">수정</button>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-2">
+          <SectionLabel tone="text-cyan-400">다가오는 일정</SectionLabel>
+          <button onClick={onAdd}
+            className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
+            <Plus size={14} /> 일정 추가
+          </button>
+        </div>
+        {/* Full width, not beside the button: at 390 px the counts line wraps mid-word when it shares the row */}
+        <p className="text-xs font-mono text-zinc-400">
+          오늘 {counts.today}건 · 이번 주 {counts.week}건 · 지난 마감 {counts.past}건
+        </p>
+      </section>
+
+      {shown === 0 && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+          <p className="text-sm text-zinc-500">등록한 일정이 없어요 — 표시할 약속·마감이 없어요.</p>
+        </section>
+      )}
+
+      {groups.map(([label, list, tone]) => list.length > 0 && (
+        <section key={label} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+          <SectionLabel tone={tone}>{label}</SectionLabel>
+          <div className="space-y-1.5">{list.map(row)}</div>
+        </section>
+      ))}
+    </>
+  );
+}
+
+/* ── Event modal — one form for add and edit. No goal, no difficulty, no evidence: an event is only a record ── */
+function EventModal({ event, onClose, onAdd, onUpdate, onRemove }) {
+  const [title, setTitle] = useState(event?.title || "");
+  const [kind, setKind] = useState(event?.kind || "appt");
+  const [date, setDate] = useState(event?.date || "");
+  const [time, setTime] = useState(event?.time || "");
+  const [freq, setFreq] = useState(event?.repeat?.freq || "");
+  const [until, setUntil] = useState(event?.repeat?.until || "");
+  const [place, setPlace] = useState(event?.place || "");
+  const [note, setNote] = useState(event?.note || "");
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    if (!title.trim()) { setErr("일정 이름을 입력해 주세요."); return; }
+    if (!date) { setErr("날짜를 선택해 주세요."); return; }
+    if (freq && until && until <= date) { setErr("반복 종료일은 날짜 이후여야 해요."); return; }
+    const next = {
+      title: title.trim(), kind, date,
+      ...(time ? { time } : {}),
+      ...(place.trim() ? { place: place.trim() } : {}),
+      ...(note.trim() ? { note: note.trim() } : {}),
+      ...(freq ? { repeat: { freq, ...(until ? { until } : {}) } } : {}),
+    };
+    if (event) onUpdate(event.id, next); else onAdd(next);
+  };
+
+  return (
+    <Modal title={event ? "일정 수정" : "새 일정"} onClose={onClose}>
+      <div className="space-y-3">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="일정 이름 — 예: 1차 면접"
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        <div className="flex gap-1.5">
+          {["appt", "due"].map((k) => (
+            <Chip key={k} on={kind === k} onClick={() => { setKind(k); setErr(""); }}>{EVENT_KIND_LABEL[k]}</Chip>
+          ))}
+        </div>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <span className="w-24 shrink-0">시간 (선택)</span>
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
+            className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm font-mono" />
+        </label>
+        <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+          <div className="flex flex-wrap gap-1.5">
+            {[["", "반복 없음"], ["daily", REPEAT_LABEL.daily], ["weekly", REPEAT_LABEL.weekly], ["monthly", REPEAT_LABEL.monthly]].map(([f, label]) => (
+              <Chip key={label} on={freq === f} onClick={() => { setFreq(f); setErr(""); }}>{label}</Chip>
+            ))}
+          </div>
+          {freq && (
+            <label className="flex items-center gap-2 text-xs text-zinc-500 mt-2.5">
+              <span className="w-24 shrink-0">반복 종료 (선택)</span>
+              <input type="date" value={until} onChange={(e) => setUntil(e.target.value)}
+                className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm font-mono" />
+            </label>
+          )}
+        </div>
+        <input value={place} onChange={(e) => setPlace(e.target.value)} placeholder="장소 (선택)"
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="메모 (선택)"
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          {event ? "저장" : "등록"}
+        </button>
+        {event && (
+          <button onClick={() => onRemove(event.id)}
+            className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs">삭제</button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 /* ───────────────────────── Overlay effects ───────────────────────── */
 
 function Overlay({ data, onClose }) {
@@ -4937,6 +5216,61 @@ export default function LifeManager() {
     });
   };
 
+  /* Schedule — appointments and deadlines. An event is a record, never a task: no points, no trophy,
+     no metric, no evidence gate, no goalId. Ticking writes to doneDates, cancelling writes to skip. */
+  const addEvent = (ev) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.events = [{ id: uid(), createdAt: today, ...ev }, ...(s.events || [])];
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "일정을 등록했어요" });
+  };
+  const updateEvent = (id, next) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const i = (s.events || []).findIndex((x) => x.id === id);
+      if (i < 0) return prev;
+      // The form replaces the record: a place, note or repeat cleared in the modal has to disappear from the save; the user's own stamps stay.
+      const e = s.events[i];
+      s.events[i] = { id: e.id, createdAt: e.createdAt, ...(e.skip ? { skip: e.skip } : {}), ...(e.doneDates ? { doneDates: e.doneDates } : {}), ...next };
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "일정을 수정했어요" });
+  };
+  const removeEvent = (id) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.events = (s.events || []).filter((e) => e.id !== id);
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "일정을 삭제했어요" });
+  };
+  const toggleEventDone = (id, date) => {
+    const wasDone = ((state.events || []).find((e) => e.id === id)?.doneDates || []).includes(date);
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const e = (s.events || []).find((x) => x.id === id);
+      if (!e) return prev;
+      e.doneDates = wasDone ? (e.doneDates || []).filter((d) => d !== date) : [...(e.doneDates || []), date].sort();
+      return s;
+    });
+    if (!wasDone) showToast({ msg: "일정을 완료로 표시했어요" });
+  };
+  const skipOccurrence = (id, date) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const e = (s.events || []).find((x) => x.id === id);
+      if (!e || (e.skip || []).includes(date)) return prev;
+      e.skip = [...(e.skip || []), date].sort();
+      return s;
+    });
+    showToast({ msg: "이번 회차를 취소했어요" });
+  };
+
   const saveMetrics = (v) => {
     setState((prev) => ({
       ...prev,
@@ -4954,7 +5288,7 @@ export default function LifeManager() {
     setModal(null);
     if (!next) return;
     if (next.type === "task") { const q = state.tasks.find((x) => x.id === next.id); if (q) tryComplete(q); return; }
-    if (next.type === "goals" || next.type === "growth") { setTab(next.type); return; }
+    if (next.type === "goals" || next.type === "growth" || next.type === "schedule") { setTab(next.type); return; }
     setModal(next.type === "bridge" ? { type: "bridge", mode: next.mode } : { type: next.type });
   };
   // Stores the pasted reply on today's journal entry. Text only — it never changes a score (rule 7 amendment).
@@ -5086,6 +5420,7 @@ export default function LifeManager() {
     ["goals", "목표", Target],
     ["tasks", "실행", ClipboardList],
     ["growth", "성장", TrendingUp],
+    ["schedule", "일정", CalendarDays],
   ];
 
   return (
@@ -5109,6 +5444,7 @@ export default function LifeManager() {
         {tab === "home" && (
           <HomeTab state={state} today={today} imgs={imgs} onUpload={askUpload} onClearImg={clearImg}
             onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("tasks")}
+            onGoSchedule={() => setTab("schedule")}
             onBriefing={() => setModal({ type: "briefing" })} onJournal={() => setModal({ type: "journal" })}
             onReview={() => setModal({ type: "review" })} />
         )}
@@ -5135,9 +5471,15 @@ export default function LifeManager() {
             onExport={exportBackup} onImport={askImport}
             onMetrics={() => setModal({ type: "metrics" })} />
         )}
+        {tab === "schedule" && (
+          <ScheduleTab state={state} today={today}
+            onAdd={() => setModal({ type: "event" })}
+            onEdit={(ev) => setModal({ type: "event", event: ev })}
+            onToggleDone={toggleEventDone} onSkip={skipOccurrence} />
+        )}
       </main>
 
-      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-4 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
+      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-5 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
         {NAV.map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
@@ -5184,6 +5526,10 @@ export default function LifeManager() {
       {modal?.type === "roleAdvice" && (
         <RoleAdviceModal state={state} onClose={() => setModal(null)}
           onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir} />
+      )}
+      {modal?.type === "event" && (
+        <EventModal event={modal.event} onClose={() => setModal(null)}
+          onAdd={addEvent} onUpdate={updateEvent} onRemove={removeEvent} />
       )}
       {modal?.type === "metrics" && (
         <MetricsModal metrics={state.metrics} onClose={() => setModal(null)} onSave={saveMetrics} />
