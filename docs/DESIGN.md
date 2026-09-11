@@ -19,8 +19,8 @@ Accent colours are bound to roles — do not swap them:
 | amber-400/300 | achievement, streak, grade A, onboarding CTA, daily-task registration, ACHIEVEMENT overlay |
 | violet-500/400 | study, life metric "influence", grade B |
 | emerald-500/400 | done, achieved, grade D, job-fit S |
-| sky-400/300 | exams, grade C |
-| rose-400 | error, pace behind, job-fit C (= pays 0) |
+| sky-400/300 | exams, grade C, Saturday in the month grid |
+| rose-400 | error, pace behind, job-fit C (= pays 0), deadline marker, public holiday and Sunday in the month grid |
 
 Grade letters: A amber · B violet · C sky · D emerald · E zinc (`GRADE_TEXT`, `GRADE_BORDER`, `DiffBadge`, `CertBadge`; trophy tier colours `TIER_COLORS`: E `#a1a1aa` D `#34d399` C `#38bdf8` B `#a78bfa` A `#fbbf24`). Job-fit tiers `TIER_CLS`: S emerald-400 · A cyan-300 · B zinc-500 · C rose-400. Pace: behind rose-400 · ahead emerald-400 · on track zinc-400 · no deadline zinc-500. Metric bars: asset amber-400 · influence violet-400 · appearance emerald-400; area grade bar cyan-400; goal bar cyan-400 (achieved emerald-400); KR bar zinc-400.
 
@@ -37,6 +37,7 @@ Badges: dark background + light text (-300) + strong border (-600/700), `w-7 h-7
 | Life-metric bars | asset `amber-400` · influence `violet-400` · appearance `emerald-400` |
 | Pace text | behind `rose-400` · ahead `emerald-400` · on track `zinc-400` · no deadline `zinc-500` |
 | Job-fit tier (`TIER_CLS`) | S `emerald-400` · A `cyan-300` · B `zinc-500` · C `rose-400` |
+| Month-grid day number | one tone, first match wins: today `amber-300 font-bold` · public holiday or Sunday `rose-400` · Saturday `sky-400` · other `zinc-300` |
 | Modal | `max-w-md bg-zinc-900`, `anim-pop`, `z-40`; backdrop `fixed inset-0 bg-black/70` closes on click, the card stops propagation, header X closes, `max-h-full overflow-y-auto`; bottom sheet on mobile, centred from `sm` |
 | Overlay | `z-50` over `bg-black/75`, `anim-bigpop` card, auto-closes after 2,400 ms |
 

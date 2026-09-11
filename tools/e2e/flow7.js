@@ -212,16 +212,22 @@ module.exports = async (h) => {
   const gridCells = () => page.evaluate(() => {
     const grid = [...document.querySelectorAll(".grid.grid-cols-7")].find((g) => g.querySelector("button"));
     if (!grid) return [];
-    return [...grid.querySelectorAll("button")].map((b) => {
+    // `dow` is the column, so it is counted over every cell — the inert padding ones included — and only
+    // then filtered down to the day buttons, which keeps the contract of one entry per day of the month.
+    return [...grid.children].map((el, i) => ({ el, dow: i % 7 })).filter((c) => c.el.tagName === "BUTTON").map(({ el: b, dow }) => {
       const num = b.querySelector("span");
+      const cls = num?.className || "";
       const dots = [...b.querySelectorAll("span.rounded-full")];
       const more = [...b.querySelectorAll("span")].find((s) => /^\+\d+$/.test((s.textContent || "").trim()));
       return {
         day: Number((num?.textContent || "").trim()),
+        dow,
+        // Exactly one tone on the day number, read back in the app's own order of precedence.
+        tone: /text-amber-300/.test(cls) ? "amber" : /text-rose-400/.test(cls) ? "rose" : /text-sky-400/.test(cls) ? "sky" : "zinc",
         dots: dots.map((d) => (/bg-rose-400/.test(d.className) ? "due" : "appt")),
         plus: more ? Number(more.textContent.trim().slice(1)) : 0,
         selected: /border-cyan-500/.test(b.className),   // the selection and today are separate marks
-        today: /text-amber-300/.test(num?.className || ""),
+        today: /text-amber-300/.test(cls),
       };
     });
   });
@@ -238,6 +244,20 @@ module.exports = async (h) => {
   const panelLine = () => page.evaluate(() => {
     const el = [...document.querySelectorAll("p")].find((p) => /^\d{4}-\d{2}-\d{2} · \d+건$/.test((p.textContent || "").trim()));
     return el ? el.textContent.trim() : "";
+  });
+  // The panel's holiday line, present only when the table covers the selected day.
+  const holidayLine = () => page.evaluate(() => {
+    const el = [...document.querySelectorAll("p")].find((p) => (p.textContent || "").trim().startsWith("공휴일 · "));
+    return el ? el.textContent.trim() : "";
+  });
+  // The note under the grid, rendered only in a month the table does not cover.
+  const coverageNote = () => page.evaluate(() => {
+    const el = [...document.querySelectorAll("p")].find((p) => /^공휴일은 \d{4}~\d{4}년만 표시해요\.$/.test((p.textContent || "").trim()));
+    return el ? el.textContent.trim() : "";
+  });
+  const nextMonthDisabled = () => page.evaluate(() => {
+    const b = [...document.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "›");
+    return b ? b.disabled : true;
   });
   const monthLabelIn = (delta) => page.evaluate((d) => {
     const t = new Date(); t.setHours(12, 0, 0, 0); t.setDate(1); t.setMonth(t.getMonth() + d);
@@ -401,6 +421,68 @@ module.exports = async (h) => {
     if (!cur?.selected) throw new Error("the today button did not reselect today");
     const line = await panelLine();
     if (!line.startsWith(await dstrIn(0))) throw new Error("the panel did not return to today: " + line);
+  });
+
+  await step("weekends and holidays tone the day numbers of the current month", async () => {
+    const cells = await gridCells();
+    const sun = cells.filter((c) => c.dow === 0 && !c.today);
+    const sat = cells.filter((c) => c.dow === 6 && !c.today);
+    if (sun.length < 4 || sat.length < 4) throw new Error(`weekend cells read off the grid: ${sun.length} Sundays, ${sat.length} Saturdays`);
+    const paleSun = sun.filter((c) => c.tone !== "rose");
+    if (paleSun.length) throw new Error("Sundays that are not rose: " + JSON.stringify(paleSun));
+    // A Saturday is sky unless it is also a holiday, which outranks it — and then the panel has to name it.
+    const oddSat = sat.filter((c) => c.tone !== "sky" && c.tone !== "rose");
+    if (oddSat.length) throw new Error("Saturdays in neither tone: " + JSON.stringify(oddSat));
+    if (!sat.some((c) => c.tone === "sky")) throw new Error("no Saturday kept the sky tone: " + JSON.stringify(sat));
+    for (const c of sat.filter((x) => x.tone === "rose")) {
+      await pickDay(c.day);
+      if (!(await holidayLine())) throw new Error(`Saturday ${c.day} is rose but the panel names no holiday`);
+    }
+    const skyWeekday = cells.filter((c) => c.dow > 0 && c.dow < 6 && c.tone === "sky");
+    if (skyWeekday.length) throw new Error("the Saturday tone leaked onto a weekday: " + JSON.stringify(skyWeekday));
+    if (!cells.some((c) => c.dow > 0 && c.dow < 6 && c.tone === "zinc")) throw new Error("no weekday kept the plain tone");
+    const cur = cells.find((c) => c.today);
+    if (cur?.tone !== "amber") throw new Error("today must stay one unambiguous tone: " + JSON.stringify(cur));
+  });
+
+  await step("a holiday names itself on the selected day's panel", async () => {
+    await clickExact("오늘");
+    let found = null;
+    for (let i = 0; i <= 12 && !found; i++) {
+      // Never a Sunday: a Sunday is rose whether or not it is a holiday, so it proves nothing about the table.
+      found = (await gridCells()).find((c) => c.tone === "rose" && c.dow !== 0 && !c.today) || null;
+      if (!found && i < 12) await clickExact("›");
+    }
+    if (!found) throw new Error("the holiday table must cover at least one holiday within 12 months of today");
+    await pickDay(found.day);
+    const line = await holidayLine();
+    if (!/^공휴일 · .+$/.test(line)) throw new Error("the holiday panel line: " + JSON.stringify(line));
+    // The line is added under the panel's own date line, never appended to it.
+    const mono = await panelLine();
+    if (!mono) throw new Error("the holiday line displaced the panel's date line");
+    if (Number(mono.slice(8, 10)) !== found.day) throw new Error(`the panel line ${mono} does not belong to the holiday cell ${found.day}`);
+  });
+
+  await step("a month outside the table marks no holiday and says which years it covers", async () => {
+    await clickExact("오늘");
+    let note = "";
+    for (let i = 0; i < 24 && !note; i++) {
+      if (await nextMonthDisabled()) break;
+      await clickExact("›");
+      note = await coverageNote();
+    }
+    if (!note) throw new Error("the holiday table must not reach beyond today + 24 months, or this step needs a new target month");
+    if (!/^공휴일은 \d{4}~\d{4}년만 표시해요\.$/.test(note)) throw new Error("the coverage note: " + JSON.stringify(note));
+    const cells = await gridCells();
+    const marked = cells.filter((c) => c.tone === "rose" && c.dow !== 0);
+    if (marked.length) throw new Error("an uncovered month still marks a holiday: " + JSON.stringify(marked));
+    // Weekend colour comes from the date, not from the table, so it must survive out here.
+    const paleSun = cells.filter((c) => c.dow === 0 && c.tone !== "rose");
+    if (paleSun.length) throw new Error("Sundays lost their tone outside the table: " + JSON.stringify(paleSun));
+    const paleSat = cells.filter((c) => c.dow === 6 && c.tone !== "sky");
+    if (paleSat.length) throw new Error("Saturdays lost their tone outside the table: " + JSON.stringify(paleSat));
+    await clickExact("오늘");
+    if (await coverageNote()) throw new Error("the current month shows the coverage note — extend the holiday table past this year");
   });
 
   await step("the list view comes back with its groups and counts", async () => {

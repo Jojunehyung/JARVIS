@@ -26,7 +26,7 @@ Reliability for a local-only app means: the user's state survives every version,
 | `cov_map.js` | maps V8 coverage back to `src/LifeManager.jsx` lines (needs `vite build --sourcemap`) |
 | `perf.js`, `prof.js`, `ab.js`, `ab_onboard.js`, `rows.js` | performance probes (see below) |
 
-Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers read from the grid rather than from body text), not just clicks; 111 steps as of 2026-09-11.
+Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers and day-number tones read from the grid rather than from body text), not just clicks; 114 steps as of 2026-09-11.
 
 ## Performance measurement rule
 Single-run timings on this machine swing by ±50 % with background load. Compare builds only with `tools/e2e/ab.js` (two builds, one browser, interleaved rounds, medians). Structural counts (mounted rows, DOM nodes via `rows.js`) are reliable; wall-clock deltas under ±10 % are noise.

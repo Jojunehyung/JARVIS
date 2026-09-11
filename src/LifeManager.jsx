@@ -4690,6 +4690,67 @@ function RoleModelModal({ state, onClose, onSave }) {
 const CAL_RANGE_MONTHS = 24; // how far the month grid may be paged either side of today, so `‹` cannot walk into years of empty grids
 const WEEKDAY_LABEL = ["일", "월", "화", "수", "목", "금", "토"]; // Sunday first, matching Date#getDay()
 
+/* South Korean public holidays, display only — the grid tints the day number and the selected-day panel names
+   the date. A holiday is never an event: it is not stored, counted, briefed, paid, or listed in the list view.
+   None of it is computable. Lunar new year and the harvest festival follow the lunar calendar, substitute
+   holidays are granted per year, and election days are set by their own law, so every row below is copied from
+   the government announcement of record — the Gwanbo gazette notices issued under the Presidential Decree on
+   the holidays of government offices — and cross-checked against the KASI almanac published the preceding year.
+   The Decree amended on 2026-04-30 added Labour Day and restored Constitution Day, both substitute-eligible.
+   Add a year only from a cited announcement. Never interpolate a lunar date, never infer a substitute day, and
+   never add a temporary holiday that has not been designated: a day painted red is a day the user will not
+   schedule. Coverage is derived below, so a month outside it marks nothing and says so under the grid. */
+const HOLIDAYS = {
+  "2026-01-01": "신정",
+  "2026-02-16": "설날 연휴",
+  "2026-02-17": "설날",
+  "2026-02-18": "설날 연휴",
+  "2026-03-01": "삼일절",
+  "2026-03-02": "대체공휴일",
+  "2026-05-01": "노동절",
+  "2026-05-05": "어린이날",
+  "2026-05-24": "부처님오신날",
+  "2026-05-25": "대체공휴일",
+  "2026-06-03": "지방선거일",
+  "2026-06-06": "현충일",
+  "2026-07-17": "제헌절",
+  "2026-08-15": "광복절",
+  "2026-08-17": "대체공휴일",
+  "2026-09-24": "추석 연휴",
+  "2026-09-25": "추석",
+  "2026-09-26": "추석 연휴",
+  "2026-10-03": "개천절",
+  "2026-10-05": "대체공휴일",
+  "2026-10-09": "한글날",
+  "2026-12-25": "성탄절",
+  "2027-01-01": "신정",
+  "2027-02-06": "설날 연휴",
+  "2027-02-07": "설날",
+  "2027-02-08": "설날 연휴",
+  "2027-02-09": "대체공휴일",
+  "2027-03-01": "삼일절",
+  "2027-05-01": "노동절",
+  "2027-05-03": "대체공휴일",
+  "2027-05-05": "어린이날",
+  "2027-05-13": "부처님오신날",
+  "2027-06-06": "현충일",
+  "2027-07-17": "제헌절",
+  "2027-07-19": "대체공휴일",
+  "2027-08-15": "광복절",
+  "2027-08-16": "대체공휴일",
+  "2027-09-14": "추석 연휴",
+  "2027-09-15": "추석",
+  "2027-09-16": "추석 연휴",
+  "2027-10-03": "개천절",
+  "2027-10-04": "대체공휴일",
+  "2027-10-09": "한글날",
+  "2027-10-11": "대체공휴일",
+  "2027-12-25": "성탄절",
+  "2027-12-27": "대체공휴일",
+};
+// Derived, never restated: adding a year to the table moves the coverage note by itself.
+const HOLIDAY_YEARS = [...new Set(Object.keys(HOLIDAYS).map((d) => d.slice(0, 4)))].sort();
+
 /* One occurrence row, used by the list groups and by the calendar's selected-day panel. The markup exists
    once so the two views cannot drift apart. */
 function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
@@ -4783,11 +4844,19 @@ function ScheduleCalendar({ state, today, onAdd, onEdit, onToggleDone, onSkip })
             if (day < 1 || day > daysInMonth) return <div key={`pad${i}`} className="h-14" />;
             const date = `${month}-${String(day).padStart(2, "0")}`;
             const occ = byDate.get(date) || [];
+            const dow = (firstDow + day - 1) % 7; // this cell's column, so Sunday and Saturday are read off the grid itself
+            // One tone per day number, in the order a Korean calendar reads it. Today wins: it is a state mark and has to
+            // stay one unambiguous colour, and the fact is not lost — selecting today still names the holiday in the panel.
+            // The holiday tint cannot be confused with the deadline marker below it: this is text, that is a filled dot.
+            const tone = date === today ? "text-amber-300 font-bold"
+              : HOLIDAYS[date] || dow === 0 ? "text-rose-400"
+              : dow === 6 ? "text-sky-400"
+              : "text-zinc-300";
             return (
               <button key={date} onClick={() => setSel(date)}
                 className={`h-14 rounded-lg overflow-hidden flex flex-col items-center justify-center gap-1 ${
                   sel === date ? "bg-zinc-800 border border-cyan-500" : "bg-zinc-950 border border-transparent"}`}>
-                <span className={`text-xs font-mono ${date === today ? "text-amber-300 font-bold" : "text-zinc-300"}`}>{day}</span>
+                <span className={`text-xs font-mono ${tone}`}>{day}</span>
                 <span className="h-4 flex items-center justify-center gap-0.5">
                   {/* At most three dots — a cell is about 43 px wide at 390 px, so the rest is counted instead */}
                   {occ.slice(0, 3).map((o) => (
@@ -4800,11 +4869,17 @@ function ScheduleCalendar({ state, today, onAdd, onEdit, onToggleDone, onSkip })
             );
           })}
         </div>
+        {/* Outside the table's years nothing is marked, so the grid says which years it knows rather than
+            letting an unmarked lunar new year read as a working day. Weekend colours still apply: those come from the date. */}
+        {!HOLIDAY_YEARS.includes(month.slice(0, 4)) && (
+          <p className="text-xs text-zinc-500 mt-2">{`공휴일은 ${HOLIDAY_YEARS[0]}~${HOLIDAY_YEARS[HOLIDAY_YEARS.length - 1]}년만 표시해요.`}</p>
+        )}
       </section>
 
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         <SectionLabel>선택한 날짜</SectionLabel>
         <p className="text-xs font-mono text-zinc-400">{sel} · {selOcc.length}건</p>
+        {HOLIDAYS[sel] && <p className="text-xs text-rose-400">공휴일 · {HOLIDAYS[sel]}</p>}
         {selOcc.length === 0 ? (
           <p className="text-sm text-zinc-500 mt-3">이 날짜에는 일정이 없어요.</p>
         ) : (

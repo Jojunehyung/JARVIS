@@ -82,16 +82,68 @@ the month grid, then the selected-day panel.
   empty and a 31-day month starting on Saturday gets six rows. Leading and trailing cells are blank,
   non-interactive placeholders — no day number, no marker, no tap target; a neighbouring month is reached with
   `‹` / `›`.
-- A day is an `h-14 rounded-lg` button: day number in `text-xs font-mono`, `text-amber-300 font-bold` on today;
-  the selected cell adds `bg-zinc-800 border border-cyan-500` (every other `bg-zinc-950 border
+- A day is an `h-14 rounded-lg` button: day number in `text-xs font-mono` plus exactly one tone
+  ([Holidays](#holidays) gives the precedence); the selected cell adds `bg-zinc-800 border border-cyan-500` (every other `bg-zinc-950 border
   border-transparent`). Today and the selection are separate marks, so they can sit on the same cell.
 - Markers, under the day number: one `w-1.5 h-1.5 rounded-full` dot per occurrence, **at most three** — `마감`
   rose, `약속` cyan, a ticked occurrence at `opacity-50` exactly like its row. Beyond three, `+{n}`
   (`text-xs font-mono text-zinc-500`) states the remainder, so a busy day reads `● ● ● +2`. Titles never appear
   in a cell: at 390 px a cell is about 43 px wide.
 
+### Holidays
+`HOLIDAYS` is a frozen flat map `{ "YYYY-MM-DD": "설날" }` covering **2026 and 2027** (46 dates), declared beside
+`CAL_RANGE_MONTHS` and read with a direct `HOLIDAYS[date]` lookup — no helper function, nothing derived into
+state, nothing stored. `HOLIDAY_YEARS` derives the coverage from the keys, so appending a year moves the note
+below by itself.
+
+**Source of record.** The rows are copied from the Gwanbo gazette notices issued under the Presidential Decree on
+the holidays of government offices, cross-checked against the KASI almanac published the preceding year. None of
+it is computable: `설날` and `추석` follow the lunar calendar, `대체공휴일` are granted per year, and an election
+day is set by its own law. The Decree amended on 2026-04-30 added `노동절` (5/1) and restored `제헌절` (7/17), both
+substitute-eligible. **Append the next year only from a cited announcement** — never interpolate a lunar date,
+never infer a substitute day, and never add a temporary holiday that has not been designated. A day painted red is
+a day the user will not schedule.
+
+This is [Rule 6](../design-docs/core-beliefs.md#rule-6) in spirit, not in letter: the rule names the numeric
+`CERTS` / `EXAMS` tables and does not cover this one, so `HOLIDAYS` is deliberately **not** registered in
+`DATA_TABLES` — the generated symbol index would otherwise label it "frozen by rules 6/15", which would be false.
+
+**Tone precedence** on the day number, exactly one tone, first match wins:
+
+| Order | Condition | Class |
+|---|---|---|
+| 1 | today | `text-amber-300 font-bold` |
+| 2 | in `HOLIDAYS`, or Sunday | `text-rose-400` |
+| 3 | Saturday | `text-sky-400` |
+| 4 | anything else | `text-zinc-300` |
+
+`dow` is the cell's own column, `(firstDow + day - 1) % 7`, so the weekend tones are read off the grid rather than
+recomputed from the date. **Today outranks the holiday tone**: today is a state mark that has to stay one
+unambiguous colour, and the fact is not lost, because selecting today still names the holiday in the panel.
+
+The holiday tint cannot be confused with the `마감` marker: the number is **text** (`text-rose-400`) on the cell's
+first line, the marker is a filled dot (`w-1.5 h-1.5 rounded-full bg-rose-400`) on the line below. Different
+element, different line, text colour against fill.
+
+**Outside the covered years** nothing is marked at all, and a single caption renders under the grid, inside the
+same section: `공휴일은 {from}~{to}년만 표시해요.` (`text-xs text-zinc-500`, one text node, no nested spans). It is
+under the grid because it explains the grid, and it renders only when the shown month's year is outside
+`HOLIDAY_YEARS`, so a covered month gains no clutter. Weekend colouring still applies out there — it comes from
+the date, not from the table.
+
+**A holiday is never an event.** `HOLIDAYS` is read only by `ScheduleCalendar`. No `events[]` record, no
+`occurrencesOf` / `eventsOn` / `upcomingEvents` involvement, no counts-line change, no briefing line, no packet
+line, no task, goal, point, metric, trophy or streak effect, and no schema field
+([Rule 9](../design-docs/core-beliefs.md#rule-9), [Rule 12](../design-docs/core-beliefs.md#rule-12)). **The `목록`
+view shows nothing about holidays**: every row there carries `완료 표시` / `수정`, feeds the counts and the `이후`
+collapse, and a holiday is none of those. `demoState` is unchanged — the layer is static, so the demo shows it
+without demo data.
+
 ### Selected-day panel
-`선택한 날짜` (`SectionLabel`), the mono line `{YYYY-MM-DD} · {n}건`, then the day's occurrences as `EventRow`s —
+`선택한 날짜` (`SectionLabel`), the mono line `{YYYY-MM-DD} · {n}건`, then — when `HOLIDAYS[sel]` exists — one
+`text-xs text-rose-400` line `공휴일 · {name}` directly under it (never appended to the mono line, which the E2E
+asserts verbatim, and the `공휴일 · ` prefix keeps a bare name from reading like an event title), then the day's
+occurrences as `EventRow`s —
 the same rows in the same order as the list's groups, `완료 표시` / `이번 회차 취소` / `수정` included. A day with
 none reads `이 날짜에는 일정이 없어요.` The panel's `일정 추가` calls `onAdd(selected)`, so `EventModal` opens in
 add mode with its date input already on that day (`useState(event?.date || initialDate || "")`) and registering
