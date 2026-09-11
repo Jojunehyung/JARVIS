@@ -155,8 +155,6 @@ Option lists and rule tables as defined in source. Korean values are UI copy and
 |---|---|---|---|
 | "아침 운동 30분" | "fit" | "E" | "daily" |
 | "독서 30분" | "book" | "E" | "daily" |
-| "업무 회고 작성" | "" | "E" | "daily" |
-| "거래처 미팅" | "meet" | "D" | "once" |
 
 ## `STUDY_REQ`
 

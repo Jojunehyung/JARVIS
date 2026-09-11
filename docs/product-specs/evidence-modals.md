@@ -32,7 +32,7 @@ Added 2026-09-07 as the reader side of the key convention. Opened from the `증�
 - Read-only. Deleting the task or resetting the app removes the same keys.
 
 ## `ActivityLogModal`
-One modal, three shapes keyed by `task.kind`. Title: `독후감 — {title}` / `운동 기록 — {title}` / `회의록 — {title}`.
+One modal, two shapes keyed by `task.kind`. Title: `독후감 — {title}` / `운동 기록 — {title}`.
 
 ### `book` — reading
 Five ⭐ buttons (`rating`), `한 줄 감상 (15자 이상)` textarea (placeholder `어떤 책이었고, 무엇이 남았는지`), and `기억에 남는 문장 (선택)`.
@@ -44,12 +44,6 @@ Lead line: `기록은 전부 선택입니다 — 측정한 날만 적으세요. 
 Fields: `오늘 운동 — 예: 하체 + 유산소 40분`, numeric `체중 kg` and `골격근량 kg` (`step 0.1`). Nothing is required, so the button reads `완료 (기록은 선택)`. Footer: `이후의 일일 완료는 원탭이에요. 측정 갱신은 목표 탭의 수치 KR 체크인으로 언제든 가능합니다.`
 Evidence: `운동 기록 · {workout, 40 chars} · 체중 {w}kg · 골격근량 {m}kg` from whichever parts were filled, or `null` when nothing was.
 Measurements go to `applyMeasures`, which writes each value through `checkinKR` into the first `metric` KR of an active goal whose title contains that label — never into 인생 지표 (life metrics) directly ([Rule 17](../design-docs/core-beliefs.md#rule-17), [Rule 8](../design-docs/core-beliefs.md#rule-8)).
-
-### `meet` — meeting
-Fields: `미팅 상대 — 예: ○○상사 김부장`, `안건`, `결정사항 (선택)`, and an action-item textarea (`액션 아이템 — 줄바꿈으로 여러 개`, placeholder lines `견적서 수정본 송부` / `계약서 초안 검토`).
-With at least one action line the button `액션 {n}건을 팔로업 실행으로 생성` calls `onSpawn` per line → `spawnTask` creates a `once` task at difficulty D with the same `areaId` and `goalId`; afterwards it is disabled and reads `✓ 팔로업 실행 {n}건 생성됨`.
-Errors: `미팅 상대를 적어 주세요.` and `안건을 구체적으로 적어 주세요.` (agenda under 10 characters).
-Evidence: `회의록 · {상대} — 안건: {40 chars}` plus ` · 결정: {40 chars}` and the action-item count when present. Button: `기록하고 완료`.
 
 ## `StudyVerifyModal`
 Title `학습 검증 — {source || title}`; `req = STUDY_REQ[task.diff] || STUDY_REQ.D`.

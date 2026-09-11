@@ -5,7 +5,7 @@
 Life Manager (인생 관리) is a tool for **setting goals (OKR) → proving execution with evidence → being judged coldly against market standards**. Main uses: job seeking, career moves, self-management. Local-only, mobile-web, single user.
 
 ## Why it exists
-Self-improvement apps reward self-reported effort; the market does not. Life Manager only counts what can be evidenced (a certificate photo, a score report, an artifact, a meeting record) and prices it the way hiring does: a qualification is worth its difficulty (D) times how much the target job actually values it (job-fit tier). Nothing else moves a number.
+Self-improvement apps reward self-reported effort; the market does not. Life Manager only counts what can be evidenced (a certificate photo, a score report, an artifact, an activity log) and prices it the way hiring does: a qualification is worth its difficulty (D) times how much the target job actually values it (job-fit tier). Nothing else moves a number.
 
 ## Three principles
 1. **Reality and objectivity** — no encouraging or optimistic copy. Progress is always shown next to elapsed time and a pace verdict (behind / on track / ahead); a completion that does not contribute to a goal is labelled "목표 기여 없음". ([Rule 13](design-docs/core-beliefs.md#rule-13))

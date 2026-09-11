@@ -34,7 +34,7 @@ Verdicts against the current code, last refreshed 2026-09-08 against the Phase 4
 | 14 squared proximity | `roleGap` | verified (formula) |
 | 15 job-fit weighting | `jobWeightForCert`, `WEIGHT_MATRIX`, `CERT_W_EXC` | verified (smoke: S/A/C cases, exception 사회복지사 1급) |
 | 16 evidence regulations | `EvidenceModal`, `StudyVerifyModal`, `STUDY_REQ`, image keys | verified (E2E: photo gate, study artifact, viewer, key cleanup) |
-| 17 activity kinds | `ActivityLogModal`, `detectKind`, `applyMeasures` | verified (E2E: reading, fitness, meeting follow-up) |
+| 17 activity kinds | `ActivityLogModal`, `detectKind`, `applyMeasures` | verified (E2E: reading, fitness) |
 | 18 goal-first | `AddTaskModal` (no area picker), `goalId` required | verified |
 | 19 KR bridge | `AddTaskModal` bridge rows | verified (E2E: cert and exam one-click registration) |
 

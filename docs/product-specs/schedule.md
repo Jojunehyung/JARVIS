@@ -227,7 +227,7 @@ reaches the save.
 
 ## What an event never does
 - No `goalId`, no difficulty, no points, no trophy, no achievement record, no metric change, no streak effect.
-- It never runs through `completeTask`, `tryComplete`, `spawnTask`, `metricsGain`, `needsEvidence`, `detectKind`
+- It never runs through `completeTask`, `tryComplete`, `metricsGain`, `needsEvidence`, `detectKind`
   or `certByTitle`: a certification name inside an event title stays plain text and creates no milestone
   ([Rules 1](../design-docs/core-beliefs.md#rule-1), [10](../design-docs/core-beliefs.md#rule-10),
   [18](../design-docs/core-beliefs.md#rule-18), [19](../design-docs/core-beliefs.md#rule-19)).

@@ -1095,26 +1095,22 @@ const ROLE_PRESETS = ["대기업 현직 전문가", "월 500 1인 사업가", "�
 const TASK_TEMPLATES = [
   { t: "아침 운동 30분", kind: "fit", diff: "E", type: "daily" },
   { t: "독서 30분", kind: "book", diff: "E", type: "daily" },
-  { t: "업무 회고 작성", kind: "", diff: "E", type: "daily" },
-  { t: "거래처 미팅", kind: "meet", diff: "D", type: "once" },
 ];
 const detectKind = (t) => {
   if (!t) return "";
   if (/독서|책\s?읽|북클럽/.test(t)) return "book";
   if (/운동|헬스|러닝|조깅|필라테스|요가|웨이트|수영/.test(t)) return "fit";
-  if (/미팅|회의|거래처/.test(t)) return "meet";
   return "";
 };
 // Reads the goal title, note and KRs to infer which activity kinds, and whether study mode, are meaningful for this goal
 const goalKinds = (goal) => {
-  const kinds = new Set([""]);
+  const kinds = new Set();
   let study = false;
   const txt = `${goal?.title || ""} ${goal?.note || ""}`;
   const feed = (t) => { const k = detectKind(t); if (k) kinds.add(k); };
   feed(txt);
   if (/어학|영어|토익|오픽|일본어|중국어|공부|학습|독서|자격|시험|스펙|지식|개발|코딩/.test(txt)) { study = true; kinds.add("book"); }
   if (/체력|건강|다이어트|감량|근육|헬스|피트니스|몸/.test(txt)) kinds.add("fit");
-  if (/영업|매출|거래처|고객|세일즈|계약/.test(txt)) kinds.add("meet");
   for (const kr of goal?.krs || []) {
     feed(kr.title);
     if (kr.type === "exam" || kr.type === "cert") { study = true; kinds.add("book"); }
@@ -2154,7 +2150,7 @@ const upcomingEvents = (state, from, days = EVENT_HORIZON_DAYS) => {
 };
 
 const lastDoneDate = (q) => (q.type === "daily" ? (q.doneDates || []).slice(-1)[0] || null : q.doneAt || null);
-const KIND_LABEL = { book: "📚 독서", fit: "💪 운동", meet: "🤝 미팅" };
+const KIND_LABEL = { book: "📚 독서", fit: "💪 운동" };
 const CHECKIN_STALE_DAYS = 7;
 const AREA_STALE_DAYS = 30;
 const ACTIVITY_GAP_DAYS = 7;
@@ -2304,7 +2300,7 @@ const PACKET_HEAD = [
   "3) 제안은 목표에 연결된 하루분량 실행만 가능해요 (난이도 E/D/C). 자격·시험 실행은 제안하지 않아요.",
   "4) 답변 형식: ① 오늘 점검 요약 5줄 이내 ② 다음 단계 1개 ③ 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"tasks\": []).",
   "```json",
-  '{"tasks":[{"goal":"<목표 제목 그대로>","title":"...","diff":"E|D|C","type":"daily|once","due":"YYYY-MM-DD","kind":"book|fit|meet"}],"note":"한 줄"}',
+  '{"tasks":[{"goal":"<목표 제목 그대로>","title":"...","diff":"E|D|C","type":"daily|once","due":"YYYY-MM-DD","kind":"book|fit"}],"note":"한 줄"}',
   "```",
 ];
 
@@ -2371,10 +2367,11 @@ const parseAssistantReply = (text, state) => {
     const type = t?.type === "daily" ? "daily" : "once";
     const due = type === "once" && /^\d{4}-\d{2}-\d{2}$/.test(t?.due || "") ? t.due : undefined;
     const dk = detectKind(title);
-    const kind = dk || (["book", "fit", "meet"].includes(t?.kind) ? t.kind : undefined);
+    const kind = dk || (["book", "fit"].includes(t?.kind) ? t.kind : undefined);
     let reject = null;
     if (certByTitle(title) || EXAMS.some((e) => title.includes(e.n)) || /취득$/.test(title)) reject = "자격·시험 실행은 목표의 KR에서만 등록돼요";
     else if (goal && open.some((q) => q.goalId === goal.id && q.title.trim() === title)) reject = "이미 등록된 실행이에요";
+    else if (!kind) reject = "활동 유형 없는 실행은 일정 탭에서 관리해요";
     return { key: `p${n}`, title, goalId: goal?.id || null, goalTitle: goal?.title || wanted || "목표 미지정", diff, type, due, kind, reject };
   });
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
@@ -2382,16 +2379,16 @@ const parseAssistantReply = (text, state) => {
 
 /* ── State lifecycle ── */
 /**
- * @schema v17 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v18 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 17,
+ *   v: 18,
  *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
  *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
  *             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
  *             isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?,
- *             kind?("book"|"fit"|"meet"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only) }],
+ *             kind?("book"|"fit"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only) }],
  *   goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
  *             krs: [{ id, type:"metric", title, start, target, current, unit }
  *                 | { id, type:"count",  title, need }
@@ -2472,6 +2469,10 @@ const migrate = (s) => {
     // v17: the schedule tab remembers the chosen view (list or calendar). A preference only — the month, the selection and the occurrences stay derived.
     s = { ...s, v: 17, ui: { ...(s.ui || {}), scheduleView: s.ui?.scheduleView === "calendar" ? "calendar" : "list" } };
   }
+  if (s.v < 18) {
+    // v18: the `meet` activity kind is gone — a meeting belongs to the `일정` tab, not to a goal. Only `kind` is dropped; everything the user recorded (title, difficulty, points, completion dates, minutes evidence) is kept, and an unknown kind is left alone.
+    s = { ...s, v: 18, tasks: (s.tasks || []).map((q) => { if (q.kind !== "meet") return q; const { kind, ...rest } = q; return rest; }) };
+  }
   return s;
 };
 
@@ -2483,7 +2484,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 17,
+  v: 18,
   profile: null,
   areas,
   tasks: [],
@@ -3096,7 +3097,7 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
                     <Check size={13} className="text-transparent" />
                   </button>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold truncate">{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : q.kind === "meet" ? "🤝 " : ""}{q.title}</div>
+                    <div className="text-sm font-semibold truncate">{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : ""}{q.title}</div>
                     <div className="text-xs text-zinc-500 truncate">
                       {area?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{!goal && <span className="text-zinc-600"> · 목표 연결 없음</span>}
                     </div>
@@ -3852,7 +3853,7 @@ function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onA
           </button>
         )}
         <div className="flex-1 min-w-0">
-          <div className={`text-sm font-semibold truncate ${doneToday ? "line-through" : ""}`}>{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : q.kind === "meet" ? "🤝 " : ""}{q.title}</div>
+          <div className={`text-sm font-semibold truncate ${doneToday ? "line-through" : ""}`}>{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : ""}{q.title}</div>
           <div className="text-xs text-zinc-500 truncate">
             {doneToday ? (
               q.evidence
@@ -3943,6 +3944,7 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
   const [mode, setMode] = useState("normal");
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState("");
+  const [krId, setKrId] = useState(null); // which count KR this task fills — form state only, never part of the task (rule 9)
   const [diff, setDiff] = useState("D");
   const [type, setType] = useState("daily");
   const [sDiff, setSDiff] = useState("D");
@@ -3952,6 +3954,10 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
   const areaId = goal?.areaId || areas[0]?.id;
   const areaName = areas.find((p) => p.id === areaId)?.name || "—";
   const gk = goalKinds(goal);
+  const kindChips = [["book", "📚 독서"], ["fit", "💪 운동"]];
+  const scoped = kindChips.filter(([k]) => gk.kinds.has(k));
+  // A goal that matches no kind keyword (a revenue goal with only a metric KR, for example) would have no chip to pick, so an empty scope falls back to both kinds.
+  const kindOpts = scoped.length ? scoped : kindChips;
   const hasExamQ = (famId, label) => (tasks || []).some((q) => q.goalId === goalId && q.isExam && q.famId === famId && q.band?.label === label);
   const hasCertQ = (name) => (tasks || []).some((q) => q.isCert && q.title.includes(name));
 
@@ -3964,15 +3970,17 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
   };
   const fillCount = (kr) => {
     setMode("normal"); setTitle(kr.title);
-    setKind(detectKind(kr.title)); setDiff("E"); setType("daily"); setErr("");
+    setKind(detectKind(kr.title)); setDiff("E"); setType("daily"); setErr(""); setKrId(kr.id);
   };
   const submitNormal = () => {
     setErr("");
     if (!title.trim()) { setErr("실행 이름을 입력해 주세요."); return; }
     const dk = detectKind(title);
-    const nm = { book: "📚 독서", fit: "💪 운동", meet: "🤝 미팅" };
+    const nm = { book: "📚 독서", fit: "💪 운동" };
     if (dk && kind && dk !== kind) { setErr(`제목은 ${nm[dk]} 활동으로 보이는데 유형이 ${nm[kind]}(으)로 선택돼 있어요 — 맞춰 주세요.`); return; }
     const ek = kind || dk;
+    // A count KR is the goal's own measured action, so the task that fills it is the one task a goal takes without an activity kind.
+    if (!ek && !krId) { setErr("활동 유형을 골라 주세요 — 📚 독서·💪 운동만 목표에 등록돼요. 공부는 '학습', 자격·시험은 핵심결과, 약속·미팅은 일정 탭에서 만들어요."); return; }
     onAdd({ goalId, ...(ek ? { kind: ek } : {}), title: title.trim(), areaId, diff, pts: DIFFS[diff].pts, type, ...(due && type === "once" ? { due } : {}) });
   };
   const submitStudy = () => {
@@ -4043,7 +4051,7 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
           <div className="flex gap-1.5">
             <button onClick={() => { setMode("normal"); setErr(""); }}
               className={`flex-1 py-2 rounded-lg text-xs ${mode === "normal" ? "bg-cyan-400 text-zinc-950 font-bold" : "bg-zinc-950 border border-zinc-700 text-zinc-400 font-medium"}`}>일일 실행</button>
-            <button onClick={() => { setMode("study"); setTitle(""); setErr(""); }}
+            <button onClick={() => { setMode("study"); setTitle(""); setErr(""); setKrId(null); }}
               className={`flex-1 py-2 rounded-lg text-xs ${mode === "study" ? "bg-violet-500 text-zinc-950 font-bold" : "bg-zinc-950 border border-zinc-700 text-violet-300 font-medium"}`}>학습 (하루분량)</button>
           </div>
         )}
@@ -4062,25 +4070,20 @@ function AddTaskModal({ areas, exams, certBest, tasks, goalId, goal, onClose, on
           <input value={title} onChange={(e) => setTitle(e.target.value)}
             placeholder="무엇을 하나요? — 하루 안에 끝나는 크기로"
             className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-400" />
-          {gk.kinds.size > 1 && (
           <div>
-            <div className="text-xs text-zinc-500 mb-1.5">활동 유형 — 이 목표와 관련된 것만</div>
+            <div className="text-xs text-zinc-500 mb-1.5">{krId ? "활동 유형 (선택) — 횟수 핵심결과를 채우는 실행이에요" : "활동 유형 (필수) — 독서·운동만 목표에 등록돼요"}</div>
             <div className="flex gap-1.5">
-              {[["", "기타"], ["book", "📚 독서"], ["fit", "💪 운동"], ["meet", "🤝 미팅"]]
-                .filter(([k]) => !k || gk.kinds.has(k))
-                .map(([k, t]) => (
-                  <Chip key={k || "etc"} on={kind === k} onClick={() => setKind(k)}>{t}</Chip>
-                ))}
+              {kindOpts.map(([k, t]) => (
+                <Chip key={k} on={kind === k} onClick={() => setKind(kind === k ? "" : k)}>{t}</Chip>
+              ))}
             </div>
             {kind && (
               <p className="text-xs text-zinc-600 mt-1.5">
                 {kind === "book" ? "완료 시 독후감(별점·한 줄 감상) 기록 — 교양 독서용. 실력 목적 독서는 '학습'으로."
-                  : kind === "fit" ? "완료 시 운동·측정 기록(선택). 체중·골격근량은 이 목표의 같은 이름 수치 KR에 자동 반영돼요."
-                  : "완료 시 회의록 기록. 액션 아이템은 팔로업 실행으로 전환할 수 있어요."}
+                  : "완료 시 운동·측정 기록(선택). 체중·골격근량은 이 목표의 같은 이름 수치 KR에 자동 반영돼요."}
               </p>
             )}
           </div>
-          )}
           <div>
             <div className="text-xs text-zinc-500 mb-1.5">
               난이도 — <span className={`font-mono font-bold ${DIFF_PT_TEXT[diff] || "text-zinc-300"}`}>{DIFFS[diff].pts}pt</span> <span className="text-zinc-600">· 하루분량 상한 C</span>
@@ -4212,8 +4215,8 @@ function EvidenceModal({ task, onClose, onSubmit }) {
   );
 }
 
-/* ── Daily activity log modal — reading, exercise, meetings ── */
-function ActivityLogModal({ task, onClose, onDone, onSpawn }) {
+/* ── Daily activity log modal — reading and exercise ── */
+function ActivityLogModal({ task, onClose, onDone }) {
   const k = task.kind;
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
@@ -4221,17 +4224,7 @@ function ActivityLogModal({ task, onClose, onDone, onSpawn }) {
   const [workout, setWorkout] = useState("");
   const [weight, setWeight] = useState("");
   const [muscle, setMuscle] = useState("");
-  const [withWho, setWithWho] = useState("");
-  const [agenda, setAgenda] = useState("");
-  const [decision, setDecision] = useState("");
-  const [actions, setActions] = useState("");
-  const [spawned, setSpawned] = useState(0);
   const [err, setErr] = useState("");
-  const actionList = actions.split("\n").map((s) => s.trim()).filter(Boolean);
-  const doSpawn = () => {
-    actionList.forEach((t) => onSpawn(t));
-    setSpawned(actionList.length);
-  };
   const submit = () => {
     setErr("");
     if (k === "book") {
@@ -4248,14 +4241,10 @@ function ActivityLogModal({ task, onClose, onDone, onSpawn }) {
       if (ms["체중"] != null) bits.push(`체중 ${ms["체중"]}kg`);
       if (ms["골격근량"] != null) bits.push(`골격근량 ${ms["골격근량"]}kg`);
       onDone(bits.length ? `운동 기록 · ${bits.join(" · ")}` : null, Object.keys(ms).length ? ms : null);
-    } else {
-      if (!withWho.trim()) { setErr("미팅 상대를 적어 주세요."); return; }
-      if (agenda.trim().length < 10) { setErr("안건을 구체적으로 적어 주세요."); return; }
-      onDone(`회의록 · ${withWho.trim()} — 안건: ${agenda.trim().slice(0, 40)}${decision.trim() ? ` · 결정: ${decision.trim().slice(0, 40)}` : ""}${actionList.length ? ` · 액션 ${actionList.length}건${spawned ? `(실행 ${spawned}건 생성)` : ""}` : ""}`, null);
     }
   };
   return (
-    <Modal title={k === "book" ? `독후감 — ${task.title}` : k === "fit" ? `운동 기록 — ${task.title}` : `회의록 — ${task.title}`} onClose={onClose}>
+    <Modal title={k === "book" ? `독후감 — ${task.title}` : `운동 기록 — ${task.title}`} onClose={onClose}>
       <div className="space-y-3">
         {k === "book" && (<>
           <div>
@@ -4284,25 +4273,6 @@ function ActivityLogModal({ task, onClose, onDone, onSpawn }) {
               className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
             <input value={muscle} onChange={(e) => setMuscle(e.target.value)} type="number" step="0.1" placeholder="골격근량 kg"
               className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
-          </div>
-        </>)}
-        {k === "meet" && (<>
-          <input value={withWho} onChange={(e) => setWithWho(e.target.value)} placeholder="미팅 상대 — 예: ○○상사 김부장"
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
-          <textarea value={agenda} onChange={(e) => setAgenda(e.target.value)} rows={2} placeholder="안건"
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
-          <textarea value={decision} onChange={(e) => setDecision(e.target.value)} rows={2} placeholder="결정사항 (선택)"
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
-          <div>
-            <textarea value={actions} onChange={(e) => setActions(e.target.value)} rows={3}
-              placeholder={"액션 아이템 — 줄바꿈으로 여러 개\n견적서 수정본 송부\n계약서 초안 검토"}
-              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm resize-none" />
-            {actionList.length > 0 && (
-              <button onClick={doSpawn} disabled={spawned > 0}
-                className={`w-full mt-1.5 py-2 rounded-lg border text-xs font-bold ${spawned ? "border-emerald-800 text-emerald-400" : "border-cyan-700 text-cyan-300"}`}>
-                {spawned ? `✓ 팔로업 실행 ${spawned}건 생성됨` : `액션 ${actionList.length}건을 팔로업 실행으로 생성`}
-              </button>
-            )}
           </div>
         </>)}
         {err && <p className="text-xs text-rose-400">{err}</p>}
@@ -5206,12 +5176,6 @@ export default function LifeManager() {
     setState((prev) => ({ ...prev, tasks: prev.tasks.filter((q) => q.id !== id) }));
   };
 
-  const spawnTask = (t, base) => {
-    setState((prev) => ({
-      ...prev,
-      tasks: [{ id: uid(), title: t, areaId: base.areaId, goalId: base.goalId, diff: "D", type: "once", status: "todo", doneDates: [], createdAt: dstr() }, ...prev.tasks],
-    }));
-  };
   const applyMeasures = (ms) => {
     if (!ms) return;
     for (const [label, value] of Object.entries(ms)) {
@@ -5334,7 +5298,7 @@ export default function LifeManager() {
         ach = { name: q.title, p: pts, kind: "spec" };
       } else if (q.kind) {
         if (evidence && area) {
-          const icon = q.kind === "book" ? "📚" : q.kind === "fit" ? "💪" : "🤝";
+          const icon = q.kind === "book" ? "📚" : "💪";
           area.achievements = [...area.achievements, { id: uid(), grade: area.grade, date: today, text: `${icon} ${q.title} — ${evidence}` }];
         }
       } else if ((q.pts ?? DIFFS[q.diff].pts) >= EVIDENCE_MIN) {
@@ -5715,7 +5679,6 @@ export default function LifeManager() {
       )}
       {modal?.type === "activity" && (
         <ActivityLogModal task={modal.task} onClose={() => setModal(null)}
-          onSpawn={(t) => spawnTask(t, modal.task)}
           onDone={(ev, measures) => { completeTask(modal.task.id, ev); applyMeasures(measures); }} />
       )}
       {modal?.type === "study" && (

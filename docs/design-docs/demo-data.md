@@ -32,7 +32,7 @@ The three goals cover all four KR types, a deadline in the near and far future, 
 | Task | area / goal | diff | pts | type | doneDates | flags |
 |---|---|---|---|---|---|---|
 | `전기기사 취득` | 직업·커리어 / 하네스 | B | 900 | once | — | `isCert`, `certD: 67`, `due` = the goal deadline, created today − 14 |
-| `이력서 초안 작성` | 직업·커리어 / 하네스 | D | — | once | — | `due: today − 1`, so the agenda and the briefing both open with an overdue row |
+| `이력서 초안 작성` | 직업·커리어 / 하네스 | D | — | once | — | `due: today − 1`, so the agenda and the briefing both open with an overdue row; no `kind` — since 2026-09-11 a normal task without a kind can no longer be created through the UI (the count-KR bridge is the only kind-less path), so this row survives only as seeded legacy data |
 | `CATIA·도면 연습 1시간` | 직업·커리어 / 하네스 | D | — | daily | today − 2, today − 1 | created today − 14 |
 | `영어 스터디 참석` | 기본지식 / 어학 | D | — | daily | today − 5, − 3, − 1 | created today − 7 |
 | `TOEIC L&R 800 달성` | 기본지식 / 어학 | B | 720 | once | — | `isExam`, `famId: "toeic"`, band `{ 800, 60, 720, B }`, created today − 7 |

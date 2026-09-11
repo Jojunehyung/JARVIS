@@ -17,7 +17,7 @@ Items become exec plans in `active/` when picked up (planner writes the plan fir
 ## Smaller items (from the issue audit, see [tech-debt-tracker.md](tech-debt-tracker.md))
 - Role model: allow clearing it (no way back to `null`); button label when all areas are excluded.
 - Overlay/toast queues (consecutive effects overwrite each other).
-- Reading/meeting tasks: one-tap after the first log (Rule 17 says so; code asks every time when `evidence` is empty).
+- Reading tasks: one-tap after the first log (Rule 17 says so; code asks every time when `evidence` is empty).
 - Evidence photo crop: `resizeImage` 256 × 320 cover crop makes landscape certificates hard to read in the viewer — keep aspect ratio for evidence.
 - `AddGoalModal` validation: start = target, count need ≤ 0, past deadline, free-text cert names that cannot bridge.
 - `ddayStr` off-by-one (today shows D-1).

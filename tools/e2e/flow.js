@@ -1,6 +1,6 @@
 // Full real-usage flow — required and run by run.js (helpers are injected as arguments)
 module.exports = async (h) => {
-  const { step, shot, clickText, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors } = h;
+  const { step, shot, clickText, clickInModal, clickTab, modalError, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors } = h;
 
   // ── Onboarding, 6 steps
   await step("onboarding start", async () => { await clickText("시작하기"); await expectText("1 / 6"); });
@@ -30,7 +30,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version", async () => {
     const v = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1"))?.v; } catch { return null; } });
-    if (v !== 17) throw new Error("fresh save schema v" + v + " (expected 17)");
+    if (v !== 18) throw new Error("fresh save schema v" + v + " (expected 18)");
   });
 
   // ── Goal (OKR) creation — metric, count and cert KRs
@@ -72,9 +72,12 @@ module.exports = async (h) => {
   await step("register daily task", async () => {
     try { await clickText("일일 실행"); } catch {}
     await sleep(200);
+    await clickInModal("채우기 ›"); // count KR → the one path that registers a task without an activity kind
     await typeInto("무엇을 하나요", "설계 실습 1시간");
     for (const t of ["등록", "추가", "만들기"]) { try { await clickText(t); break; } catch {} }
     await sleep(1600); // until the toast disappears
+    const e = await modalError();
+    if (e) throw new Error("count-KR task refused: " + e);
     await closeModal();
   });
   await shot("quest-added");

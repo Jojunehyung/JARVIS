@@ -13,7 +13,7 @@ The app is a four-level hierarchy — 영역 (area) → 목표 (goal) → KR (ke
         exam    { title, famId, band{label,d,p,conf} }     → derived from `exams.best` once the exam milestone completes
         cert    { title, certName, done? }                 → `done` is set automatically when the cert milestone completes
     └ 실행  tasks[] `goalId` required for new tasks; `areaId` inherited from the goal
-        daily task   diff E/D/C · type daily|once · kind? book|fit|meet
+        daily task   diff E/D/C · type daily|once · kind? book|fit
         study        isStudy · diff E/D · source · scope?
         milestone    isCert (certD, sg?) / isExam (famId, band) — created only by KR one-click, type once
 ```
@@ -26,7 +26,7 @@ The modal opens from a goal (`modal.type === "addQuest"`, `goalId`) and shows `�
 |---|---|---|---|
 | exam | `🎓 {fam.n} {band.label} — 시험 마일스톤 · D{band.d}` | `달성` (`exams.best[famId].p ≥ band.p`) / `등록됨` (an `isExam` task with the same `famId` + band label already exists in this goal) / `등록 ›` | `{ title: "{fam?.n \|\| "시험"} {label} 달성", diff: scoreTier(band.p), pts: band.p, type: "once", isExam, famId, band }` — `시험` is the fallback when the family is not found |
 | cert | `📜 {c.n} — 자격 마일스톤 · 적합 {tier} · +{gain}P` | `취득` (`kr.done`) / `등록됨` (any `isCert` task anywhere whose title includes `certName`) / `등록 ›` | `{ title: "{c.n} 취득", diff: scoreTier(certP(d)), pts: certP(d), certD, sg?, type: "once", isCert }` |
-| count | `🔁 {title} — 일일 실행으로 채우기 · {krDoneCount}/{need}` | `채우기 ›` | form prefill only: title, `kind = detectKind(title)`, diff E, type daily — the `등록` button still has to be pressed |
+| count | `🔁 {title} — 일일 실행으로 채우기 · {krDoneCount}/{need}` | `채우기 ›` | form prefill only: title, `kind = detectKind(title)`, diff E, type daily, and `krId = kr.id` — the one carve-out that lets registration go through with no kind, since a count KR is the goal's own measured action; the `등록` button still has to be pressed |
 | metric | `📈 {title} — 목표 탭 체크인으로 관리 (운동 기록의 측정값도 자동 반영)` | guidance only | nothing |
 
 - The cert row resolves `certOf(kr.certName) || certByTitle(kr.certName)`; if neither matches it renders `📜 {certName} — 도감에 없는 명칭이라 자동 연결 불가(KR 이름을 표준 명칭으로 맞춰 주세요)` and nothing can be registered.

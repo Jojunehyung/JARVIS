@@ -1,4 +1,4 @@
-// Remaining paths — exam KR and score report, exercise/meeting activities, profile photo, direction advice, task and goal deletion, streak after a day gap
+// Remaining paths — exam KR and score report, exercise activity, the activity-kind gate, profile photo, direction advice, task and goal deletion, streak after a day gap
 module.exports = async (h) => {
   const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity } = h;
   // ── Profile photo upload (resizeImage path)
@@ -43,18 +43,20 @@ module.exports = async (h) => {
     });
   });
 
-  // ── Meeting activity (action item → follow-up task)
-  await step("register meeting activity task", async () => { await addKindTask("하네스", "미팅", "협력사 미팅"); });
-  await step("meeting minutes + action item follow-up", async () => {
-    await logActivity("협력사 미팅", async () => {
-      try { await typeInto("미팅 상대", "○○상사 김과장"); } catch {}
-      try { await typeInto("안건", "하네스 사양 협의"); } catch {}
-      try { await typeInto("결정사항", "도면 회신 후 재검토"); } catch {}
-      const ta = await page.$$("textarea");
-      if (ta[0]) { await ta[0].click(); await ta[0].type("사양서 초안 작성", { delay: 4 }); }
+  // ── A goal takes an activity kind or nothing: appointment-shaped work belongs to the `일정` tab
+  await step("kind-less task under a goal is refused", async () => {
+    await openTaskModalFor("하네스");
+    await typeInto("무엇을 하나요", "이력서 초안 작성");
+    await clickInModalExact("등록");
+    await sleep(500);
+    const e = await modalError();
+    if (!e.includes("활동 유형")) throw new Error("kind-less task was not refused (modal error: " + (e || "none") + ")");
+    const made = await page.evaluate(() => {
+      try { return JSON.parse(localStorage.getItem("liferpg-state-v1")).tasks.some((q) => q.title === "이력서 초안 작성"); } catch { return null; }
     });
+    if (made !== false) throw new Error("refused task reached the state: " + made);
+    await closeModal();
   });
-  await shot("meet-done");
 
   // ── Promotion (evidence chip selection → actual promotion)
   await step("promotion — submit after selecting evidence chips", async () => {

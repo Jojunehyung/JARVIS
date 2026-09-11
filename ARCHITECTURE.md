@@ -31,13 +31,13 @@ docs/                  product, design, engine, plans, generated tables
 | Goal engine | `needsEvidence`, `METRICS_META`, `ddayStr`, `krProgress`, `krDoneCount`, `goalProgress`, `elapsedRatio`, `paceOf`, `krRemainText`, `roleGap`, `certGainOf`, `examBandGain` | `const paceOf =` |
 | Job-fit weighting | `DIR_CATS`, `JOB_FIELDS`, `areaCatHints`, `TIER_MULT`, `TIER_CLS`, `WEIGHT_MATRIX`, `CERT_W_EXC`, lookup indexes (`CERT_BY_NAME`, `CERTS_LONGEST_FIRST`, `CERT_NAME_LC`, `CERTS_BY_CAT`, `certOf`, `certByTitle`), `DIR_ALIAS`, `normDirs`, `jobWeightForCert` | `const WEIGHT_MATRIX = {` |
 | Daily assistant | `daysBetween`, `mondayOf`, `doneTodayCount`, `agendaOf`, the event helpers (`occurrencesOf`, `eventsOn`, `upcomingEvents` + `EVENT_*` constants), `buildBriefing`, `PACKET_HEAD`, `buildAssistantPacket`, `parseAssistantReply` | `const agendaOf =` |
-| State lifecycle | `migrate` (v11 → v17 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
+| State lifecycle | `migrate` (v11 → v18 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
 | Onboarding | `Onboarding` (6 steps: basics → appearance → areas & directions → qualifications/exams → experience → computed grades) | `function Onboarding` |
 | Tabs | `HomeTab`, `GoalsTab`, `TaskTab`, `GrowthTab` (the fifth tab, `ScheduleTab`, has its own region below) | `function GoalsTab` |
 | Schedule | `EventRow` (the occurrence row both views render), `ScheduleCalendar` (month grid, markers, day-number tones, selected-day panel, `CAL_RANGE_MONTHS`, `WEEKDAY_LABEL`, `HOLIDAYS`, `HOLIDAY_YEARS`), `ScheduleTab` (`목록` / `달력` toggle, day groups) and `EventModal` — appointments and deadlines, never tasks | `function ScheduleTab` |
 | Modals | `AddGoalModal`, `MetricsModal`, `EvidenceViewModal`, `CatalogModal`, `RoleAdviceModal`, `AddTaskModal`, `EvidenceModal`, `ActivityLogModal`, `StudyVerifyModal`, `PromoteModal`, `RoleModelModal` | `function AddTaskModal` |
 | Feedback | `ToastHost` (ref API), `Overlay` (`gradeup` / `achieve`) | `const ToastHost =` |
-| App root | `LifeManager`: load → migrate → render; handlers `completeTask`, `tryComplete`, `promoteArea`, `addGoal`, `goalStatus`, `checkinKR`, `saveMetrics`, `setAreaDir`, `spawnTask`, `applyMeasures`, `removeTask`, `removeGoal`, `resetAll`; `Shell`, `NAV` | `export default function LifeManager` |
+| App root | `LifeManager`: load → migrate → render; handlers `completeTask`, `tryComplete`, `promoteArea`, `addGoal`, `goalStatus`, `checkinKR`, `saveMetrics`, `setAreaDir`, `applyMeasures`, `removeTask`, `removeGoal`, `resetAll`; `Shell`, `NAV` | `export default function LifeManager` |
 
 The data regions (`CERTS`, `EXAMS`, matrices, option lists) are about a quarter of the file; the harness skips them for duplicate detection and the `data-guard` hook protects them. Splitting the file into `src/data`, `src/engine`, `src/components` is backlog item 3 (`docs/exec-plans/backlog.md`), to be done with unit tests for `calcExamPayout`, `krProgress`, `migrate`.
 
@@ -60,7 +60,7 @@ Schema and storage keys: [docs/generated/db-schema.md](docs/generated/db-schema.
 | `npm run docs:gen` / `docs:check` / `lang:check` | regenerate generated docs / doc integrity / language policy |
 | `node tools/harness/gen-icons.js` | re-render the app icons from `public/icon.svg` (after an icon change) |
 
-Current status (2026-09-11): schema **v17**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 114 steps green, real-device smoke still pending (backlog 2).
+Current status (2026-09-11): schema **v18**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 114 steps green, real-device smoke still pending (backlog 2).
 
 ## Platform notes
 - The app was originally an artifact that used `window.storage`; it was shimmed to `localStorage` on 2026-09-03 behind the same `store` interface — that interface is the seam if a different backend is ever needed.

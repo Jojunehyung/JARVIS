@@ -3,7 +3,7 @@
 
 One JSON object holds everything, under one key, in the browser. It is loaded once at start-up, migrated forward through sequential version blocks, ticked for the new day, and written back on every change. The field reference, the `freshState` defaults and the migration ledger are generated from the source into [../generated/db-schema.md](../generated/db-schema.md) — this document covers the policy around them.
 
-## Shape (v17)
+## Shape (v18)
 ```
 { v, profile, areas[], tasks[], goals[], events[], journal[], reviews[], act, metrics, exams, certBest, room, role, ui, lastTick, dModel }
 ```
@@ -51,11 +51,12 @@ The `readyRef` guard exists so the persist effect cannot overwrite a real save w
 | `v < 15` | daily assistant: adds `journal[]` and `reviews[]` (empty), and the `act` stamps `lastCheckin` / `briefingSeen` / `lastReview` (null). Existing tasks gain no `due`; nothing derived is stored |
 | `v < 16` | schedule: adds `events[]` (empty). Every other field passes through untouched, and no occurrence list is written — the repeat rule plus the user's `skip` / `doneDates` stamps are all that is stored |
 | `v < 17` | schedule view: adds `ui.scheduleView`, `"calendar"` only when the save already carried that value, otherwise `"list"`. A preference, not derived data — no month index, no selected day and no occurrence list is written, and `events[]` is untouched |
+| `v < 18` | the `meet` activity kind is gone — a meeting belongs to the `일정` tab, not to a goal. Maps `tasks`: a task whose `kind === "meet"` loses the `kind` property and keeps every other field (title, difficulty, points, completion dates, evidence); an unknown kind is left alone. Nothing the user recorded is removed |
 
-Rules for changing this ([Rule 12](core-beliefs.md#rule-12)): add a new `if (s.v < N)` block, bump `v` in `freshState`, never edit an existing block, and never rename a storage key. Migration paths are covered by the E2E harness (`tools/e2e/flow4.js` exercises a v10 save, a save with no `v`, a v13 → v14 rename, a v14 → v15 upgrade, a v15 → v16 upgrade, and a v16 → v17 upgrade).
+Rules for changing this ([Rule 12](core-beliefs.md#rule-12)): add a new `if (s.v < N)` block, bump `v` in `freshState`, never edit an existing block, and never rename a storage key. Migration paths are covered by the E2E harness (`tools/e2e/flow4.js` exercises a v10 save, a save with no `v`, a v13 → v14 rename, a v14 → v15 upgrade, a v15 → v16 upgrade, a v16 → v17 upgrade, and a v17 → v18 upgrade that converts a saved `meet` task).
 
 ## `freshState(areas)` and `applyDailyTick(s)`
-`freshState` builds a v17 state with the areas produced by onboarding, empty `tasks` / `goals` / `events` / `journal` / `reviews` / `trophies`, `act` at streak 0 with 2 shields for the current month and the three date stamps null, `metrics` `{ asset: 10, infl: 5, body: 15 }`, an empty `exams` bundle stamped with `POINT_POLICY_VERSION`, `role: null`, `ui: { scheduleView: "list" }`, `lastTick: dstr()` and `dModel: DIFF_RAW_VERSION`. It passes through `applyDailyTick` once. Callers: onboarding's `onStart` and `demoState`. Exact values: [../generated/db-schema.md](../generated/db-schema.md).
+`freshState` builds a v18 state with the areas produced by onboarding, empty `tasks` / `goals` / `events` / `journal` / `reviews` / `trophies`, `act` at streak 0 with 2 shields for the current month and the three date stamps null, `metrics` `{ asset: 10, infl: 5, body: 15 }`, an empty `exams` bundle stamped with `POINT_POLICY_VERSION`, `role: null`, `ui: { scheduleView: "list" }`, `lastTick: dstr()` and `dModel: DIFF_RAW_VERSION`. It passes through `applyDailyTick` once. Callers: onboarding's `onStart` and `demoState`. Exact values: [../generated/db-schema.md](../generated/db-schema.md).
 
 `applyDailyTick` refills 보호권 (streak shields) when the month changed (`shieldMonth !== monthStr()` → `shieldsLeft = 2`) and stamps `lastTick`. It runs at boot, on the migrated state.
 

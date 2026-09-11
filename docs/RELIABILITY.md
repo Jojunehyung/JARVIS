@@ -6,7 +6,7 @@ Reliability for a local-only app means: the user's state survives every version,
 ## Persistence and migrations
 - State is one JSON object under `localStorage["liferpg-state-v1"]` (adapter `store`, memory fallback when storage is unavailable). Images are separate keys: `liferpg-img-profile`, `liferpg-img-ev-{taskId}`, `liferpg-img-study-{taskId}-{n}` — removed with the task and on full reset.
 - Every schema change adds a sequential `if (s.v < N)` block; existing blocks are frozen and a non-numeric `v` is normalised to 0 first ([Rule 12](design-docs/core-beliefs.md#rule-12)). The ledger is generated in [generated/db-schema.md](generated/db-schema.md).
-- The E2E harness asserts migration from a v10 save, a save without `v`, a v13 save, a v14 save, a v15 save and a v16 save to the current version (v17), including field renames, trophy-kind conversion, the empty `events[]` a v15 save gains and the `ui.scheduleView: "list"` a v16 save gains with its events, journal and reviews intact (`tools/e2e/flow4.js`).
+- The E2E harness asserts migration from a v10 save, a save without `v`, a v13 save, a v14 save, a v15 save, a v16 save and a v17 save to the current version (v18), including field renames, trophy-kind conversion, the empty `events[]` a v15 save gains, the `ui.scheduleView: "list"` a v16 save gains with its events, journal and reviews intact, and a v17 save's `kind: "meet"` task converting to a plain task with its title, difficulty, status and minutes `evidence` kept (`tools/e2e/flow4.js`).
 - Storage keys are never renamed; they are the compatibility contract.
 
 ## Verification pipeline (`npm run verify`)
@@ -18,15 +18,15 @@ Reliability for a local-only app means: the user's state survives every version,
 | `run.js` | runner, shared helpers (`clickTab`, `clickInModal*`, `completeQuest`, `assertDone`, `attach`, `openTaskModalFor`, `addKindTask`, `submitPhotoEvidence`, `logActivity`), coverage capture across reloads, screenshots on failure |
 | `flow.js` | onboarding (6 steps) → goal with metric/count/cert KRs → KR bridge → daily completion → catalog → metrics check-in → reload persistence → schema version assert; ends with data reset (image keys cleared) |
 | `flow2.js` | certification milestone with the photo gate (blocked without photo), evidence viewer, study artifact verification, reading log, role model |
-| `flow3.js` | profile photo, exam KR → score report, fitness and meeting logs (follow-up task), promotion with evidence chips, direction advice, task deletion, streak after a day gap |
-| `flow4.js` | goal completion and removal, v10 / no-version / v13 / v14 / v15 / v16 migrations |
+| `flow3.js` | profile photo, exam KR → score report, fitness activity log, the kind-less-task refusal under a goal, promotion with evidence chips, direction advice, task deletion, streak after a day gap |
+| `flow4.js` | goal completion and removal (task registered through the count-KR bridge), v10 / no-version / v13 / v14 / v15 / v16 / v17 migrations |
 | `flow6.js` | service worker registers and controls the page, the app opens with the network disabled, backup export and import round-trip |
 | `flow5.js` | due dates and the home agenda, the daily briefing (new day, same day, streak line), journal persistence, the assistant packet and reply import, the weekly review |
 | `flow7.js` | the 일정 tab, both views: form validation, an appointment with its time, a deadline D-day, a weekly repeat (and the one-row-per-event `이후` collapse), completion mark, one cancelled occurrence, edit, delete, the briefing section, the home card line, the packet section; then the `달력` view — the month grid and its markers, the view choice surviving a reload, the selected-day panel rendering the list's own row, the empty-day line, the prefilled `일정 추가`, month paging and `오늘` |
 | `cov_map.js` | maps V8 coverage back to `src/LifeManager.jsx` lines (needs `vite build --sourcemap`) |
 | `perf.js`, `prof.js`, `ab.js`, `ab_onboard.js`, `rows.js` | performance probes (see below) |
 
-Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers and day-number tones read from the grid rather than from body text), not just clicks; 114 steps as of 2026-09-11.
+Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers and day-number tones read from the grid, activity-kind refusal text read from the modal error), not just clicks; 114 steps as of 2026-09-11.
 
 ## Performance measurement rule
 Single-run timings on this machine swing by ±50 % with background load. Compare builds only with `tools/e2e/ab.js` (two builds, one browser, interleaved rounds, medians). Structural counts (mounted rows, DOM nodes via `rows.js`) are reliable; wall-clock deltas under ±10 % are noise.

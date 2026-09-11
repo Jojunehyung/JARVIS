@@ -77,9 +77,9 @@ Only a fenced ```` ```json ```` block is read, and only `tasks` (at most five) a
 | `goal` | matched against active goal titles exactly, then by substring either way; no match leaves `goalId` null and the row shows a `목표 선택` dropdown ([Rule 18](core-beliefs.md#rule-18)) |
 | `diff` | E, D or C — anything else becomes D. C is 60 points, below `EVIDENCE_MIN`, so an import can never bypass the evidence gate |
 | `type` | `daily` or `once`, defaulting to `once`; `due` is kept only for a `once` task with a `YYYY-MM-DD` date |
-| `kind` | `detectKind(title)` wins over the proposed kind |
+| `kind` | `detectKind(title)` wins over the proposed kind; the proposed value must be `book` or `fit` — anything else, or nothing, is dropped |
 
-A proposal is refused, greyed out with a reason, when the title matches a certification (`certByTitle`), contains an exam family name, or ends in `취득` — those exist only through the KR bridge ([Rule 19](core-beliefs.md#rule-19)) — or when the same title is already open under that goal.
+A proposal is refused, greyed out with a reason, when the title matches a certification (`certByTitle`), contains an exam family name, or ends in `취득` — those exist only through the KR bridge ([Rule 19](core-beliefs.md#rule-19)) — when the same title is already open under that goal, or when it resolves to no `kind` at all (`활동 유형 없는 실행은 일정 탭에서 관리해요`) — a proposal can only carry the same book/fit kinds a goal accepts (Rule 19 amendment).
 
 Confirming calls `importTasks`, which prepends plain tasks built exactly like `addQuest` builds them and stores the raw reply on today's journal entry. A reply with no JSON block, or with an empty list, is stored as text only. Re-pasting on the same day overwrites the stored reply; the latest one wins.
 

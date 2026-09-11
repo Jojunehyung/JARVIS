@@ -12,11 +12,11 @@ Difficulty B (150 pts) and A (400 pts) cross the line. New daily tasks are cappe
 ## Gate order (`tryComplete`)
 Each check fires only while `q.evidence` is empty; the first match opens its modal and stops.
 1. `isStudy` → `StudyVerifyModal`
-2. `kind` (book / fit / meet) → `ActivityLogModal`
+2. `kind` (book / fit) → `ActivityLogModal`
 3. `needsEvidence(q)` → `EvidenceModal`
 4. otherwise `completeTask(id, null)` at once.
 
-Because every check is `!q.evidence`, a daily activity task asks for a log once and completes one-tap afterwards (reading and meetings included). A fitness log submitted with every field empty passes `null`, so `evidence` stays unset and that task reopens the modal each day.
+Because every check is `!q.evidence`, a daily activity task asks for a log once and completes one-tap afterwards (reading included). A fitness log submitted with every field empty passes `null`, so `evidence` stays unset and that task reopens the modal each day.
 
 ## Photo-mandatory evidence (`EvidenceModal`)
 `needPhoto = task.isCert || task.isExam`; `docName` is `성적표` (exam) or `합격증` (certification). Without an image the button is disabled and reads `제출하고 완료 — 첨부 필요`; submitting anyway shows `{docName} 사진을 첨부해야 완료할 수 있어요.` Text chips (`TASK_EV_CHIPS`: `합격·취득 완료` · `결과물 완성·제출` · `계약·판매·수익 발생` · `공식 기록·인증 있음`) and the memo are optional for photo tasks. A legacy B/A general task (`{diff}급 완료 — 증거 선택`) asks for no photo but needs at least one chip (`증거 항목을 하나 이상 선택해 주세요.`). The stored text is `📎 {docName | 사진} 첨부 · {chips joined by " · "} — {memo}`.
@@ -48,10 +48,9 @@ Checks in order: summary ≥ `sum`; `새로 알게 된 것` ≥ 10 chars; when `
 | `kind` | Mandatory | Optional | Stored evidence |
 |---|---|---|---|
 | book (독서) | star rating 1–5, impression ≥ 15 chars | memorable quote | `독후감 ★{rating} · {review ≤ 60} · "{quote ≤ 40}"` |
-| meet (미팅) | counterpart, agenda ≥ 10 chars | decision, action items (one per line) | `회의록 · {who} — 안건: {agenda ≤ 40} · 결정: {decision ≤ 40} · 액션 {n}건(실행 {m}건 생성)` |
 | fit (운동) | nothing | workout text, 체중 kg, 골격근량 kg | `운동 기록 · {workout ≤ 40} · 체중 {w}kg · 골격근량 {m}kg`, or `null` when all empty |
 
-Action items become follow-up tasks through `spawnTask`: same `areaId` and `goalId` as the meeting, difficulty D, `type: "once"`. Fitness measures go through `applyMeasures`: for each label (`체중`, `골격근량`) the first metric KR of the first active goal whose `kr.title.includes(label)` receives `checkinKR(goalId, krId, value)` (`break outer`) — never the appearance metric ([Rule 8](core-beliefs.md#rule-8)). An activity completion writes only the log line `📚 | 💪 | 🤝 {title} — {evidence}` to the area's achievements: no trophy, no metric gain. A legacy general B/A task logs `{title} — 증거와 함께 완료` and a trophy `kind: "ach"` with `tier: legacyCertGrade(pts)` (A ≥ 550, B ≥ 250, C ≥ 100, D ≥ 50, else E). Certification and exam log strings belong to the scoring engine.
+Fitness measures go through `applyMeasures`: for each label (`체중`, `골격근량`) the first metric KR of the first active goal whose `kr.title.includes(label)` receives `checkinKR(goalId, krId, value)` (`break outer`) — never the appearance metric ([Rule 8](core-beliefs.md#rule-8)). An activity completion writes only the log line `📚 | 💪 {title} — {evidence}` to the area's achievements: no trophy, no metric gain. A legacy general B/A task logs `{title} — 증거와 함께 완료` and a trophy `kind: "ach"` with `tier: legacyCertGrade(pts)` (A ≥ 550, B ≥ 250, C ≥ 100, D ≥ 50, else E). Certification and exam log strings belong to the scoring engine.
 
 ## Grade ladder (`RANKS`)
 | grade | name | gate | req |

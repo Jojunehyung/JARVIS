@@ -22,6 +22,7 @@ module.exports = async (h) => {
     return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
   }, delta);
 
+  // A goal takes activity tasks only, so both dated fixtures declare their kind through the title (detectKind).
   const addDatedTask = async (title, delta) => {
     await openTaskModalFor("하네스 설계 엔지니어 취업");
     await typeInto("무엇을 하나요", title);
@@ -32,13 +33,13 @@ module.exports = async (h) => {
   };
 
   await step("once task with a due date", async () => {
-    await addDatedTask("이력서 초안 작성", 3);
+    await addDatedTask("저녁 요가 30분", 3);
     await clickTab("실행");
     await expectText("D-3");
   });
 
   await step("overdue task shows as past due", async () => {
-    await addDatedTask("포트폴리오 정리", -1);
+    await addDatedTask("밀린 독서 30분", -1);
     await clickTab("실행");
     await expectText("기한 지남");
   });
@@ -53,8 +54,8 @@ module.exports = async (h) => {
       return [...card.querySelectorAll(".text-sm.font-semibold")].map((e) => e.innerText.trim());
     });
     if (!order || !order.length) throw new Error("agenda rows not found");
-    const iOver = order.findIndex((t) => t.includes("포트폴리오 정리"));
-    const iDue = order.findIndex((t) => t.includes("이력서 초안 작성"));
+    const iOver = order.findIndex((t) => t.includes("밀린 독서 30분"));
+    const iDue = order.findIndex((t) => t.includes("저녁 요가 30분"));
     if (iOver < 0 || iDue < 0) throw new Error("dated tasks missing from the agenda: " + order.join(" | "));
     if (iOver > iDue) errors.push("agenda order: overdue task listed after the due-today task");
   });
@@ -130,18 +131,20 @@ module.exports = async (h) => {
       "오늘 점검 요약: 기한 지난 실행 1건.",
       "```json",
       JSON.stringify({ tasks: [
-        { goal: "하네스 설계 엔지니어 취업", title: "도면 기호 복습", diff: "D", type: "once", due },
-        { goal: "없는 목표", title: "영어 단어 30개", diff: "E", type: "daily" },
+        { goal: "하네스 설계 엔지니어 취업", title: "기술 서적 30분 독서", diff: "D", type: "once", due },
+        { goal: "없는 목표", title: "아침 러닝 30분", diff: "E", type: "daily" },
         { goal: "하네스 설계 엔지니어 취업", title: "전기기사 취득", diff: "C", type: "once" },
+        { goal: "하네스 설계 엔지니어 취업", title: "도면 기호 복습", diff: "D", type: "once" },
       ], note: "기한 지난 실행부터 처리해요." }),
       "```",
     ].join("\n");
     await setValue(".fixed.inset-0 textarea", reply);
     await clickInModalExact("답변 확인");
     await sleep(500);
-    await expectText("도면 기호 복습");
+    await expectText("기술 서적 30분 독서");
     await expectText("목표 선택");
     await expectText("자격·시험 실행은");
+    await expectText("활동 유형 없는 실행은");
   });
 
   await step("confirmed proposals become tasks; cert proposal is refused", async () => {
@@ -161,14 +164,15 @@ module.exports = async (h) => {
     await sleep(800);
     const st = await readState();
     const titles = st.tasks.map((q) => q.title);
-    if (!titles.includes("도면 기호 복습")) throw new Error("matched proposal not imported");
-    if (!titles.includes("영어 단어 30개")) throw new Error("goal-picked proposal not imported");
+    if (!titles.includes("기술 서적 30분 독서")) throw new Error("matched proposal not imported");
+    if (!titles.includes("아침 러닝 30분")) throw new Error("goal-picked proposal not imported");
     if (st.tasks.filter((q) => q.title === "전기기사 취득").length !== certBefore) throw new Error("certification proposal was imported");
-    const imported = st.tasks.find((q) => q.title === "도면 기호 복습");
+    if (titles.includes("도면 기호 복습")) throw new Error("kind-less proposal was imported");
+    const imported = st.tasks.find((q) => q.title === "기술 서적 30분 독서");
     if (imported.isCert || imported.isExam || imported.isStudy) throw new Error("imported task carries a milestone flag");
     if (!imported.goalId) throw new Error("imported task has no goalId");
     const today = await dstrIn(0);
-    if (!(st.journal.find((e) => e.date === today)?.ai || "").includes("도면 기호 복습")) throw new Error("reply not stored on the journal entry");
+    if (!(st.journal.find((e) => e.date === today)?.ai || "").includes("기술 서적 30분 독서")) throw new Error("reply not stored on the journal entry");
   });
 
   await step("a reply without a JSON block is stored as text only", async () => {

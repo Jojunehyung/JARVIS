@@ -1,6 +1,6 @@
 // Wrap-up — goal status changes and legacy migrations (last, because they affect later steps)
 module.exports = async (h) => {
-  const { step, shot, clickText, clickTab, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
+  const { step, shot, clickText, clickTab, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
 
   // Plant a legacy save, reload, and read back the migrated state.
   const migrateFixture = async (save) => {
@@ -10,7 +10,7 @@ module.exports = async (h) => {
     await clickTab("성장"); await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 17) throw new Error("schema version " + st.v + " (expected 17)");
+    if (st.v !== 18) throw new Error("schema version " + st.v + " (expected 18)");
     return st;
   };
   // ── Goal status change and removal
@@ -26,6 +26,7 @@ module.exports = async (h) => {
   });
   await step("register and complete a task on the goal (progress 100%)", async () => {
     await h.openTaskModalFor("E2E 완주 목표");
+    await clickInModal("채우기 ›"); // count KR → the task that fills it registers without an activity kind
     await typeInto("무엇을 하나요", "마무리 점검 실행");
     await clickInModalExact("등록");
     await sleep(1000); await closeModal();
@@ -81,7 +82,7 @@ module.exports = async (h) => {
       try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; }
     });
     if (!st) throw new Error("no state after migration");
-    if (st.v !== 17) throw new Error("schema version " + st.v + " (expected 17)");
+    if (st.v !== 18) throw new Error("schema version " + st.v + " (expected 18)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     const kinds = (st.room?.trophies || []).map((t) => t.kind);
@@ -105,7 +106,7 @@ module.exports = async (h) => {
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 17) throw new Error("schema version " + st.v + " (expected 17)");
+    if (st.v !== 18) throw new Error("schema version " + st.v + " (expected 18)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     if (typeof st.metrics?.body !== "number") throw new Error("metrics.body missing — v12 conversion skipped");
@@ -179,6 +180,29 @@ module.exports = async (h) => {
     if (st.ui?.scheduleView !== "list") throw new Error("v17 schedule view missing or not list: " + JSON.stringify(st.ui));
     if (st.events?.length !== 1 || st.events[0].title !== "레거시 면접") throw new Error("v16 events changed by the v17 block: " + JSON.stringify(st.events));
     if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v15 records lost by the v17 block");
+  });
+  await step("v17 save → v18 meeting task converted", async () => {
+    const s17 = {
+      v: 17,
+      profile: { nick: "v17세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, directions: [] },
+      areas: [{ id: "av", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tm", title: "거래처 미팅", areaId: "av", kind: "meet", diff: "D", type: "once", status: "done", doneAt: "2026-01-02", doneDates: [], evidence: "회의록 · ○○상사 김과장 — 안건: 사양 협의" }],
+      goals: [],
+      events: [],
+      journal: [],
+      reviews: [],
+      ui: { scheduleView: "calendar" },
+      act: { streak: 1, lastActive: "2026-01-02", shieldMonth: "2026-01", shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
+      metrics: { asset: 10, infl: 5, body: 15 }, exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s17);
+    const mt = (st.tasks || []).find((q) => q.id === "tm");
+    if (!mt) throw new Error("v18 removed the meeting task instead of converting it");
+    if ("kind" in mt) throw new Error("meet kind survived the v18 block: " + JSON.stringify(mt));
+    if (mt.title !== "거래처 미팅" || mt.diff !== "D" || mt.status !== "done" || mt.doneAt !== "2026-01-02") throw new Error("v18 changed a field it must keep: " + JSON.stringify(mt));
+    if (mt.evidence !== "회의록 · ○○상사 김과장 — 안건: 사양 협의") throw new Error("v18 dropped the recorded minutes: " + JSON.stringify(mt));
+    if (st.ui?.scheduleView !== "calendar") throw new Error("v18 rewrote the v17 schedule view: " + JSON.stringify(st.ui));
   });
   await shot("migrated");
 };
