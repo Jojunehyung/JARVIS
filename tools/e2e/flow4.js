@@ -10,7 +10,7 @@ module.exports = async (h) => {
     await clickTab("성장"); await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 16) throw new Error("schema version " + st.v + " (expected 16)");
+    if (st.v !== 17) throw new Error("schema version " + st.v + " (expected 17)");
     return st;
   };
   // ── Goal status change and removal
@@ -81,7 +81,7 @@ module.exports = async (h) => {
       try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; }
     });
     if (!st) throw new Error("no state after migration");
-    if (st.v !== 16) throw new Error("schema version " + st.v + " (expected 16)");
+    if (st.v !== 17) throw new Error("schema version " + st.v + " (expected 17)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     const kinds = (st.room?.trophies || []).map((t) => t.kind);
@@ -105,7 +105,7 @@ module.exports = async (h) => {
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 16) throw new Error("schema version " + st.v + " (expected 16)");
+    if (st.v !== 17) throw new Error("schema version " + st.v + " (expected 17)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     if (typeof st.metrics?.body !== "number") throw new Error("metrics.body missing — v12 conversion skipped");
@@ -160,6 +160,25 @@ module.exports = async (h) => {
     if (!Array.isArray(st.events)) throw new Error("v16 events array missing");
     if (st.events.length) throw new Error("migration invented events: " + JSON.stringify(st.events));
     if (st.journal?.length !== 1 || !Array.isArray(st.reviews)) throw new Error("v15 records lost by the v16 block");
+  });
+  await step("v16 save → v17 schedule view", async () => {
+    const s16 = {
+      v: 16,
+      profile: { nick: "v16세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, directions: [] },
+      areas: [{ id: "av", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tv", title: "레거시 실행", areaId: "av", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [],
+      events: [{ id: "ev", title: "레거시 면접", kind: "appt", date: "2026-01-05", time: "10:00", createdAt: "2026-01-02" }],
+      journal: [{ id: "jv", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [{ id: "rv", weekOf: "2025-12-29", date: "2026-01-02", wins: "기록 유지", blocks: "없음" }],
+      act: { streak: 1, lastActive: "2026-01-02", shieldMonth: "2026-01", shieldsLeft: 2, lastCheckin: null, briefingSeen: null, lastReview: null },
+      metrics: { asset: 10, infl: 5, body: 15 }, exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s16);
+    if (st.ui?.scheduleView !== "list") throw new Error("v17 schedule view missing or not list: " + JSON.stringify(st.ui));
+    if (st.events?.length !== 1 || st.events[0].title !== "레거시 면접") throw new Error("v16 events changed by the v17 block: " + JSON.stringify(st.events));
+    if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v15 records lost by the v17 block");
   });
   await shot("migrated");
 };

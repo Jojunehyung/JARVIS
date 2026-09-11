@@ -53,6 +53,12 @@ a flag: an event is a record, not a 실행 (task) ([../product-specs/schedule.md
 The weekly appointment is what the `이후` group collapses — expanded it would produce twelve rows over the 90-day
 horizon, so the demo tab shows four rows in total (`내일` 1, `이후` 3) instead of fifteen.
 
+The same three events are what the `달력` view needs, so the demo needed no new event for it: the weekly
+appointment marks four or five cells of the current month in cyan and the deadline one in rose, which is both
+dot colours on one grid. `ui.scheduleView` comes from `freshState`, so the demo opens the tab on `목록`; the
+manifest screenshot `public/screenshots/calendar.png` is this save with `달력` clicked
+(`tools/harness/gen-screenshots.js`).
+
 ## Remaining state
 - `act`: `{ streak: 4, lastActive: today − 1, shieldMonth: monthStr(), shieldsLeft: 2 }` — a live streak that continues on the first completion instead of breaking.
 - `metrics`: `{ asset: 24, infl: 14, body: 20 }`, written directly rather than derived from the achievement history.

@@ -11,12 +11,13 @@ const WIDTH = 430, HEIGHT = 932;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Each shot: the bottom-tab label to open, plus anything to click first.
+// Each shot: the bottom-tab label to open and, optionally, one control to click inside that tab —
+// the schedule tab opens on its list, so the calendar shot has to switch the view first.
 const SHOTS = [
   { file: "home.png", tab: "홈" },
   { file: "tasks.png", tab: "실행" },
   { file: "goals.png", tab: "목표" },
-  { file: "schedule.png", tab: "일정" },
+  { file: "calendar.png", tab: "일정", then: "달력" },
 ];
 
 (async () => {
@@ -52,6 +53,13 @@ const SHOTS = [
         if (b) b.click();
       }, s.tab);
       await wait(700);
+      if (s.then) {
+        await page.evaluate((label) => {
+          const b = [...document.querySelectorAll("button")].find((e) => (e.innerText || "").trim() === label);
+          if (b) b.click();
+        }, s.then);
+        await wait(600);
+      }
       const buf = await page.screenshot({ type: "png" });
       fs.writeFileSync(path.join(outDir, s.file), buf);
       console.log(`${s.file}: ${WIDTH}x${HEIGHT} · ${(buf.length / 1024).toFixed(0)} KB`);

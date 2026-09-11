@@ -2382,10 +2382,10 @@ const parseAssistantReply = (text, state) => {
 
 /* ── State lifecycle ── */
 /**
- * @schema v16 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v17 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 16,
+ *   v: 17,
  *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
  *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -2409,6 +2409,7 @@ const parseAssistantReply = (text, state) => {
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
  *   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
+ *   ui: { scheduleView("list"|"calendar") },                      // which view the schedule tab opens on — a preference, never derived data
  *   lastTick, dModel
  * }
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
@@ -2467,6 +2468,10 @@ const migrate = (s) => {
     // v16: schedule — events[] records real-life appointments and deadlines. Not tasks: no payout, no metric, no evidence gate; repeat occurrences stay derived, only the rule and the user's stamps are stored.
     s = { ...s, v: 16, events: s.events || [] };
   }
+  if (s.v < 17) {
+    // v17: the schedule tab remembers the chosen view (list or calendar). A preference only — the month, the selection and the occurrences stay derived.
+    s = { ...s, v: 17, ui: { ...(s.ui || {}), scheduleView: s.ui?.scheduleView === "calendar" ? "calendar" : "list" } };
+  }
   return s;
 };
 
@@ -2478,7 +2483,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 16,
+  v: 17,
   profile: null,
   areas,
   tasks: [],
@@ -2492,6 +2497,7 @@ const freshState = (areas) => applyDailyTick({
   certBest: {},
   room: { trophies: [] },
   role: null,
+  ui: { scheduleView: "list" },
   lastTick: dstr(),
   dModel: DIFF_RAW_VERSION,
 });
@@ -4680,7 +4686,146 @@ function RoleModelModal({ state, onClose, onSave }) {
 /* An event is a record of real life, never a task: nothing here completes, pays, or moves a metric.
    Occurrences are expanded at render and never stored (rule 9); a missed deadline stays listed with
    its D+n instead of disappearing (rule 13). */
-function ScheduleTab({ state, today, onAdd, onEdit, onToggleDone, onSkip }) {
+
+const CAL_RANGE_MONTHS = 24; // how far the month grid may be paged either side of today, so `‹` cannot walk into years of empty grids
+const WEEKDAY_LABEL = ["일", "월", "화", "수", "목", "금", "토"]; // Sunday first, matching Date#getDay()
+
+/* One occurrence row, used by the list groups and by the calendar's selected-day panel. The markup exists
+   once so the two views cannot drift apart. */
+function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
+  const due = ev.kind === "due";
+  const lead = due ? ddayStr(date) : ev.time || "시간 미정";
+  const leadTone = !due ? "text-zinc-300 border-zinc-700"
+    : date < today ? "text-rose-400 border-rose-800"
+    : date === today ? "text-amber-300 border-amber-700"
+    : "text-zinc-400 border-zinc-700";
+  return (
+    <div className={`bg-zinc-950 rounded-xl px-3 py-2.5 ${done ? "opacity-50" : ""}`}>
+      <div className="flex items-center gap-2.5">
+        <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${leadTone}`}>{lead}</span>
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-semibold truncate ${done ? "line-through" : ""}`}>{ev.title}</div>
+          <div className="text-xs text-zinc-500 truncate">
+            <span className="font-mono">{date}</span>{ev.place ? ` · ${ev.place}` : ""}{ev.note ? ` · ${ev.note}` : ""}
+            {ev.repeat && <span className="text-zinc-400"> · 반복 {REPEAT_LABEL[ev.repeat.freq]}</span>}
+          </div>
+        </div>
+        <span className={`text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${due ? "text-amber-300 border-amber-700" : "text-zinc-300 border-zinc-700"}`}>
+          {EVENT_KIND_LABEL[ev.kind]}
+        </span>
+      </div>
+      <div className="flex gap-1.5 mt-2">
+        <button onClick={() => onToggleDone(ev.id, date)}
+          className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold active:translate-y-0.5 ${done ? "border-emerald-700 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}>
+          {done ? "완료 취소" : "완료 표시"}
+        </button>
+        {ev.repeat && (
+          <button onClick={() => onSkip(ev.id, date)}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">이번 회차 취소</button>
+        )}
+        <button onClick={() => onEdit(ev)}
+          className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">수정</button>
+      </div>
+    </div>
+  );
+}
+
+/* Month grid plus the selected day's rows. The month's occurrences are expanded once per render into a
+   date-keyed map: `upcomingEvents` already loops `eventsOn` over a window, so one call per cell would
+   re-implement that loop 28-31 times and let the grid and the panel disagree. The month, the selection and
+   the map are render state only — nothing derived reaches the save (rule 9). */
+function ScheduleCalendar({ state, today, onAdd, onEdit, onToggleDone, onSkip }) {
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [sel, setSel] = useState(today);
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7)) - 1;
+  const monthStart = `${month}-01`;
+  const daysInMonth = new Date(y, m + 1, 0).getDate(); // day 0 of the next month, the idiom occurrencesOf uses to clamp a monthly repeat
+  const byDate = useMemo(() => {
+    const map = new Map();
+    for (const o of upcomingEvents(state, monthStart, daysInMonth)) {
+      const day = map.get(o.date);
+      if (day) day.push(o); else map.set(o.date, [o]);
+    }
+    return map;
+  }, [state, monthStart, daysInMonth]);
+
+  const firstDow = new Date(monthStart + "T12:00:00").getDay(); // noon-anchored like shiftDay, never toISOString; 0 = Sunday
+  const cells = Math.ceil((firstDow + daysInMonth) / 7) * 7;    // whole weeks, so the last row is never empty
+  const monthOf = (base, delta) => dstr(new Date(Number(base.slice(0, 4)), Number(base.slice(5, 7)) - 1 + delta, 1, 12)).slice(0, 7);
+  const minMonth = monthOf(today, -CAL_RANGE_MONTHS);
+  const maxMonth = monthOf(today, CAL_RANGE_MONTHS);
+  // Paging keeps the selection inside the shown month, so the panel is always exactly eventsOn(state, sel).
+  const goMonth = (delta) => { const next = monthOf(month, delta); setMonth(next); setSel(`${next}-01`); };
+  const selOcc = byDate.get(sel) || [];
+
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="text-sm font-mono font-bold text-zinc-100">{y}년 {m + 1}월</div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => goMonth(-1)} disabled={month <= minMonth}
+              className="w-8 h-8 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-bold disabled:opacity-30">‹</button>
+            <button onClick={() => goMonth(1)} disabled={month >= maxMonth}
+              className="w-8 h-8 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-bold disabled:opacity-30">›</button>
+            <button onClick={() => { setMonth(today.slice(0, 7)); setSel(today); }}
+              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">오늘</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {WEEKDAY_LABEL.map((d) => <div key={d} className="text-xs text-zinc-500 text-center">{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {Array.from({ length: cells }, (_, i) => {
+            const day = i - firstDow + 1;
+            // Leading and trailing cells only hold the seven-column alignment: no day number, no marker, no tap target.
+            if (day < 1 || day > daysInMonth) return <div key={`pad${i}`} className="h-14" />;
+            const date = `${month}-${String(day).padStart(2, "0")}`;
+            const occ = byDate.get(date) || [];
+            return (
+              <button key={date} onClick={() => setSel(date)}
+                className={`h-14 rounded-lg overflow-hidden flex flex-col items-center justify-center gap-1 ${
+                  sel === date ? "bg-zinc-800 border border-cyan-500" : "bg-zinc-950 border border-transparent"}`}>
+                <span className={`text-xs font-mono ${date === today ? "text-amber-300 font-bold" : "text-zinc-300"}`}>{day}</span>
+                <span className="h-4 flex items-center justify-center gap-0.5">
+                  {/* At most three dots — a cell is about 43 px wide at 390 px, so the rest is counted instead */}
+                  {occ.slice(0, 3).map((o) => (
+                    <span key={o.ev.id}
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${o.ev.kind === "due" ? "bg-rose-400" : "bg-cyan-400"} ${o.done ? "opacity-50" : ""}`} />
+                  ))}
+                  {occ.length > 3 && <span className="text-xs font-mono text-zinc-500 leading-none">+{occ.length - 3}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <SectionLabel>선택한 날짜</SectionLabel>
+        <p className="text-xs font-mono text-zinc-400">{sel} · {selOcc.length}건</p>
+        {selOcc.length === 0 ? (
+          <p className="text-sm text-zinc-500 mt-3">이 날짜에는 일정이 없어요.</p>
+        ) : (
+          <div className="space-y-1.5 mt-3">
+            {selOcc.map((o) => (
+              <EventRow key={`${o.ev.id}-${o.date}`} ev={o.ev} date={o.date} done={o.done} today={today}
+                onToggleDone={onToggleDone} onSkip={onSkip} onEdit={onEdit} />
+            ))}
+          </div>
+        )}
+        <button onClick={() => onAdd(sel)}
+          className="w-full mt-3 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center justify-center gap-1 active:translate-y-0.5">
+          <Plus size={14} /> 일정 추가
+        </button>
+      </section>
+    </>
+  );
+}
+
+function ScheduleTab({ state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip }) {
+  const cal = view === "calendar"; // any other value, including a save written before v17, opens the list
   const tomorrow = shiftDay(today, 1);
   const weekEnd = shiftDay(mondayOf(today), 6);
   const { groups, counts } = useMemo(() => {
@@ -4714,81 +4859,62 @@ function ScheduleTab({ state, today, onAdd, onEdit, onToggleDone, onSkip }) {
   }, [state, today, tomorrow, weekEnd]);
   const shown = groups.reduce((n, [, list]) => n + list.length, 0);
 
-  const row = ({ ev, date, done }) => {
-    const due = ev.kind === "due";
-    const lead = due ? ddayStr(date) : ev.time || "시간 미정";
-    const leadTone = !due ? "text-zinc-300 border-zinc-700"
-      : date < today ? "text-rose-400 border-rose-800"
-      : date === today ? "text-amber-300 border-amber-700"
-      : "text-zinc-400 border-zinc-700";
-    return (
-      <div key={`${ev.id}-${date}`} className={`bg-zinc-950 rounded-xl px-3 py-2.5 ${done ? "opacity-50" : ""}`}>
-        <div className="flex items-center gap-2.5">
-          <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${leadTone}`}>{lead}</span>
-          <div className="flex-1 min-w-0">
-            <div className={`text-sm font-semibold truncate ${done ? "line-through" : ""}`}>{ev.title}</div>
-            <div className="text-xs text-zinc-500 truncate">
-              <span className="font-mono">{date}</span>{ev.place ? ` · ${ev.place}` : ""}{ev.note ? ` · ${ev.note}` : ""}
-              {ev.repeat && <span className="text-zinc-400"> · 반복 {REPEAT_LABEL[ev.repeat.freq]}</span>}
-            </div>
-          </div>
-          <span className={`text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${due ? "text-amber-300 border-amber-700" : "text-zinc-300 border-zinc-700"}`}>
-            {EVENT_KIND_LABEL[ev.kind]}
-          </span>
-        </div>
-        <div className="flex gap-1.5 mt-2">
-          <button onClick={() => onToggleDone(ev.id, date)}
-            className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold active:translate-y-0.5 ${done ? "border-emerald-700 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}>
-            {done ? "완료 취소" : "완료 표시"}
-          </button>
-          {ev.repeat && (
-            <button onClick={() => onSkip(ev.id, date)}
-              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">이번 회차 취소</button>
-          )}
-          <button onClick={() => onEdit(ev)}
-            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">수정</button>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         <div className="flex items-center justify-between gap-2">
           <SectionLabel tone="text-cyan-400">다가오는 일정</SectionLabel>
-          <button onClick={onAdd}
-            className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
-            <Plus size={14} /> 일정 추가
-          </button>
+          {/* In calendar view the panel owns the add button, so exactly one `일정 추가` button exists at a time */}
+          {!cal && (
+            <button onClick={() => onAdd()}
+              className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
+              <Plus size={14} /> 일정 추가
+            </button>
+          )}
         </div>
         {/* Full width, not beside the button: at 390 px the counts line wraps mid-word when it shares the row */}
         <p className="text-xs font-mono text-zinc-400">
           오늘 {counts.today}건 · 이번 주 {counts.week}건 · 지난 마감 {counts.past}건
         </p>
+        <div className="flex gap-1.5 mt-2.5">
+          <Chip on={!cal} onClick={() => onView("list")}>목록</Chip>
+          <Chip on={cal} onClick={() => onView("calendar")}>달력</Chip>
+        </div>
       </section>
 
-      {shown === 0 && (
-        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
-          <p className="text-sm text-zinc-500">등록한 일정이 없어요 — 표시할 약속·마감이 없어요.</p>
-        </section>
-      )}
+      {cal ? (
+        <ScheduleCalendar state={state} today={today}
+          onAdd={onAdd} onEdit={onEdit} onToggleDone={onToggleDone} onSkip={onSkip} />
+      ) : (
+        <>
+          {shown === 0 && (
+            <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+              <p className="text-sm text-zinc-500">등록한 일정이 없어요 — 표시할 약속·마감이 없어요.</p>
+            </section>
+          )}
 
-      {groups.map(([label, list, tone]) => list.length > 0 && (
-        <section key={label} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-          <SectionLabel tone={tone}>{label}</SectionLabel>
-          <div className="space-y-1.5">{list.map(row)}</div>
-        </section>
-      ))}
+          {groups.map(([label, list, tone]) => list.length > 0 && (
+            <section key={label} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+              <SectionLabel tone={tone}>{label}</SectionLabel>
+              <div className="space-y-1.5">
+                {list.map((o) => (
+                  <EventRow key={`${o.ev.id}-${o.date}`} ev={o.ev} date={o.date} done={o.done} today={today}
+                    onToggleDone={onToggleDone} onSkip={onSkip} onEdit={onEdit} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </>
+      )}
     </>
   );
 }
 
 /* ── Event modal — one form for add and edit. No goal, no difficulty, no evidence: an event is only a record ── */
-function EventModal({ event, onClose, onAdd, onUpdate, onRemove }) {
+function EventModal({ event, initialDate, onClose, onAdd, onUpdate, onRemove }) {
   const [title, setTitle] = useState(event?.title || "");
   const [kind, setKind] = useState(event?.kind || "appt");
-  const [date, setDate] = useState(event?.date || "");
+  const [date, setDate] = useState(event?.date || initialDate || ""); // add mode opened from a calendar day starts on that day
   const [time, setTime] = useState(event?.time || "");
   const [freq, setFreq] = useState(event?.repeat?.freq || "");
   const [until, setUntil] = useState(event?.repeat?.until || "");
@@ -5271,6 +5397,9 @@ export default function LifeManager() {
     showToast({ msg: "이번 회차를 취소했어요" });
   };
 
+  // The chosen schedule view is a preference, not derived data: only the string is stored (schema v17).
+  const setScheduleView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), scheduleView: v } }));
+
   const saveMetrics = (v) => {
     setState((prev) => ({
       ...prev,
@@ -5473,7 +5602,8 @@ export default function LifeManager() {
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}
-            onAdd={() => setModal({ type: "event" })}
+            view={state.ui?.scheduleView} onView={setScheduleView}
+            onAdd={(date) => setModal({ type: "event", date })}
             onEdit={(ev) => setModal({ type: "event", event: ev })}
             onToggleDone={toggleEventDone} onSkip={skipOccurrence} />
         )}
@@ -5528,7 +5658,7 @@ export default function LifeManager() {
           onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir} />
       )}
       {modal?.type === "event" && (
-        <EventModal event={modal.event} onClose={() => setModal(null)}
+        <EventModal event={modal.event} initialDate={modal.date} onClose={() => setModal(null)}
           onAdd={addEvent} onUpdate={updateEvent} onRemove={removeEvent} />
       )}
       {modal?.type === "metrics" && (

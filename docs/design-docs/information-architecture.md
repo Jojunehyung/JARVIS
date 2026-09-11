@@ -47,7 +47,7 @@ The modal opens from a goal (`modal.type === "addQuest"`, `goalId`) and shows `�
 | goals | 목표 | Target | `GoalsTab` | `목표 (OKR)` cards (progress, pace, KR rows, check-in) · `새 목표` · `＋ 실행 연결` · `달성 처리` · `기록에서 제거` |
 | tasks | 실행 | ClipboardList | `TaskTab` | per-goal groups (daily + milestones) · 미분류 · `도감` · `＋ 이 목표에 실행` |
 | growth | 성장 | TrendingUp | `GrowthTab` | `성취의 벽` · `인생 지표` + `체크인` · `실력 트랙 — 영역별 승급 관문` (`관문 증명하기`) · `롤모델` (근접도, `롤모델 설정` / `롤모델 수정`, `방향 제안`) · `데이터 초기화` |
-| schedule | 일정 | CalendarDays | `ScheduleTab` | `다가오는 일정` + `일정 추가` · counts line · day groups `지난 마감` / `오늘` / `내일` / `이번 주` / `이후` (the last one collapsed to one row per event) |
+| schedule | 일정 | CalendarDays | `ScheduleTab` | `다가오는 일정` + `일정 추가` · counts line · the view toggle `목록` / `달력` (stored in `ui.scheduleView`) · **목록**: day groups `지난 마감` / `오늘` / `내일` / `이번 주` / `이후` (the last one collapsed to one row per event) · **달력**: `ScheduleCalendar` — month header (`{YYYY}년 {M}월` · `‹` · `›` · `오늘`), seven-column grid with one marker per occurrence, `선택한 날짜` panel with the same `EventRow` the groups use and its own `일정 추가` |
 
 - Modals, one at a time (`modal.type`, 16 values): `addQuest` (renders `AddTaskModal`; the type string keeps the legacy name) / `addGoal` / `evidence` / `promote` / `role` / `activity` / `study` / `evidenceView` / `catalog` / `roleAdvice` / `metrics` / `briefing` / `journal` / `bridge` / `review` / `event`.
 - Overlays (`overlay.type`): `gradeup` / `achieve`. Toast: `ToastHost` holds one slot with no queue — a new `show` replaces the current message and restarts the 2600 ms timer.

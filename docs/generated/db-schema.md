@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 16 |
+| State schema version (`freshState.v`) | 17 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v16 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v17 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 16,
+  v: 17,
   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -38,6 +38,7 @@
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
+  ui: { scheduleView("list"|"calendar") },                      // which view the schedule tab opens on — a preference, never derived data
   lastTick, dModel
 }
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
@@ -48,7 +49,7 @@ the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacke
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 16,
+  v: 17,
   profile: null,
   areas,
   tasks: [],
@@ -62,6 +63,7 @@ the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacke
   certBest: {},
   room: { trophies: [] },
   role: null,
+  ui: { scheduleView: "list" },
   lastTick: dstr(),
   dModel: DIFF_RAW_VERSION,
 });
@@ -142,21 +144,22 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v14 → v14 | v14: game vocabulary cleanup — quests→tasks, parts→areas, partId→areaId. Values and meaning unchanged (storage keys liferpg-* kept for data compatibility). |
 | < v15 → v15 | v15: daily assistant — journal[] and reviews[] records, optional tasks[].due, act stamps (lastCheckin, briefingSeen, lastReview). Nothing derived is stored. |
 | < v16 → v16 | v16: schedule — events[] records real-life appointments and deadlines. Not tasks: no payout, no metric, no evidence gate; repeat occurrences stay derived, only the rule and the user's stamps are stored. |
+| < v17 → v17 | v17: the schedule tab remembers the chosen view (list or calendar). A preference only — the month, the selection and the occurrences stay derived. |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1225 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3636 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 3636 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 3636 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-profile` | 4943 | App root |
-| `liferpg-img-${slot}` | 4980 | App root |
-| `liferpg-img-ev-${id}` | 5003 | App root |
-| `liferpg-img-ev-${t.id}` | 5361 | App root |
-| `liferpg-img-study-${t.id}-1` | 5361 | App root |
-| `liferpg-img-study-${t.id}-2` | 5361 | App root |
+| `liferpg-img-ev-${task.id}` | 3642 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 3642 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 3642 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-profile` | 5069 | App root |
+| `liferpg-img-${slot}` | 5106 | App root |
+| `liferpg-img-ev-${id}` | 5129 | App root |
+| `liferpg-img-ev-${t.id}` | 5490 | App root |
+| `liferpg-img-study-${t.id}-1` | 5490 | App root |
+| `liferpg-img-study-${t.id}-2` | 5490 | App root |
 
 ## Demo data (`demoState`)
 

@@ -18,6 +18,6 @@ Modals (`Modal` shell, one at a time via `modal` state): `BriefingModal`, `Journ
 | [goals.md](goals.md) | OKR cards, four KR types, KR check-in, goal status, `AddGoalModal` |
 | [tasks.md](tasks.md) | Per-goal groups, milestones, unassigned section, `AddTaskModal` with the KR bridge, `CatalogModal` |
 | [growth.md](growth.md) | Achievement wall, life metrics, skill-track gates, role model, direction advice, reset |
-| [schedule.md](schedule.md) | `일정` tab: day groups, occurrence rows, `EventModal`, what an event never does |
+| [schedule.md](schedule.md) | `일정` tab: the `목록` / `달력` views, day groups, occurrence rows, the month grid and its selected-day panel, `EventModal`, what an event never does |
 | [evidence-modals.md](evidence-modals.md) | `EvidenceModal`, `EvidenceViewModal`, `ActivityLogModal`, `StudyVerifyModal` |
 | [feedback-overlays.md](feedback-overlays.md) | RANK UP / ACHIEVEMENT overlays and toasts |

@@ -61,5 +61,7 @@ Severity: **S1** cannot run / data loss / wrong payout · **S2** behaviour contr
 
 | R-16 | S2 | The service worker precached with a single `cache.addAll`, so one missing file — a deploy replacing assets mid-visit, say — left no cache at all and the app silently would not open offline | 2026-09-09 — the document and bundle stay all-or-nothing, icons and manifest are added individually; an E2E step now asserts the cache actually holds the document and the bundle |
 
+| R-17 | S3 | Every build shipped screenshots nothing referenced: `gen-screenshots.js` wrote `public/screenshots/schedule.png` (and, from a Phase A probe, `calendar.png`) while `public/manifest.webmanifest` listed only three | 2026-09-11 — a shot may now carry a follow-up click, the fourth shot is the `일정` tab switched to `달력`, `calendar.png` is the fourth manifest entry and the orphaned `schedule.png` was deleted |
+
 ## Allowlist mirror (`tools/harness/finish-allowlist.json`)
 _Empty._ Entries here are two-phase artefacts, not accepted debt: `finish-check` counts references corpus-wide, so a constant that only the next phase renders is flagged, and the alternative — a fake reference — is worse. The last one (`EVENT_SOON_DAYS`, schedule Phase A) was removed on 2026-09-11, when Phase C wired it into `buildBriefing` and the home briefing card.

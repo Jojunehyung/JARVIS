@@ -3,11 +3,11 @@
 
 One JSON object holds everything, under one key, in the browser. It is loaded once at start-up, migrated forward through sequential version blocks, ticked for the new day, and written back on every change. The field reference, the `freshState` defaults and the migration ledger are generated from the source into [../generated/db-schema.md](../generated/db-schema.md) — this document covers the policy around them.
 
-## Shape (v16)
+## Shape (v17)
 ```
-{ v, profile, areas[], tasks[], goals[], events[], journal[], reviews[], act, metrics, exams, certBest, room, role, lastTick, dModel }
+{ v, profile, areas[], tasks[], goals[], events[], journal[], reviews[], act, metrics, exams, certBest, room, role, ui, lastTick, dModel }
 ```
-`areas` carry grade and 방향 (direction); `tasks` carry `goalId` (required for new tasks), difficulty, evidence and the milestone flags `isCert` / `isExam` / `isStudy`; `goals` carry `krs` of the four KR types; `exams` holds `best` / `dim` / `spec`; `room.trophies` is the achievement wall; `journal[]` holds one free-text entry per date plus the assistant reply pasted back that day, and `reviews[]` one entry per week; `events[]` holds the schedule records (`약속` / `마감`) with an optional time and repeat rule, which are never tasks and never paid ([../product-specs/schedule.md](../product-specs/schedule.md)). Progress is never stored — it is derived by `krProgress`, `goalProgress`, `paceOf` and `roleGap` ([Rule 9](core-beliefs.md#rule-9)). The canonical field list lives in the `@schema` JSDoc block above `migrate` in the source, which is what the generator copies.
+`areas` carry grade and 방향 (direction); `tasks` carry `goalId` (required for new tasks), difficulty, evidence and the milestone flags `isCert` / `isExam` / `isStudy`; `goals` carry `krs` of the four KR types; `exams` holds `best` / `dim` / `spec`; `room.trophies` is the achievement wall; `journal[]` holds one free-text entry per date plus the assistant reply pasted back that day, and `reviews[]` one entry per week; `events[]` holds the schedule records (`약속` / `마감`) with an optional time and repeat rule, which are never tasks and never paid ([../product-specs/schedule.md](../product-specs/schedule.md)); `ui` holds screen preferences only — so far `scheduleView` (`"list"` or `"calendar"`), the view the 일정 tab opens on, while the month shown and the selected day stay component state. Progress is never stored — it is derived by `krProgress`, `goalProgress`, `paceOf` and `roleGap` ([Rule 9](core-beliefs.md#rule-9)). The canonical field list lives in the `@schema` JSDoc block above `migrate` in the source, which is what the generator copies.
 
 ## Storage keys (frozen, [Rule 12](core-beliefs.md#rule-12))
 
@@ -50,11 +50,12 @@ The `readyRef` guard exists so the persist effect cannot overwrite a real save w
 | `v < 14` | terminology rename: `quests` → `tasks`, `parts` → `areas`, `partId` → `areaId` on tasks and goals; the old keys are deleted. Storage keys stay as they are |
 | `v < 15` | daily assistant: adds `journal[]` and `reviews[]` (empty), and the `act` stamps `lastCheckin` / `briefingSeen` / `lastReview` (null). Existing tasks gain no `due`; nothing derived is stored |
 | `v < 16` | schedule: adds `events[]` (empty). Every other field passes through untouched, and no occurrence list is written — the repeat rule plus the user's `skip` / `doneDates` stamps are all that is stored |
+| `v < 17` | schedule view: adds `ui.scheduleView`, `"calendar"` only when the save already carried that value, otherwise `"list"`. A preference, not derived data — no month index, no selected day and no occurrence list is written, and `events[]` is untouched |
 
-Rules for changing this ([Rule 12](core-beliefs.md#rule-12)): add a new `if (s.v < N)` block, bump `v` in `freshState`, never edit an existing block, and never rename a storage key. Migration paths are covered by the E2E harness (`tools/e2e/flow4.js` exercises a v10 save, a save with no `v`, a v13 → v14 rename, a v14 → v15 upgrade, and a v15 → v16 upgrade).
+Rules for changing this ([Rule 12](core-beliefs.md#rule-12)): add a new `if (s.v < N)` block, bump `v` in `freshState`, never edit an existing block, and never rename a storage key. Migration paths are covered by the E2E harness (`tools/e2e/flow4.js` exercises a v10 save, a save with no `v`, a v13 → v14 rename, a v14 → v15 upgrade, a v15 → v16 upgrade, and a v16 → v17 upgrade).
 
 ## `freshState(areas)` and `applyDailyTick(s)`
-`freshState` builds a v16 state with the areas produced by onboarding, empty `tasks` / `goals` / `events` / `journal` / `reviews` / `trophies`, `act` at streak 0 with 2 shields for the current month and the three date stamps null, `metrics` `{ asset: 10, infl: 5, body: 15 }`, an empty `exams` bundle stamped with `POINT_POLICY_VERSION`, `role: null`, `lastTick: dstr()` and `dModel: DIFF_RAW_VERSION`. It passes through `applyDailyTick` once. Callers: onboarding's `onStart` and `demoState`. Exact values: [../generated/db-schema.md](../generated/db-schema.md).
+`freshState` builds a v17 state with the areas produced by onboarding, empty `tasks` / `goals` / `events` / `journal` / `reviews` / `trophies`, `act` at streak 0 with 2 shields for the current month and the three date stamps null, `metrics` `{ asset: 10, infl: 5, body: 15 }`, an empty `exams` bundle stamped with `POINT_POLICY_VERSION`, `role: null`, `ui: { scheduleView: "list" }`, `lastTick: dstr()` and `dModel: DIFF_RAW_VERSION`. It passes through `applyDailyTick` once. Callers: onboarding's `onStart` and `demoState`. Exact values: [../generated/db-schema.md](../generated/db-schema.md).
 
 `applyDailyTick` refills 보호권 (streak shields) when the month changed (`shieldMonth !== monthStr()` → `shieldsLeft = 2`) and stamps `lastTick`. It runs at boot, on the migrated state.
 
