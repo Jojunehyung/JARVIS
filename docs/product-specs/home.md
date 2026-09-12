@@ -1,7 +1,7 @@
 # Home tab
 <!-- src: SPEC-4-2 -->
 
-The first section is the 오늘 브리핑 card (see [daily-briefing.md](daily-briefing.md)). `HomeTab` is the landing screen after onboarding: a profile card, the three most urgent active goals with their 페이스 (pace), and up to five of today's open 실행 (tasks) with a one-tap completion that still goes through the evidence gate. Everything is derived from `state` at render time — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onUpload (askUpload), onClearImg (clearImg), onComplete (tryComplete), onGoGoals, onGoQuests, onGoSchedule` — the last three switch the bottom tab to 목표 / 실행 / 일정.
+The first section is the 오늘 브리핑 card (see [daily-briefing.md](daily-briefing.md)). `HomeTab` is the landing screen after onboarding: a profile card, the three most urgent active goals with their 페이스 (pace), and up to five of today's open 실행 (tasks) with a one-tap completion that still goes through the evidence gate. Everything is derived from `state` at render time — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onUpload (askUpload), onClearImg (clearImg), onComplete (tryComplete), onGoGoals, onGoQuests, onGoSchedule, onGoBiz` — the last four switch the bottom tab to 목표 / 실행 / 일정 / 사업.
 
 ## Profile card
 - Portrait: `Portrait` at size 72 renders `imgs.profile` when a photo exists, otherwise the parametric `PortraitSprite` from `profile.look` and `profile.gender`. With a photo present a `✕` button calls `onClearImg("profile")` → `clearImg` clears it from memory and deletes the `liferpg-img-profile` key.
@@ -10,11 +10,13 @@ The first section is the 오늘 브리핑 card (see [daily-briefing.md](daily-br
 - The streak `🔥 {act.streak}일` (amber) and 보호권 (streak shields) `🛡 {act.shieldsLeft}` are not on this card: `App` renders them in the header of every tab, next to `nick · status`.
 
 ## 오늘 브리핑 card
-Two mono lines and, when one exists, the first severity-3 line of the briefing in rose. The second mono line is a
-button: `오늘 일정 {n}건 · 3일 내 마감 {n}건 ›` (`brief.counts.events` / `brief.counts.dueSoon`, the 3 read from
-`EVENT_SOON_DAYS`) → `onGoSchedule` switches to the 일정 tab. Today's events are date facts that belong beside the
-other today numbers, which is why they are a line here instead of a sixth card. Full card:
-[daily-briefing.md](daily-briefing.md); the tab itself: [schedule.md](schedule.md).
+Three mono lines and, when one exists, the first severity-3 line of the briefing in rose. The second mono line is
+a button: `오늘 일정 {n}건 · 3일 내 마감 {n}건 ›` (`brief.counts.events` / `brief.counts.dueSoon`, the 3 read from
+`EVENT_SOON_DAYS`) → `onGoSchedule` switches to the 일정 tab. The third, reading the same `buildBriefing` call:
+`이번 달 계약 {won} · 입금 미확인 {n}건 ›` (`brief.counts.bizMonth` / `brief.counts.bizUnpaid`, the unpaid count
+rose when above zero) → `onGoBiz` switches to the 사업 tab. Both are date/money facts that belong beside the other
+today numbers, which is why they are lines here instead of a fifth and sixth card. Full card:
+[daily-briefing.md](daily-briefing.md); the tabs themselves: [schedule.md](schedule.md), [business.md](business.md).
 
 ## 오늘의 초점 (today's focus)
 `SectionLabel` in cyan with `전체 보기 ›` (→ goals tab). `focus` = active goals sorted ascending by `deadline || "9999"` (undated goals last), first 3.

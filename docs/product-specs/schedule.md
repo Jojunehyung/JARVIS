@@ -1,15 +1,16 @@
 # Schedule tab — `일정`
 
-The fifth tab records what happens on a date: an interview, an exam, an application deadline. An event is a
+The fourth tab records what happens on a date: an interview, an exam, an application deadline. An event is a
 **record, never a 실행 (task)** — it pays no points, creates no achievement, moves no metric, touches no streak
-and passes no evidence gate. It is the only screen whose rows have no goal behind them.
+and passes no evidence gate. Together with the 사업 tab ([business.md](business.md)), it is one of the only two
+screens whose rows have no goal behind them.
 
 Data shape: [`events[]` in the generated schema](../generated/db-schema.md). Occurrence, briefing and packet
 rules: [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
 ## Screen
 `ScheduleTab` props: `state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip`. Tab key `schedule`,
-label `일정`, icon `CalendarDays`, fifth entry of `NAV` (`grid-cols-5`).
+label `일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-6`), before `사업`.
 
 - Header section: `다가오는 일정` (cyan `SectionLabel`) and, in `목록` view only, the button `일정 추가` →
   `EventModal` in add mode. In `달력` view the button lives in the selected-day panel instead, so exactly one

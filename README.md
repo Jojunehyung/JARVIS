@@ -15,7 +15,7 @@ A local-only web app that turns life goals into OKRs, day-sized tasks, and evide
 npm install
 npm run dev             # http://localhost:5173
 npm run build           # dist/ — the deployable app
-npm run verify          # build + 87-step end-to-end run in a real browser
+npm run verify          # build + 135-step end-to-end run in a real browser
 npm run finish          # dead code, duplicates, language policy
 npm run docs:check      # documentation integrity
 ```

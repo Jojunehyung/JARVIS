@@ -7,6 +7,7 @@ Opening the app on a new day shows a briefing: what the saved state says about t
 A card above 오늘의 초점 (today's focus), labelled `오늘 브리핑`:
 - counts line: `기한 지남 {n} · 오늘 기한 {n} · 매일 남음 {n} · 뒤처짐 {n}`
 - schedule line, a button that switches to the 일정 tab: `오늘 일정 {n}건 · 3일 내 마감 {n}건 ›` — today's occurrence count and the `마감` occurrences inside `EVENT_SOON_DAYS` (3 days, today included)
+- business line, a button that switches to the 사업 tab: `이번 달 계약 {won} · 입금 미확인 {n}건 ›` — `bizSummary`'s contracted total for this month and its unpaid billed-month count, rose when above zero
 - the first severity-3 line of the briefing, in rose, when there is one
 - buttons `브리핑 열기 ›` and `일지 쓰기`
 
@@ -19,6 +20,7 @@ Title `오늘 브리핑 — {today}`. One block per section, each with a `Sectio
 | `오늘 일정` | today's deadlines and appointments, the deadlines already past, and the ones inside the next 3 days; `해당 없음` when there are none. Every line switches to the 일정 tab ([schedule.md](schedule.md)) — an event is a record, so nothing here can be completed from the briefing |
 | `연속 기록` | one line stating whether today is recorded, whether the streak breaks tonight, or whether a 보호권 (streak shield) will be spent |
 | `목표 페이스` | one line per active goal: D-day, progress, pace verdict, and the unmet KRs when the deadline is within 7 days or already past |
+| `사업` | at most 3 unpaid billed months, a `won` contract ending within `DEAL_END_SOON` months, and a `quote` older than `QUOTE_STALE_DAYS` days, then always a closing line stating this month's contracted, collected and remaining totals — the section is never empty, so this summary line is never dropped even when the alerts above it fill the section's cap. Every line switches to the 사업 tab ([business.md](business.md)) — a business record is a record, so nothing here can be completed from the briefing |
 | `영역·활동` | 영역 (areas) with no achievement in 30 days, and goals whose activity kind has no completion in 7 days; `최근 30일 정체 영역 없음 · 최근 7일 활동 공백 없음` when there is neither |
 | `다음 단계` | the first role-model gap and the standard achievement that would close it, from the same source as 방향 제안 (direction advice) |
 | `주간 리뷰` | whether this week's review exists |

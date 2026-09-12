@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useId, forwardRef, useImperativeHandle } from "react";
 import {
   Trophy, Target, Plus, X, Lock, RotateCcw, TrendingUp, Check, Star,
-  Flag, ClipboardList, CalendarDays, Camera, Paperclip, Link as LinkIcon,
+  Flag, ClipboardList, CalendarDays, Briefcase, Camera, Paperclip, Link as LinkIcon,
 } from "lucide-react";
 
 /* ───────────────────────── Constants: grade and verdict rules ───────────────────────── */
@@ -1238,6 +1238,40 @@ const store = {
   },
 };
 
+// Image-storage guards. `localStorage` is a few MB per origin and the state blob shares it, so `store.set`
+// swallowing a quota error would leave the memory fallback showing a picture this session that a reload
+// could not find. Everything that touches `window.localStorage` stays in this region.
+const IMG_FILE_MAX = 8 * 1024 * 1024;     // largest file accepted, checked before decoding
+const THUMB_MAX_EDGE = 640;               // longest edge of a stored thumbnail
+const THUMB_MAX_CHARS = 300000;           // longest data URL accepted after resizing
+const STORAGE_BUDGET = 3.5 * 1024 * 1024; // heuristic ceiling for everything this app keeps in localStorage
+
+const persisted = (k) => {
+  try { return window.localStorage.getItem(k) != null; } catch { return false; }
+};
+
+const storageUsedBytes = () => {
+  try {
+    let n = 0;
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      n += (k || "").length + (window.localStorage.getItem(k) || "").length;
+    }
+    return n;
+  } catch { return 0; }
+};
+
+// Budget check → write → read back. Returns the reason so the caller can name it; the record the image
+// belongs to is saved either way, and a write that did not survive is deleted rather than left in memory.
+const saveImageChecked = async (k, v) => {
+  const used = storageUsedBytes();
+  const usedMB = (used / 1048576).toFixed(1);
+  if (used + v.length > STORAGE_BUDGET) return { ok: false, reason: "budget", usedMB };
+  await store.set(k, v);
+  if (!persisted(k)) { await store.del(k); return { ok: false, reason: "quota", usedMB }; }
+  return { ok: true };
+};
+
 /* ───────────────────────── Shared UI atoms — Bar, DiffBadge, CertBadge ───────────────────────── */
 
 
@@ -1501,21 +1535,44 @@ function PortraitSprite({ look, gender = "", size = 96, className = "" }) {
 }
 
 
-const resizeImage = (file, w = 256, h = 320) => new Promise((resolve, reject) => {
+// Decodes `file` into an Image, hands it to `draw`, and always revokes the object URL. Shared by the two
+// resizers so neither owns the loading and error path; a throw inside `draw` becomes a rejection.
+const withImage = (file, draw) => new Promise((resolve, reject) => {
   const img = new Image();
   const url = URL.createObjectURL(file);
   img.onload = () => {
-    const c = document.createElement("canvas");
-    c.width = w; c.height = h;
-    const ctx = c.getContext("2d");
-    const scale = Math.max(w / img.width, h / img.height);
-    const dw = img.width * scale, dh = img.height * scale;
-    ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    let out;
+    try { out = draw(img); } catch (e) { URL.revokeObjectURL(url); reject(e); return; }
     URL.revokeObjectURL(url);
-    resolve(c.toDataURL("image/jpeg", 0.82));
+    resolve(out);
   };
   img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("img")); };
   img.src = url;
+});
+
+// Evidence and profile photos: a fixed-size cover crop (rule 16 path — output must not change).
+const resizeImage = (file, w = 256, h = 320) => withImage(file, (img) => {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+  const scale = Math.max(w / img.width, h / img.height);
+  const dw = img.width * scale, dh = img.height * scale;
+  ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  return c.toDataURL("image/jpeg", 0.82);
+});
+
+// Keeps the aspect ratio and never upscales, so a landscape diagram stays readable. A separate function
+// rather than a flag on `resizeImage`: the evidence crop above is unchanged.
+const resizeImageFit = (file, max = THUMB_MAX_EDGE, q = 0.72) => withImage(file, (img) => {
+  const scale = Math.min(1, max / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(img.width * scale));
+  c.height = Math.max(1, Math.round(img.height * scale));
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  let out = c.toDataURL("image/jpeg", q);
+  if (out.length > THUMB_MAX_CHARS) out = c.toDataURL("image/jpeg", 0.55);
+  if (out.length > THUMB_MAX_CHARS) throw new Error("too-big");
+  return out;
 });
 
 function Portrait({ img, look, gender, size = 84 }) {
@@ -2043,6 +2100,118 @@ const jobWeightForCert = (state, areaId, cert) => {
   return { ...worst, mult: TIER_MULT[worst.tier], inter: dirs.length > 1 };
 };
 
+/* ───────────────────────── Business — portfolio · unit prices · period contracts ───────────────────────── */
+// Business records are records, never tasks (rules 1, 18): a signed contract pays no P, creates no trophy,
+// moves no goal and touches no streak, exactly as a schedule event does not. State holds the billing rule
+// (startMonth, months, monthly, costMonthly) plus the user's own paidMonths stamps; every month, total,
+// margin, phase and roll-up below is computed at render and never written back (rule 9).
+const BIZ_REVENUE_MONTHS = 6;  // how many months the contract view rolls up
+const QUOTE_STALE_DAYS = 7;    // a quote older than this is named in the briefing
+const DEAL_END_SOON = 2;       // a contract ending this many months out is named in the briefing
+const DEAL_MAX_MONTHS = 120;   // hard cap on a billing period, so one typo cannot expand every roll-up
+const RATE_UNIT = { month: "월", day: "일", project: "건" };
+const DEAL_STATUS = { lead: "문의", quote: "견적", won: "계약", lost: "무산" };
+// The derived phases, named once: the tab's group headings and the assistant packet read the same words.
+const DEAL_PHASE_LABEL = { active: "진행 중", upcoming: "예정", quote: "견적 대기", lead: "문의", ended: "종료", lost: "무산" };
+
+// The single money formatter: every surface prints the same figure and no digit is ever dropped.
+const wonText = (n) => {
+  const v = Math.round(Number(n) || 0);
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  if (abs < 10000) return `${sign}${abs.toLocaleString()}원`;
+  const man = Math.floor(abs / 10000), rest = abs % 10000;
+  return rest === 0 ? `${sign}${man.toLocaleString()}만원` : `${sign}${man.toLocaleString()}만 ${rest.toLocaleString()}원`;
+};
+
+// Month arithmetic on the "YYYY-MM" string itself — Date#toISOString would shift by time zone (TD-04).
+const monthAdd = (month, n) => {
+  const t = Number(String(month).slice(0, 4)) * 12 + (Number(String(month).slice(5, 7)) - 1) + n;
+  const y = Math.floor(t / 12);
+  return `${String(y).padStart(4, "0")}-${String(t - y * 12 + 1).padStart(2, "0")}`;
+};
+const monthsBetween = (a, b) =>
+  (Number(String(b).slice(0, 4)) - Number(String(a).slice(0, 4))) * 12 +
+  (Number(String(b).slice(5, 7)) - Number(String(a).slice(5, 7)));
+
+const dealMonths = (d) => Math.min(DEAL_MAX_MONTHS, Math.max(0, Math.floor(Number(d?.months) || 0)));
+const dealEnd = (d) => (d?.startMonth && dealMonths(d) > 0 ? monthAdd(d.startMonth, dealMonths(d) - 1) : null);
+const dealTotal = (d) => (Number(d?.monthly) || 0) * dealMonths(d);
+const dealCostTotal = (d) => (d?.costMonthly == null ? null : (Number(d.costMonthly) || 0) * dealMonths(d));
+// No cost entered means no margin — not a zero cost. A negative margin is a legal result and is printed as it is.
+const marginOf = (price, cost) => (cost == null ? null : { amount: price - cost, rate: price > 0 ? (price - cost) / price : null });
+
+// Four stored statuses; the three period phases are read off the billing rule and never stored.
+const dealPhase = (d, month) => {
+  if (d?.status !== "won") return d?.status || "lead";
+  if (d.startMonth && d.startMonth > month) return "upcoming";
+  const end = dealEnd(d);
+  if (end && end < month) return "ended";
+  return "active";
+};
+
+const monthRevenue = (d, month) => {
+  if (d?.status !== "won" || !d.startMonth) return 0;
+  const end = dealEnd(d);
+  if (!end || month < d.startMonth || month > end) return 0;
+  return Number(d.monthly) || 0;
+};
+
+// What a contract still bills after `month` — the month in progress is never counted, so the tab header,
+// the briefing and the packet state the same remainder.
+const dealBacklog = (d, month) => {
+  const end = dealEnd(d);
+  if (d?.status !== "won" || !end) return 0;
+  const from = month >= d.startMonth ? monthAdd(month, 1) : d.startMonth;
+  return from <= end ? (Number(d.monthly) || 0) * (monthsBetween(from, end) + 1) : 0;
+};
+
+// Months already billed on a contract: from its start up to `month`, never past its end. The payment
+// chips and the unpaid roll-up read the same list, so neither can invent a month the other does not bill.
+const billedMonths = (d, month) => {
+  const end = dealEnd(d);
+  const out = [];
+  if (!d?.startMonth || !end) return out;
+  const last = end < month ? end : month;
+  for (let m = d.startMonth, i = 0; m <= last && i < DEAL_MAX_MONTHS; m = monthAdd(m, 1), i++) out.push(m);
+  return out;
+};
+
+// `n` consecutive months from `fromMonth`; a month with nothing contracted still appears, with amount 0.
+const revenueByMonth = (state, fromMonth, n) => {
+  const deals = state?.deals || [];
+  return Array.from({ length: Math.max(0, n) }, (_, i) => {
+    const month = monthAdd(fromMonth, i);
+    return { month, amount: deals.reduce((sum, d) => sum + monthRevenue(d, month), 0) };
+  });
+};
+
+// The one object the tab header, the briefing, the home card and the packet all read, so no two surfaces
+// can state a different figure.
+const bizSummary = (state, today) => {
+  const month = String(today).slice(0, 7);
+  const counts = { lead: 0, quote: 0, won: 0, lost: 0, active: 0, upcoming: 0, ended: 0, unpaid: 0 };
+  let thisMonth = 0, collected = 0, backlog = 0, pipeline = 0;
+  const unpaid = [];
+  for (const d of state?.deals || []) {
+    if (DEAL_STATUS[d.status]) counts[d.status]++;
+    if (d.status === "quote") pipeline += dealTotal(d);
+    if (d.status !== "won") continue;
+    counts[dealPhase(d, month)]++;
+    thisMonth += monthRevenue(d, month);
+    const end = dealEnd(d);
+    if (!end) continue;
+    const monthly = Number(d.monthly) || 0;
+    const paid = d.paidMonths || [];
+    if (month >= d.startMonth && month <= end && paid.includes(month)) collected += monthly;
+    backlog += dealBacklog(d, month);
+    for (const m of billedMonths(d, month)) if (!paid.includes(m)) unpaid.push({ deal: d, month: m, amount: monthly });
+  }
+  unpaid.sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
+  counts.unpaid = unpaid.length;
+  return { month, thisMonth, collected, backlog, pipeline, unpaid, counts };
+};
+
 /* ───────────────────────── Daily assistant — agenda · briefing · bridge ───────────────────────── */
 // Standard achievements that would close each role-model gap. Shared by RoleAdviceModal and the briefing;
 // the tiering and payout logic is unchanged (rules 14, 15).
@@ -2148,6 +2317,8 @@ const KIND_LABEL = { book: "📚 독서", fit: "💪 운동" };
 const AREA_STALE_DAYS = 30;
 const ACTIVITY_GAP_DAYS = 7;
 const CAP = 5;
+// Briefing actions that are a tab rather than a modal — a line whose type is missing here opens nothing.
+const TAB_ACTIONS = ["goals", "growth", "schedule", "biz"];
 
 // The daily briefing: what the saved state says about today. Pure — computed at render, never stored (rule 9).
 // Every line states a fact with a number and never softens it (rule 13).
@@ -2207,6 +2378,37 @@ const buildBriefing = (state, today) => {
       };
     });
   add("goals", "목표 페이스", goalItems.length ? goalItems : [{ kind: "none", severity: 1, text: "활성 목표 없음" }]);
+
+  /* Business — records, never tasks: a line here bills nothing, completes nothing and moves no goal
+     (rules 1, 18). The month's figures are stated even when nothing is outstanding, so there is no
+     absence branch: the summary line is always the last item (rule 13). */
+  const biz = bizSummary(state, today);
+  const bizDeals = state.deals || [];
+  const bizAlerts = [
+    ...biz.unpaid.slice(0, 3).map((u) => ({
+      kind: "biz", severity: 3, text: `${u.deal.client} ${u.deal.title} — ${u.month} 입금 미확인 ${wonText(u.amount)}`,
+    })),
+    ...bizDeals
+      .map((d) => ({ d, end: dealEnd(d), left: monthsBetween(biz.month, dealEnd(d) || biz.month) }))
+      .filter(({ d, end, left }) => d.status === "won" && end && left >= 0 && left <= DEAL_END_SOON)
+      .map(({ d, end }) => ({
+        kind: "biz", severity: 2, text: `${d.client} ${d.title} — ${end} 종료 · 남은 계약 ${wonText(dealBacklog(d, biz.month))}`,
+      })),
+    ...bizDeals
+      .map((d) => ({ d, days: d.createdAt ? daysBetween(d.createdAt, today) : 0 }))
+      .filter(({ d, days }) => d.status === "quote" && days > QUOTE_STALE_DAYS)
+      .map(({ d, days }) => ({
+        kind: "biz", severity: 2, text: `${d.client} ${d.title} — 견적 ${days}일 경과 · ${wonText(dealTotal(d))}`,
+      })),
+  ];
+  // The month's figures are the reason this section exists, so the alerts yield to them rather than the other
+  // way round: `add` slices at CAP, and three unpaid months plus two ending contracts would otherwise push the
+  // revenue line out of the business section — the one number it must never drop (rule 13).
+  const bizItems = [...bizAlerts.slice(0, CAP - 1), {
+    kind: "biz", severity: 1,
+    text: `이번 달 계약 매출 ${wonText(biz.thisMonth)} · 입금 확인 ${wonText(biz.collected)} · 남은 계약 ${wonText(biz.backlog)}`,
+  }];
+  add("biz", "사업", bizItems.map((it) => ({ ...it, action: { type: "biz" } })));
 
   /* Stagnant areas, activity gaps */
   const targeted = state.role?.targets || {};
@@ -2268,6 +2470,7 @@ const buildBriefing = (state, today) => {
       overdue: ag.overdue.length, dueToday: ag.dueToday.length, dailyOpen: ag.daily.length,
       behind: goalItems.filter((g) => g.severity === 3).length,
       events: todayOcc.length, dueSoon: soonDue.length, // today's occurrences, and the deadlines inside EVENT_SOON_DAYS (today included)
+      bizMonth: biz.thisMonth, bizUnpaid: biz.unpaid.length,
     },
     sections,
   };
@@ -2277,11 +2480,12 @@ const buildBriefing = (state, today) => {
    No key, no network (rule 7 amendment). A reply can only propose plain tasks; it never completes, promotes or scores. ── */
 const PACKET_MAX = 4000;
 const PACKET_EVENT_DAYS = 14; // the schedule window the packet states — its heading and its rows read the same constant
+const PACKET_BIZ_LINES = 6;   // business lines the packet carries, so a long contract list cannot crowd out the journal
 const PACKET_HEAD = [
   "역할: 이 사용자의 목표·실행·기록을 점검하는 비서예요. 아래 데이터만 근거로 답해요.",
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
   "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
-  "3) 제안은 목표에 연결된 하루분량 실행만 가능해요 (난이도 E/D/C). 자격·시험 실행은 제안하지 않아요.",
+  "3) 제안은 목표에 연결된 하루분량 실행만 가능해요 (난이도 E/D/C). 자격·시험 실행과 계약·단가·포트폴리오는 제안하지 않아요.",
   "4) 답변 형식: ① 오늘 점검 요약 5줄 이내 ② 다음 단계 1개 ③ 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"tasks\": []).",
   "```json",
   '{"tasks":[{"goal":"<목표 제목 그대로>","title":"...","diff":"E|D|C","type":"daily|once","due":"YYYY-MM-DD","kind":"book|fit"}],"note":"한 줄"}',
@@ -2309,6 +2513,17 @@ const buildAssistantPacket = (state, today) => {
   // create, complete or change an event (rule 7 amendment).
   const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).slice(0, 8).map(({ ev, date }) =>
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
+  // Contract facts only, read from the same `bizSummary` the tab and the briefing state, and built before the
+  // journal trim below so the cap and the trim behaviour stay as they are. `parseAssistantReply` reads `tasks`
+  // and nothing else, so a pasted reply can never create a deal, a rate or a portfolio entry (rule 7 amendment).
+  const biz = bizSummary(state, today);
+  const bizLines = [
+    `- 이번 달 계약 ${wonText(biz.thisMonth)} · 입금 확인 ${wonText(biz.collected)} · 남은 계약 ${wonText(biz.backlog)} · 견적 대기 ${wonText(biz.pipeline)}`,
+    ...biz.unpaid.map((u) => `- 미수 ${u.month} ${u.deal.client} ${u.deal.title} ${wonText(u.amount)}`),
+    ...(state.deals || [])
+      .filter((d) => ["active", "upcoming"].includes(dealPhase(d, biz.month)) && dealEnd(d))
+      .map((d) => `- ${DEAL_PHASE_LABEL[dealPhase(d, biz.month)]} ${d.client} ${d.title} · ${d.startMonth} ~ ${dealEnd(d)} · 월 ${wonText(d.monthly)}`),
+  ].slice(0, PACKET_BIZ_LINES);
   const journal = [...(state.journal || [])].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
   const journalLines = journal.map((e) => `- ${e.date}: ${e.text.slice(0, 200)}${e.ai ? " (AI 답변 있음)" : ""}`);
   const review = [...(state.reviews || [])].sort((a, b) => b.weekOf.localeCompare(a.weekOf))[0];
@@ -2321,7 +2536,7 @@ const buildAssistantPacket = (state, today) => {
   const build = (jl) => [
     `[인생 관리 — 오늘 점검 요청 ${today}]`, ...PACKET_HEAD, "",
     ...sec("오늘 브리핑", briefLines), ...sec("목표", goalLines), ...sec("열린 실행", taskLines),
-    ...sec(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines),
+    ...sec(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines), ...sec("사업 (계약·매출)", bizLines),
     ...sec("최근 일지 (7일)", jl), ...sec("최근 주간 리뷰", reviewLines), ...sec("연속·롤모델", stateLines),
   ].join("\n");
 
@@ -2361,10 +2576,10 @@ const parseAssistantReply = (text, state) => {
 
 /* ── State lifecycle ── */
 /**
- * @schema v19 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v20 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 19,
+ *   v: 20,
  *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
  *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -2379,6 +2594,13 @@ const parseAssistantReply = (text, state) => {
  *   events: [{ id, title, kind("appt"|"due"), date("YYYY-MM-DD"), time?("HH:MM"), note?, place?,   // schedule records: appointments and deadlines —
  *              repeat?{ freq("daily"|"weekly"|"monthly"), until? },                                // never tasks, never paid, never a metric source
  *              skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt }],                        // occurrences are expanded at render, not stored
+ *   folio: [{ id, title, summary?, role?, stack?[string],                       // business records: what was built, what it sells for,
+ *             period?{ from("YYYY-MM"), to("YYYY-MM") },                        // and what is contracted — records, never tasks: no payout,
+ *             links[{ label, url }], createdAt }],                              // no trophy, no goal, no streak (rules 1, 18).
+ *   rates: [{ id, name, unit("month"|"day"|"project"), price, cost?, note?, createdAt }],   // cost is optional and never defaults to 0
+ *   deals: [{ id, client, title, status("lead"|"quote"|"won"|"lost"),           // a period contract is a billing rule plus the user's own
+ *             monthly?, costMonthly?, months?, startMonth?("YYYY-MM"),          // payment stamps; months, totals, margin and the
+ *             paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -2387,12 +2609,13 @@ const parseAssistantReply = (text, state) => {
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
  *   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
- *   ui: { scheduleView("list"|"calendar") },                      // which view the schedule tab opens on — a preference, never derived data
+ *   ui: { scheduleView("list"|"calendar"), bizView("deals"|"rates"|"folio") },   // which view a tab opens on — a preference, never derived data
  *   lastTick, dModel
  * }
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
  * agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
- * the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
+ * contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
+ * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -2462,6 +2685,13 @@ const migrate = (s) => {
     const { lastCheckin, ...act } = rest.act || {};
     s = { ...rest, v: 19, act };
   }
+  if (s.v < 20) {
+    // v20: business records — folio[] portfolio entries, rates[] unit prices, deals[] period contracts. A contract is a billing rule (startMonth, months, monthly) plus the user's own paidMonths stamps; every month, total and margin stays derived at render.
+    // Records, never tasks: nothing here pays P, creates a trophy, moves a goal or touches the streak.
+    // ui.bizView is a preference, exactly like ui.scheduleView.
+    s = { ...s, v: 20, folio: s.folio || [], rates: s.rates || [], deals: s.deals || [],
+          ui: { ...(s.ui || {}), bizView: ["rates", "folio"].includes(s.ui?.bizView) ? s.ui.bizView : "deals" } };
+  }
   return s;
 };
 
@@ -2473,12 +2703,15 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 19,
+  v: 20,
   profile: null,
   areas,
   tasks: [],
   goals: [],
   events: [],
+  folio: [],
+  rates: [],
+  deals: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
@@ -2486,13 +2719,14 @@ const freshState = (areas) => applyDailyTick({
   certBest: {},
   room: { trophies: [] },
   role: null,
-  ui: { scheduleView: "list" },
+  ui: { scheduleView: "list", bizView: "deals" },
   lastTick: dstr(),
   dModel: DIFF_RAW_VERSION,
 });
 
 const demoState = () => {
   const today = dstr();
+  const month = today.slice(0, 7);
   const p1 = { id: uid(), name: "사업", grade: 2, achievements: [{ id: uid(), text: "스마트스토어 월 수익 30만 달성", date: shiftDay(today, -12), grade: 2 }] };
   const p2 = { id: uid(), name: "직업·커리어", grade: 3, dir: ["전기·기계"], achievements: [{ id: uid(), text: "초기 산정 — 기계·전자 전공, 하네스 설계 지망", date: shiftDay(today, -30), grade: 3 }] };
   const p3 = { id: uid(), name: "기본지식", grade: 2, dir: ["IT·개발", "재테크·금융"], achievements: [{ id: uid(), text: "보유 자격: 컴퓨터활용능력 2급", date: shiftDay(today, -30), grade: 2 }] };
@@ -2536,6 +2770,35 @@ const demoState = () => {
     { id: uid(), title: "부품사 1차 면접", kind: "appt", date: shiftDay(today, 3), time: "14:00", place: "판교 본사", note: "도면 출력본 지참", createdAt: shiftDay(today, -2) },
     { id: uid(), title: "전기기사 실기 원서 접수 마감", kind: "due", date: shiftDay(today, 9), note: "접수 후 수험표 확인", createdAt: shiftDay(today, -3) },
     { id: uid(), title: "영어 스터디 모임", kind: "appt", date: shiftDay(today, 1), time: "20:00", place: "온라인", repeat: { freq: "weekly" }, createdAt: shiftDay(today, -7) },
+  ];
+  // Business records. The finished contract ended two months ago and the signed one starts next month, so this
+  // month is contracted at 0; its third billed month carries no payment stamp, so one unpaid month is outstanding.
+  s.rates = [
+    { id: uid(), name: "웹 앱 개발 (월)", unit: "month", price: 3000000, cost: 800000, note: "기획·개발·배포 포함", createdAt: shiftDay(today, -24) },
+    { id: uid(), name: "AI 도입 컨설팅 (일)", unit: "day", price: 400000, cost: 60000, createdAt: shiftDay(today, -20) },
+    { id: uid(), name: "랜딩 페이지 제작 (프로젝트)", unit: "project", price: 1200000, note: "외주 디자인 비용 미산정", createdAt: shiftDay(today, -16) },
+  ];
+  s.folio = [
+    {
+      id: uid(), title: "사내 문서 검색 AI 프로토타입", summary: "사내 PDF 1,200건을 임베딩해 자연어로 찾는 내부 도구",
+      role: "기획·개발 단독", stack: ["React", "FastAPI", "pgvector"],
+      period: { from: monthAdd(month, -6), to: monthAdd(month, -4) },
+      links: [{ label: "GitHub", url: "https://github.com/example/doc-search" }, { label: "Notion", url: "https://example.notion.site/doc-search" }],
+      createdAt: shiftDay(today, -26),
+    },
+    {
+      id: uid(), title: "스마트스토어 주문 자동 집계", summary: "주문 CSV를 매일 모아 정산 시트로 만드는 자동화",
+      role: "개발 단독", stack: ["Python", "Google Sheets API"],
+      period: { from: monthAdd(month, -10), to: monthAdd(month, -9) },
+      links: [{ label: "배포", url: "https://example.com/order-rollup" }],
+      createdAt: shiftDay(today, -23),
+    },
+  ];
+  s.deals = [
+    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140) },
+    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6) },
+    { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9) },
+    { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3) },
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -2981,7 +3244,7 @@ function Onboarding({ onStart, onDemo }) {
 }
 
 /* ───────────────────────── Home — today's focus ───────────────────────── */
-function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onGoSchedule, onBriefing, onJournal, onReview }) {
+function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onGoSchedule, onGoBiz, onBriefing, onJournal, onReview }) {
   const a = state.act;
   const brief = buildBriefing(state, today);
   const firstAlert = brief.sections.flatMap((s) => s.items).find((it) => it.severity === 3);
@@ -3022,6 +3285,11 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
         {/* Today's date facts belong beside the other today numbers, so the schedule gets a line here, not a sixth card */}
         <button onClick={onGoSchedule} className="block text-left text-xs font-mono text-zinc-400 mt-1 active:opacity-70">
           오늘 일정 {brief.counts.events}건 · {EVENT_SOON_DAYS}일 내 마감 {brief.counts.dueSoon}건 ›
+        </button>
+        {/* The same `buildBriefing` call the schedule line above reads — this month's money belongs beside the
+            other today numbers, and a fifth card would push `오늘의 초점` below the fold */}
+        <button onClick={onGoBiz} className="block text-left text-xs font-mono text-zinc-400 mt-1 active:opacity-70">
+          이번 달 계약 {wonText(brief.counts.bizMonth)} · <span className={brief.counts.bizUnpaid > 0 ? "text-rose-400" : ""}>입금 미확인 {brief.counts.bizUnpaid}건</span> ›
         </button>
         {firstAlert && <div className="text-xs text-rose-400 mt-1 truncate">{firstAlert.text}</div>}
         <div className="flex gap-1.5 mt-2.5">
@@ -4978,6 +5246,507 @@ function EventModal({ event, initialDate, onClose, onAdd, onUpdate, onRemove }) 
   );
 }
 
+/* ───────────────────────── Business tab — contracts · unit prices · portfolio ───────────────────────── */
+/* Everything here renders records, never tasks (rules 1, 18): registering a contract, ticking a payment,
+   adding a rate or a portfolio entry pays no P, creates no trophy, moves no goal and touches no streak.
+   Every month, total, margin and phase on this tab is computed from the stored billing rule (rule 9). */
+
+// Group order and tone; the heading itself comes from DEAL_PHASE_LABEL, which the packet reads too.
+const DEAL_GROUPS = [
+  ["active", "text-cyan-400"],
+  ["upcoming", "text-zinc-400"],
+  ["quote", "text-amber-300"],
+  ["lead", "text-zinc-400"],
+  ["ended", "text-zinc-500"],
+  ["lost", "text-zinc-600"],
+];
+const BIZ_ADD_LABEL = { deals: "계약 추가", rates: "단가 추가", folio: "포트폴리오 추가" };
+// Toast subject plus its Korean particle, so the one generic handler prints the right sentence per list.
+const BIZ_NOUN = { deals: "계약을", rates: "단가를", folio: "포트폴리오를" };
+const PAID_CHIP_MAX = 12;   // payment chips shown on one row; the rest are counted, so a 10-year rule cannot flood the card
+const FOLIO_LINK_MAX = 4;
+const FOLIO_LINK_LABELS = ["GitHub", "Notion", "Figma", "배포", "기타"];
+
+// A number field of a business form: blank means "nothing entered" and stores nothing, a negative or
+// non-numeric entry becomes NaN so the caller refuses it. A cost of 0 is a real cost, not an absent one.
+const numField = (v) => {
+  const t = String(v).trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : NaN;
+};
+
+// One money line for a deal or a rate. No cost entered means no margin — never a zero cost — so the row
+// states that instead; a negative margin is printed as it is, in rose.
+function MoneyLine({ lead, price, cost }) {
+  const m = marginOf(price, cost);
+  return (
+    <>
+      <p className={`text-xs font-mono ${m && m.amount < 0 ? "text-rose-400" : "text-zinc-300"}`}>
+        {lead}{m ? ` · 마진 ${wonText(m.amount)}${m.rate == null ? "" : ` (${Math.round(m.rate * 100)}%)`}` : ""}
+      </p>
+      {!m && <p className="text-xs text-zinc-500">원가 미입력 — 마진은 계산하지 않아요</p>}
+    </>
+  );
+}
+
+// The first line of every business card: the name, an optional chip and the edit button.
+function BizRowHead({ title, chip, onEdit }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="flex-1 min-w-0"><div className="text-sm font-semibold truncate">{title}</div></div>
+      {chip && <span className="text-xs font-bold border border-zinc-700 text-zinc-300 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">{chip}</span>}
+      <button onClick={onEdit}
+        className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">수정</button>
+    </div>
+  );
+}
+
+function DealRow({ deal: d, month, onEdit, onTogglePaid }) {
+  const months = dealMonths(d);
+  const billed = billedMonths(d, month);
+  const paidSet = d.paidMonths || [];
+  return (
+    <div className="bg-zinc-950 rounded-xl px-3 py-2.5">
+      <BizRowHead title={`${d.client} · ${d.title}`} chip={DEAL_STATUS[d.status]} onEdit={() => onEdit("deals", d)} />
+      <p className="text-xs font-mono text-zinc-400 mt-1">
+        {d.startMonth && months > 0 ? `${d.startMonth} ~ ${dealEnd(d)} · ${months}개월 · 월 ${wonText(d.monthly || 0)}` : "기간 미정"}
+      </p>
+      {/* A lead or a quote may carry no numbers at all; a total is stated only once there is a rule to total. */}
+      {months > 0 && d.monthly != null && (
+        <MoneyLine lead={`총 ${wonText(dealTotal(d))}`} price={dealTotal(d)} cost={dealCostTotal(d)} />
+      )}
+      {billed.length > 0 && (
+        <div className="mt-2">
+          <div className="text-xs text-zinc-500 mb-1">입금 확인</div>
+          <div className="flex flex-wrap gap-1.5">
+            {billed.slice(0, PAID_CHIP_MAX).map((m) => (
+              <button key={m} onClick={() => onTogglePaid(d.id, m)}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-mono font-bold active:translate-y-0.5 ${
+                  paidSet.includes(m) ? "border-emerald-700 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}>{m}</button>
+            ))}
+          </div>
+          {billed.length > PAID_CHIP_MAX && (
+            <p className="text-xs text-zinc-500 mt-1">외 {billed.length - PAID_CHIP_MAX}개월 더 있어요</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Contracts grouped by the phase `dealPhase` derives from the billing rule, plus the revenue roll-up.
+   A group with no row is not rendered at all; a month with nothing contracted still prints its zero. */
+function DealsView({ state, month, onEdit, onTogglePaid }) {
+  const deals = state.deals || [];
+  const roll = revenueByMonth(state, monthAdd(month, -(BIZ_REVENUE_MONTHS - 1)), BIZ_REVENUE_MONTHS);
+  const peak = Math.max(1, ...roll.map((r) => r.amount));
+  return (
+    <>
+      {deals.length === 0 && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+          <p className="text-sm text-zinc-500">등록한 계약이 없어요 — 문의·견적부터 기록해요.</p>
+        </section>
+      )}
+      {DEAL_GROUPS.map(([phase, tone]) => {
+        const list = deals.filter((d) => dealPhase(d, month) === phase);
+        return list.length > 0 && (
+          <section key={phase} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+            <SectionLabel tone={tone}>{DEAL_PHASE_LABEL[phase]}</SectionLabel>
+            <div className="space-y-1.5">
+              {list.map((d) => <DealRow key={d.id} deal={d} month={month} onEdit={onEdit} onTogglePaid={onTogglePaid} />)}
+            </div>
+          </section>
+        );
+      })}
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <SectionLabel tone="text-zinc-400">최근 {BIZ_REVENUE_MONTHS}개월</SectionLabel>
+        <div className="space-y-1.5">
+          {roll.map((r) => (
+            <div key={r.month} className="flex items-center gap-2">
+              <span className="text-xs font-mono text-zinc-400 w-16 shrink-0">{r.month}</span>
+              <div className="flex-1"><Bar ratio={r.amount / peak} color="bg-cyan-400" /></div>
+              <span className="text-xs font-mono text-zinc-300 w-20 shrink-0 text-right">{wonText(r.amount)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+/* Unit prices. No average margin: averaging unrelated rate rows states a number nothing measured. */
+function RatesView({ state, onEdit }) {
+  const rates = state.rates || [];
+  const priced = rates.filter((r) => r.cost != null).length;
+  if (!rates.length) {
+    return (
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+        <p className="text-sm text-zinc-500">등록한 단가가 없어요 — 청구가와 원가를 넣으면 마진이 계산돼요.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+      <div className="space-y-1.5">
+        {rates.map((r) => (
+          <div key={r.id} className="bg-zinc-950 rounded-xl px-3 py-2.5">
+            <BizRowHead title={r.name} chip={RATE_UNIT[r.unit]} onEdit={() => onEdit("rates", r)} />
+            <MoneyLine lead={`청구 ${wonText(r.price)}${r.cost == null ? "" : ` · 원가 ${wonText(r.cost)}`}`} price={r.price} cost={r.cost} />
+            {r.note && <p className="text-xs text-zinc-500">{r.note}</p>}
+          </div>
+        ))}
+      </div>
+      <p className="text-xs font-mono text-zinc-400 mt-2.5">단가 {rates.length}건 · 원가 입력 {priced}건</p>
+    </section>
+  );
+}
+
+/* One column, not a grid: at 390 px a 2-up grid gives 170 px thumbnails, unreadable for a landscape
+   diagram. The thumbnails are read once on view entry — a render-time read would rescan storage on
+   every keystroke elsewhere — and the same pass records the storage figure the footer states. */
+function FolioView({ state, onEdit }) {
+  const items = state.folio || [];
+  const [thumbs, setThumbs] = useState({});
+  const [used, setUsed] = useState(0);
+  const ids = items.map((f) => f.id).join(",");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const got = {};
+      for (const id of ids ? ids.split(",") : []) {
+        const v = await store.get(`liferpg-img-folio-${id}`).catch(() => null);
+        if (v) got[id] = v;
+      }
+      if (alive) { setThumbs(got); setUsed(storageUsedBytes()); }
+    })();
+    return () => { alive = false; };
+  }, [ids]);
+
+  if (!items.length) {
+    return (
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+        <p className="text-sm text-zinc-500">등록한 포트폴리오가 없어요 — 링크와 대표 이미지 1장을 넣어요.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+      <div className="space-y-2">
+        {items.map((f) => (
+          <div key={f.id} className="bg-zinc-950 rounded-xl px-3 py-2.5">
+            <BizRowHead title={f.title} onEdit={() => onEdit("folio", f)} />
+            {f.summary && <p className="text-xs text-zinc-400 mt-1">{f.summary}</p>}
+            {f.role && <p className="text-xs text-zinc-500">{f.role}</p>}
+            {f.period && <p className="text-xs font-mono text-zinc-500">{f.period.from} ~ {f.period.to}</p>}
+            {(f.stack || []).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {f.stack.map((t) => (
+                  <span key={t} className="px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 text-xs font-medium">{t}</span>
+                ))}
+              </div>
+            )}
+            {(f.links || []).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {f.links.map((l, i) => (
+                  <a key={`${l.label}-${i}`} href={l.url} target="_blank" rel="noreferrer"
+                    className="px-2.5 py-1.5 rounded-full border border-cyan-800 text-cyan-300 text-xs font-bold">{l.label}</a>
+                ))}
+              </div>
+            )}
+            <div className="mt-2">
+              {thumbs[f.id]
+                ? <img src={thumbs[f.id]} alt={f.title} className="w-full max-h-64 object-contain bg-zinc-950 rounded-xl border border-zinc-800" />
+                : <p className="text-xs text-zinc-600">대표 이미지 없음</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs font-mono text-zinc-400 mt-2.5">
+        포트폴리오 {items.length}건 · 대표 이미지 {Object.keys(thumbs).length}장 · 저장 공간 {(used / 1048576).toFixed(1)}MB 사용 중 (약 5MB 한도)
+      </p>
+    </section>
+  );
+}
+
+function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid }) {
+  const v = view === "rates" || view === "folio" ? view : "deals"; // any other value, including a save written before v20, opens the contracts
+  const sum = useMemo(() => bizSummary(state, today), [state, today]);
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-2">
+          <SectionLabel tone="text-cyan-400">사업</SectionLabel>
+          <button onClick={() => onAdd(v)}
+            className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
+            <Plus size={14} /> {BIZ_ADD_LABEL[v]}
+          </button>
+        </div>
+        {/* Full width, not beside the button: at 390 px a summary line sharing the header row wraps mid-word.
+            Each fragment is nowrap for the same reason — measured at 390 px, the plain line broke after
+            `입금 미확`, so the only break opportunities left are the separators between the fragments. */}
+        <p className="text-xs font-mono text-zinc-400">
+          <span className="whitespace-nowrap">이번 달 계약 {wonText(sum.thisMonth)}</span>{" · "}
+          <span className="whitespace-nowrap">입금 확인 {wonText(sum.collected)}</span>
+        </p>
+        <p className="text-xs font-mono text-zinc-400">
+          <span className="whitespace-nowrap">남은 계약 {wonText(sum.backlog)}</span>{" · "}
+          <span className="whitespace-nowrap">견적 대기 {wonText(sum.pipeline)}</span>{" · "}
+          <span className={`whitespace-nowrap ${sum.counts.unpaid > 0 ? "text-rose-400" : ""}`}>입금 미확인 {sum.counts.unpaid}건</span>
+        </p>
+        <div className="flex gap-1.5 mt-2.5">
+          <Chip on={v === "deals"} onClick={() => onView("deals")}>계약</Chip>
+          <Chip on={v === "rates"} onClick={() => onView("rates")}>단가</Chip>
+          <Chip on={v === "folio"} onClick={() => onView("folio")}>포트폴리오</Chip>
+        </div>
+      </section>
+
+      {v === "deals" && <DealsView state={state} month={sum.month} onEdit={onEdit} onTogglePaid={onTogglePaid} />}
+      {v === "rates" && <RatesView state={state} onEdit={onEdit} />}
+      {v === "folio" && <FolioView state={state} onEdit={onEdit} />}
+    </>
+  );
+}
+
+/* ── The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence ── */
+
+function BizField({ value, onChange, placeholder, num }) {
+  return (
+    <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      {...(num ? { type: "number", inputMode: "numeric" } : {})}
+      className={`w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm${num ? " font-mono" : ""}`} />
+  );
+}
+
+function BizChips({ options, value, onPick }) {
+  return (
+    <div className="flex gap-1.5">
+      {options.map(([k, label]) => <Chip key={k} on={value === k} onClick={() => onPick(k)}>{label}</Chip>)}
+    </div>
+  );
+}
+
+function BizFormFoot({ err, edit, onSubmit, onRemove }) {
+  return (
+    <>
+      {err && <p className="text-xs text-rose-400">{err}</p>}
+      <button onClick={onSubmit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+        {edit ? "저장" : "등록"}
+      </button>
+      {edit && (
+        <button onClick={onRemove} className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs">삭제</button>
+      )}
+    </>
+  );
+}
+
+function DealModal({ deal, onClose, onAdd, onUpdate, onRemove }) {
+  const [client, setClient] = useState(deal?.client || "");
+  const [title, setTitle] = useState(deal?.title || "");
+  const [status, setStatus] = useState(deal?.status || "lead");
+  const [startMonth, setStartMonth] = useState(deal?.startMonth || "");
+  const [months, setMonths] = useState(deal?.months == null ? "" : String(deal.months));
+  const [monthly, setMonthly] = useState(deal?.monthly == null ? "" : String(deal.monthly));
+  const [costMonthly, setCostMonthly] = useState(deal?.costMonthly == null ? "" : String(deal.costMonthly));
+  const [note, setNote] = useState(deal?.note || "");
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    if (!client.trim()) { setErr("고객사를 입력해 주세요."); return; }
+    if (!title.trim()) { setErr("일감 이름을 입력해 주세요."); return; }
+    if (status === "won" && !(startMonth && months.trim())) { setErr("계약 상태에서는 시작 월과 개월 수가 필요해요."); return; }
+    const n = numField(months);
+    if (months.trim() && !(Number.isInteger(n) && n >= 1 && n <= DEAL_MAX_MONTHS)) {
+      setErr(`개월 수는 1 이상 ${DEAL_MAX_MONTHS} 이하로 입력해 주세요.`); return;
+    }
+    const price = numField(monthly);
+    if (Number.isNaN(price)) { setErr("월 청구액은 0 이상 숫자로 입력해 주세요."); return; }
+    const cost = numField(costMonthly);
+    if (Number.isNaN(cost)) { setErr("월 원가는 0 이상 숫자로 입력해 주세요."); return; }
+    // A blank number field stores nothing at all — a lead and a quote may carry no numbers.
+    const next = {
+      client: client.trim(), title: title.trim(), status,
+      ...(startMonth ? { startMonth } : {}),
+      ...(n == null ? {} : { months: n }),
+      ...(price == null ? {} : { monthly: price }),
+      ...(cost == null ? {} : { costMonthly: cost }),
+      ...(note.trim() ? { note: note.trim() } : {}),
+    };
+    if (deal) onUpdate(deal.id, next); else onAdd(next);
+  };
+
+  return (
+    <Modal title={deal ? "계약 수정" : "새 계약"} onClose={onClose}>
+      <div className="space-y-3">
+        <BizField value={client} onChange={setClient} placeholder="고객사 — 예: ○○테크" />
+        <BizField value={title} onChange={setTitle} placeholder="일감 이름 — 예: 사내 문서 검색 AI 구축" />
+        <BizChips options={Object.entries(DEAL_STATUS)} value={status} onPick={(k) => { setStatus(k); setErr(""); }} />
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <span className="w-24 shrink-0">시작 월</span>
+          <input type="month" value={startMonth} onChange={(e) => setStartMonth(e.target.value)}
+            className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm font-mono" />
+        </label>
+        <BizField value={months} onChange={setMonths} placeholder="개월 수" num />
+        <BizField value={monthly} onChange={setMonthly} placeholder="월 청구액 (원)" num />
+        <BizField value={costMonthly} onChange={setCostMonthly} placeholder="월 원가 (원, 선택)" num />
+        <BizField value={note} onChange={setNote} placeholder="메모 (선택)" />
+        <BizFormFoot err={err} edit={!!deal} onSubmit={submit} onRemove={() => onRemove(deal.id)} />
+      </div>
+    </Modal>
+  );
+}
+
+function RateModal({ rate, onClose, onAdd, onUpdate, onRemove }) {
+  const [name, setName] = useState(rate?.name || "");
+  const [unit, setUnit] = useState(rate?.unit || "month");
+  const [price, setPrice] = useState(rate?.price == null ? "" : String(rate.price));
+  const [cost, setCost] = useState(rate?.cost == null ? "" : String(rate.cost));
+  const [note, setNote] = useState(rate?.note || "");
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    if (!name.trim()) { setErr("단가 이름을 입력해 주세요."); return; }
+    const p = numField(price);
+    if (p == null || Number.isNaN(p)) { setErr("청구가는 0 이상 숫자로 입력해 주세요."); return; }
+    const c = numField(cost);
+    if (Number.isNaN(c)) { setErr("원가는 0 이상 숫자로 입력해 주세요."); return; }
+    const next = { name: name.trim(), unit, price: p, ...(c == null ? {} : { cost: c }), ...(note.trim() ? { note: note.trim() } : {}) };
+    if (rate) onUpdate(rate.id, next); else onAdd(next);
+  };
+
+  return (
+    <Modal title={rate ? "단가 수정" : "새 단가"} onClose={onClose}>
+      <div className="space-y-3">
+        <BizField value={name} onChange={setName} placeholder="단가 이름 — 예: 웹 앱 개발 (월)" />
+        <BizChips options={Object.entries(RATE_UNIT)} value={unit} onPick={(k) => { setUnit(k); setErr(""); }} />
+        <BizField value={price} onChange={setPrice} placeholder="청구가 (원)" num />
+        <BizField value={cost} onChange={setCost} placeholder="원가 (원, 선택)" num />
+        <BizField value={note} onChange={setNote} placeholder="메모 (선택)" />
+        <BizFormFoot err={err} edit={!!rate} onSubmit={submit} onRemove={() => onRemove(rate.id)} />
+      </div>
+    </Modal>
+  );
+}
+
+/* Owns its own file input, like EvidenceModal — nothing outside this modal touches that ref. The image is
+   written only on submit, under the id carried inside the record, so a cancelled form leaves no orphan key. */
+function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
+  const [title, setTitle] = useState(folio?.title || "");
+  const [summary, setSummary] = useState(folio?.summary || "");
+  const [role, setRole] = useState(folio?.role || "");
+  const [stack, setStack] = useState((folio?.stack || []).join(", "));
+  const [from, setFrom] = useState(folio?.period?.from || "");
+  const [to, setTo] = useState(folio?.period?.to || "");
+  const [links, setLinks] = useState(folio?.links || []);
+  const [url, setUrl] = useState("");
+  const [img, setImg] = useState(null);
+  const [imgDirty, setImgDirty] = useState(false);
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (!folio) return undefined;
+    let alive = true;
+    (async () => {
+      const v = await store.get(`liferpg-img-folio-${folio.id}`).catch(() => null);
+      if (alive && v) setImg(v);
+    })();
+    return () => { alive = false; };
+  }, [folio]);
+
+  const addLink = (label) => {
+    const u = url.trim();
+    if (!/^https?:\/\//.test(u)) { setErr("링크는 http:// 또는 https:// 로 시작해야 해요."); return; }
+    if (links.length >= FOLIO_LINK_MAX) { setErr(`링크는 ${FOLIO_LINK_MAX}개까지 등록돼요.`); return; }
+    setLinks([...links, { label, url: u }]);
+    setUrl(""); setErr("");
+  };
+
+  // File size is checked before decoding: an 80 MB photo must not be handed to the browser at all.
+  const pickFile = async (e) => {
+    const fl = e.target.files?.[0];
+    e.target.value = "";
+    if (!fl) return;
+    if (fl.size > IMG_FILE_MAX) {
+      setErr(`이미지가 너무 커요 — ${IMG_FILE_MAX / 1048576}MB 이하 파일만 등록돼요. (선택한 파일 ${(fl.size / 1048576).toFixed(1)}MB)`);
+      return;
+    }
+    try { setImg(await resizeImageFit(fl)); setImgDirty(true); setErr(""); }
+    catch (e2) { setErr(e2?.message === "too-big" ? "이미지를 줄이지 못했어요 — 더 작은 이미지를 골라 주세요." : "이미지를 읽지 못했어요."); }
+  };
+
+  const submit = async () => {
+    if (!title.trim()) { setErr("제목을 입력해 주세요."); return; }
+    const id = folio?.id || uid();
+    let imgWarn = null;
+    // The record is saved whatever storage does; a failed write hands its reason back for the second toast.
+    if (imgDirty) {
+      if (img) { const r = await saveImageChecked(`liferpg-img-folio-${id}`, img); if (!r.ok) imgWarn = r; }
+      else await store.del(`liferpg-img-folio-${id}`);
+    }
+    const tech = stack.split(",").map((t) => t.trim()).filter(Boolean);
+    const next = {
+      id, title: title.trim(), links,
+      ...(summary.trim() ? { summary: summary.trim() } : {}),
+      ...(role.trim() ? { role: role.trim() } : {}),
+      ...(tech.length ? { stack: tech } : {}),
+      ...(from && to ? { period: { from, to } } : {}),
+    };
+    if (folio) onUpdate(folio.id, next, imgWarn); else onAdd(next, imgWarn);
+  };
+
+  return (
+    <Modal title={folio ? "포트폴리오 수정" : "새 포트폴리오"} onClose={onClose}>
+      <div className="space-y-3">
+        <BizField value={title} onChange={setTitle} placeholder="제목 — 예: 사내 문서 검색 AI" />
+        <BizField value={summary} onChange={setSummary} placeholder="한 줄 설명 (선택)" />
+        <BizField value={role} onChange={setRole} placeholder="역할 (선택) — 예: 기획·개발 단독" />
+        <BizField value={stack} onChange={setStack} placeholder="기술 (선택, 쉼표로 구분) — 예: React, FastAPI, pgvector" />
+        <div className="flex items-center gap-2">
+          <input type="month" value={from} onChange={(e) => setFrom(e.target.value)}
+            className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+          <span className="text-xs text-zinc-500">~</span>
+          <input type="month" value={to} onChange={(e) => setTo(e.target.value)}
+            className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        </div>
+        <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="링크 주소 — https://…"
+            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {FOLIO_LINK_LABELS.map((l) => <Chip key={l} onClick={() => addLink(l)}>{l}</Chip>)}
+          </div>
+          {links.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {links.map((l, i) => (
+                <button key={`${l.label}-${i}`} onClick={() => setLinks(links.filter((_, j) => j !== i))}
+                  className="px-2.5 py-1.5 rounded-full border border-zinc-700 text-zinc-300 text-xs font-bold">{l.label} ✕</button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pickFile} />
+          {img ? (
+            <div className="relative rounded-xl overflow-hidden border border-zinc-700">
+              <img src={img} alt={title} className="w-full max-h-48 object-contain bg-zinc-950" />
+              <button onClick={() => { setImg(null); setImgDirty(true); }}
+                className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-zinc-950 bg-opacity-80 text-xs text-zinc-300">✕</button>
+            </div>
+          ) : (
+            <button onClick={() => fileRef.current?.click()}
+              className="w-full py-7 rounded-xl border-2 border-dashed border-zinc-700 flex flex-col items-center gap-1.5 active:border-cyan-600">
+              <Paperclip size={20} className="text-zinc-500" />
+              <span className="text-xs font-medium text-zinc-400">📎 대표 이미지 1장 (선택)</span>
+              <span className="text-xs text-zinc-600">JPG·PNG · 가로세로 비율 그대로 저장돼요</span>
+            </button>
+          )}
+        </div>
+        <BizFormFoot err={err} edit={!!folio} onSubmit={submit} onRemove={() => onRemove(folio.id)} />
+      </div>
+    </Modal>
+  );
+}
+
 /* ───────────────────────── Overlay effects ───────────────────────── */
 
 function Overlay({ data, onClose }) {
@@ -5085,6 +5854,9 @@ export default function LifeManager() {
   useEffect(() => {
     if (!readyRef.current || !state) return;
     store.set(KEY, state);
+    // `store.set` awaits nothing before its write, so the state either reached localStorage by this line or
+    // never will; the memory fallback would otherwise show a session a reload cannot find.
+    if (!persisted(KEY)) showToast({ msg: "저장에 실패했어요 — 저장 공간이 가득 찼어요. 백업을 내보낸 뒤 사진을 지워요." });
   }, [state]);
 
   /* Photos */
@@ -5391,6 +6163,67 @@ export default function LifeManager() {
   // The chosen schedule view is a preference, not derived data: only the string is stored (schema v17).
   const setScheduleView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), scheduleView: v } }));
 
+  /* Business — portfolio, unit prices and period contracts. A business record is a record, never a task:
+     no points, no trophy, no goal, no streak, no evidence gate (rules 1, 18). One generic trio keyed by
+     the list name, because the three lists differ only in their form and their toast. */
+  const warnImage = (w) => {
+    if (!w) return;
+    // Delayed like the specialisation toast in completeTask, so the record toast is read before this one.
+    const msg = w.reason === "quota"
+      ? "대표 이미지를 저장하지 못했어요 — 저장 공간이 가득 찼어요. 포트폴리오 이미지를 지우고 다시 시도해요."
+      : `저장 공간이 부족해요 — 현재 ${w.usedMB}MB 사용 중이라 이미지를 추가하지 않았어요. 기존 이미지를 지운 뒤 다시 시도해요.`;
+    setTimeout(() => showToast({ msg }), 2700);
+  };
+  const addBiz = (list, item, imgWarn) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s[list] = [{ id: uid(), createdAt: today, ...item }, ...(s[list] || [])];
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: `${BIZ_NOUN[list]} 등록했어요` });
+    warnImage(imgWarn);
+  };
+  const updateBiz = (list, id, next, imgWarn) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const i = (s[list] || []).findIndex((x) => x.id === id);
+      if (i < 0) return prev;
+      // The form replaces the record: a field cleared in the modal has to disappear from the save. The id,
+      // the creation date and the user's own payment stamps are not the form's to rewrite.
+      const cur = s[list][i];
+      s[list][i] = { id: cur.id, createdAt: cur.createdAt, ...(cur.paidMonths ? { paidMonths: cur.paidMonths } : {}), ...next };
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: `${BIZ_NOUN[list]} 수정했어요` });
+    warnImage(imgWarn);
+  };
+  const removeBiz = (list, id) => {
+    const item = (state[list] || []).find((x) => x.id === id);
+    if (!item) return;
+    // A rate carries neither a picture nor a stamp, so only these two ask first (the removeGoal precedent).
+    if (list === "folio" && !window.confirm(`${item.title} 포트폴리오를 삭제해요. 등록한 대표 이미지도 함께 사라져요. 계속할까요?`)) return;
+    if (list === "deals" && !window.confirm(`${item.client} ${item.title} 계약 기록을 삭제해요. 입금 확인 표시 ${(item.paidMonths || []).length}건도 함께 사라져요. 계속할까요?`)) return;
+    if (list === "folio") store.del(`liferpg-img-folio-${id}`);
+    setState((prev) => ({ ...prev, [list]: (prev[list] || []).filter((x) => x.id !== id) }));
+    setModal(null);
+    showToast({ msg: `${BIZ_NOUN[list]} 삭제했어요` });
+  };
+  const toggleDealPaid = (id, month) => {
+    const wasPaid = ((state.deals || []).find((d) => d.id === id)?.paidMonths || []).includes(month);
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const d = (s.deals || []).find((x) => x.id === id);
+      if (!d) return prev;
+      d.paidMonths = wasPaid ? (d.paidMonths || []).filter((m) => m !== month) : [...(d.paidMonths || []), month].sort();
+      return s;
+    });
+    showToast({ msg: `${month} 입금 확인${wasPaid ? "을 취소했어요" : "으로 표시했어요"}` });
+  };
+  // The chosen business view is a preference, not derived data: only the string is stored (schema v20).
+  const setBizView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), bizView: v } }));
+
   /* Daily assistant */
   const markBriefingSeen = () => setState((prev) => (prev.act?.briefingSeen === today ? prev : { ...prev, act: { ...prev.act, briefingSeen: today } }));
   const closeBriefing = (next) => {
@@ -5398,7 +6231,7 @@ export default function LifeManager() {
     setModal(null);
     if (!next) return;
     if (next.type === "task") { const q = state.tasks.find((x) => x.id === next.id); if (q) tryComplete(q); return; }
-    if (next.type === "goals" || next.type === "growth" || next.type === "schedule") { setTab(next.type); return; }
+    if (TAB_ACTIONS.includes(next.type)) { setTab(next.type); return; }
     setModal(next.type === "bridge" ? { type: "bridge", mode: next.mode } : { type: next.type });
   };
   // Stores the pasted reply on today's journal entry. Text only — it never changes a score (rule 7 amendment).
@@ -5463,7 +6296,7 @@ export default function LifeManager() {
     });
   };
 
-  /* Backup — the save plus its evidence photos in one file. The app has no cloud copy, so this is
+  /* Backup — the save plus its evidence and portfolio photos in one file. The app has no cloud copy, so this is
      the only way back from a cleared browser. Import replaces everything and asks first. */
   const exportBackup = async () => {
     const images = {};
@@ -5472,6 +6305,10 @@ export default function LifeManager() {
         const v = await store.get(k).catch(() => null);
         if (v) images[k] = v;
       }
+    }
+    for (const f of state?.folio || []) {
+      const v = await store.get(`liferpg-img-folio-${f.id}`).catch(() => null);
+      if (v) images[`liferpg-img-folio-${f.id}`] = v;
     }
     const prof = await store.get("liferpg-img-profile").catch(() => null);
     if (prof) images["liferpg-img-profile"] = prof;
@@ -5499,11 +6336,13 @@ export default function LifeManager() {
   const askImport = () => importRef.current?.click();
 
   const resetAll = async () => {
-    // Clears the evidence photo keys (rule 16) and the profile photo along with the state — left behind they keep piling up.
+    // Clears the evidence photo keys (rule 16), the portfolio images and the profile photo along with the
+    // state — left behind they keep piling up in storage under a save that no longer names them.
     for (const t of state?.tasks || []) {
       store.del(`liferpg-img-ev-${t.id}`);
       for (let n = 1; n <= 2; n++) store.del(`liferpg-img-study-${t.id}-${n}`);
     }
+    for (const f of state?.folio || []) store.del(`liferpg-img-folio-${f.id}`);
     store.del("liferpg-img-profile");
     await store.del(KEY);
     setState(null); setImgs({}); setPhase("onboard"); setTab("home");
@@ -5530,6 +6369,7 @@ export default function LifeManager() {
     ["goals", "목표", Target],
     ["tasks", "실행", ClipboardList],
     ["schedule", "일정", CalendarDays],
+    ["biz", "사업", Briefcase],
     ["growth", "성장", TrendingUp],
   ];
 
@@ -5554,7 +6394,7 @@ export default function LifeManager() {
         {tab === "home" && (
           <HomeTab state={state} today={today} imgs={imgs} onUpload={askUpload} onClearImg={clearImg}
             onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("tasks")}
-            onGoSchedule={() => setTab("schedule")}
+            onGoSchedule={() => setTab("schedule")} onGoBiz={() => setTab("biz")}
             onBriefing={() => setModal({ type: "briefing" })} onJournal={() => setModal({ type: "journal" })}
             onReview={() => setModal({ type: "review" })} />
         )}
@@ -5587,9 +6427,16 @@ export default function LifeManager() {
             onEdit={(ev) => setModal({ type: "event", event: ev })}
             onToggleDone={toggleEventDone} onSkip={skipOccurrence} />
         )}
+        {tab === "biz" && (
+          <BizTab state={state} today={today}
+            view={state.ui?.bizView} onView={setBizView}
+            onAdd={(list) => setModal({ type: list })}
+            onEdit={(list, item) => setModal({ type: list, item })}
+            onTogglePaid={toggleDealPaid} />
+        )}
       </main>
 
-      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-5 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
+      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-6 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
         {NAV.map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
@@ -5639,6 +6486,21 @@ export default function LifeManager() {
       {modal?.type === "event" && (
         <EventModal event={modal.event} initialDate={modal.date} onClose={() => setModal(null)}
           onAdd={addEvent} onUpdate={updateEvent} onRemove={removeEvent} />
+      )}
+      {modal?.type === "deals" && (
+        <DealModal deal={modal.item} onClose={() => setModal(null)}
+          onAdd={(d) => addBiz("deals", d)} onUpdate={(id, next) => updateBiz("deals", id, next)}
+          onRemove={(id) => removeBiz("deals", id)} />
+      )}
+      {modal?.type === "rates" && (
+        <RateModal rate={modal.item} onClose={() => setModal(null)}
+          onAdd={(r) => addBiz("rates", r)} onUpdate={(id, next) => updateBiz("rates", id, next)}
+          onRemove={(id) => removeBiz("rates", id)} />
+      )}
+      {modal?.type === "folio" && (
+        <FolioModal folio={modal.item} onClose={() => setModal(null)}
+          onAdd={(f, warn) => addBiz("folio", f, warn)} onUpdate={(id, next, warn) => updateBiz("folio", id, next, warn)}
+          onRemove={(id) => removeBiz("folio", id)} />
       )}
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />

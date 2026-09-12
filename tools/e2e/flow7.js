@@ -1,7 +1,7 @@
 // Schedule tab — appointments and deadlines. An event is a record, never a task: these steps assert that
 // registering, ticking and cancelling one changes `events` only, and never the tasks, streak or trophies.
 module.exports = async (h) => {
-  const { step, clickTab, clickText, clickInModal, clickInModalExact, expectText, hasText, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
+  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
 
   // Dates are computed in the page with the app's own local-date logic (never toISOString).
   const dstrIn = (delta) => page.evaluate((d) => {
@@ -14,22 +14,8 @@ module.exports = async (h) => {
     const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
     return ov ? ov.innerText.replace(/\s+/g, " ").trim() : "";
   });
-  // Occurrence rows, found structurally: every row carries a `수정` button and the card is its grandparent.
-  // `texts` are the strings the row must show (title plus, for a repeat, the occurrence date);
-  // with `label`, the button of that exact name is tapped on the first matching row.
-  const rows = (texts, label = null) => page.evaluate((ts, l) => {
-    const cards = [...document.querySelectorAll("button")]
-      .filter((b) => (b.innerText || "").trim() === "수정")
-      .map((b) => b.parentElement.parentElement)
-      .filter((c) => ts.every((t) => (c.innerText || "").includes(t)));
-    const out = cards.map((c) => c.innerText.replace(/\s+/g, " ").trim());
-    if (!l) return { rows: out };
-    const btn = cards[0] && [...cards[0].querySelectorAll("button")].find((b) => (b.innerText || "").trim() === l);
-    if (!btn) return { rows: out, clicked: false };
-    btn.scrollIntoView({ block: "center" });
-    btn.click();
-    return { rows: out, clicked: true };
-  }, texts, label);
+  // Occurrence rows come from the shared `rows` reader in run.js: for a repeat, `texts` carries the
+  // occurrence date next to the title so one occurrence is addressed rather than the whole event.
   const openEventModal = async () => { await clickText("일정 추가"); await sleep(400); };
   // Register one event through the modal: a title, a day offset from today, and optionally a time,
   // the `마감` kind chip and a repeat chip (all of them Korean UI copy, used here as selectors).
@@ -264,16 +250,6 @@ module.exports = async (h) => {
     return `${t.getFullYear()}년 ${t.getMonth() + 1}월`;
   }, delta);
   const daysThisMonth = () => page.evaluate(() => { const t = new Date(); return new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate(); });
-  // Click a page button by its exact label — the calendar controls sit outside any modal.
-  const clickExact = async (label) => {
-    const ok = await page.evaluate((l) => {
-      const b = [...document.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
-      if (!b) return false;
-      b.scrollIntoView({ block: "center" }); b.click(); return true;
-    }, label);
-    if (!ok) throw new Error(`button not found: ${label}`);
-    await sleep(350);
-  };
   // Select the cell carrying this day number, searched among the grid buttons only.
   const pickDay = async (day) => {
     const ok = await page.evaluate((d) => {
@@ -425,9 +401,14 @@ module.exports = async (h) => {
 
   await step("weekends and holidays tone the day numbers of the current month", async () => {
     const cells = await gridCells();
-    const sun = cells.filter((c) => c.dow === 0 && !c.today);
-    const sat = cells.filter((c) => c.dow === 6 && !c.today);
-    if (sun.length < 4 || sat.length < 4) throw new Error(`weekend cells read off the grid: ${sun.length} Sundays, ${sat.length} Saturdays`);
+    // Sanity count on the whole grid: every month has at least four of each weekend day. Today is excluded
+    // from the tone assertions below (amber outranks the weekend tone) but must not be excluded here — in a
+    // month with exactly four Saturdays, running this step on a Saturday would otherwise count three.
+    const sundays = cells.filter((c) => c.dow === 0);
+    const saturdays = cells.filter((c) => c.dow === 6);
+    if (sundays.length < 4 || saturdays.length < 4) throw new Error(`weekend cells read off the grid: ${sundays.length} Sundays, ${saturdays.length} Saturdays`);
+    const sun = sundays.filter((c) => !c.today);
+    const sat = saturdays.filter((c) => !c.today);
     const paleSun = sun.filter((c) => c.tone !== "rose");
     if (paleSun.length) throw new Error("Sundays that are not rose: " + JSON.stringify(paleSun));
     // A Saturday is sky unless it is also a holiday, which outranks it — and then the panel has to name it.

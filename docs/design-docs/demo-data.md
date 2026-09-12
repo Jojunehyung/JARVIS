@@ -59,14 +59,46 @@ dot colours on one grid. `ui.scheduleView` comes from `freshState`, so the demo 
 manifest screenshot `public/screenshots/calendar.png` is this save with `달력` clicked
 (`tools/harness/gen-screenshots.js`).
 
+## Business
+
+Three rates, two portfolio entries (no stored image, so `대표 이미지 없음` shows), and four deals, chosen so every
+briefing and header line the tab can print actually renders once ([business.md](../product-specs/business.md)):
+
+| Rate | unit | price | cost |
+|---|---|---|---|
+| `웹 앱 개발 (월)` | month | 3,000,000 | 800,000 |
+| `AI 도입 컨설팅 (일)` | day | 400,000 | 60,000 |
+| `랜딩 페이지 제작 (프로젝트)` | project | 1,200,000 | — (no cost, so its row prints `원가 미입력 — 마진은 계산하지 않아요`) |
+
+| Deal | client | status | monthly | cost | months | startMonth | paidMonths |
+|---|---|---|---|---|---|---|---|
+| `재고 관리 자동화 도구` | ○○물산 | won | 1,200,000 | 300,000 | 3 | month − 4 | month − 4, month − 3 |
+| `사내 문서 검색 AI 구축` | △△테크 | won | 3,000,000 | 800,000 | 4 | month + 1 | (none) |
+| `리드 수집 크롤러` | □□랩스 | quote | 1,500,000 | — | 2 | — | — |
+| `예약 페이지 개편` | ◇◇스튜디오 | lead | — | — | — | — | — |
+
+Folio: `사내 문서 검색 AI 프로토타입` and `스마트스토어 주문 자동 집계`, each with a `period`, a `stack` and one or
+two `links`; neither carries a stored image.
+
+These four numbers hold regardless of which day the demo is generated on, because every deal date is `month ±
+n`, never an absolute one:
+- `이번 달 계약 0원` — the ○○물산 contract already ended (`month − 4` + 3 months = `month − 2`) and the △△테크
+  contract has not started (`month + 1`), so no `won` deal bills the current month.
+- `남은 계약 1,200만원` — the still-unbilled remainder of the △△테크 contract (3,000,000 × 4 months).
+- `견적 대기 300만원` — the □□랩스 quote total (1,500,000 × 2).
+- `입금 미확인 1건` — the ○○물산 contract's third billed month (`month − 2`) was deliberately left out of
+  `paidMonths`, so the severity-3 briefing line, the rose home-card count, and the packet's `미수` line all render.
+
+The □□랩스 quote was created 9 days before `today`, one day past `QUOTE_STALE_DAYS` (7), so the briefing's
+stale-quote line fires as well; with the unpaid line, that is two `biz` alerts, well under the `CAP − 1` the
+section reserves before its closing summary line.
+
 ## Remaining state
-- `act`: `{ streak: 4, lastActive: today − 1, shieldMonth: monthStr(), shieldsLeft: 2 }` — a live streak that continues on the first completion instead of breaking.
-- `metrics`: `{ asset: 24, infl: 14, body: 20 }`, written directly rather than derived from the achievement history.
+- `act`: `{ streak: 4, lastActive: today − 1, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: today − 7 }` — a live streak that continues on the first completion instead of breaking; `briefingSeen: null` and an overdue task together mean the demo briefing opens on first load; `lastReview` at last week's Monday leaves this week's review outstanding. There is no `metrics` field and no `lastCheckin` stamp — both were removed entirely by schema v19 (2026-09-11); what they claimed to measure lives in a goal's metric KR instead.
 - `exams`: `best.toeic = { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: today − 60 }`, `dim.toeic = 1`, empty `spec`. So the TOEIC 800 milestone pays the difference only — 720 − 480 = 240 P at multiplier 1 — which is exactly the same-family upgrade rule ([Rule 2](core-beliefs.md#rule-2)) on screen.
 - `certBest`: empty, so 전기기사 (no stage group) pays its full `certP(67) = 900` before job weighting.
 - `journal`: one entry dated yesterday with an `ai` reply, so the journal list and the stored-reply block are both visible.
 - `reviews`: one entry for last week (`weekOf` = that Monday), which leaves this week's review outstanding.
-- `act.lastCheckin = today − 10` and `lastReview = today − 7`, `briefingSeen: null` — the demo briefing therefore opens with an overdue task, a stale metrics check-in and a due weekly review.
 - `room.trophies`: one `{ kind: "rank", label: "직업·커리어 실무자", date: today − 20 }`, so the achievement wall is not empty on first open.
 - `role`: `{ name: "완성차 1차사 하네스 설계 책임", targets: { 직업·커리어: 6, 기본지식: 4 } }` — two targeted areas, which makes `roleGap` computable and the RANK UP proximity line meaningful.
 

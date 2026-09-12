@@ -184,6 +184,33 @@ const typeInto = async (placeholder, value) => {
     if (!ok) throw new Error(`tab not found: ${name}`);
     await sleep(320);
   };
+  // Editable rows, found structurally: every row carries a `수정` button and the card is its grandparent.
+  // `texts` are the strings the card must show; with `label`, the button of that exact name is tapped on the
+  // first match. Shared by the schedule and business flows, whose cards are built to the same shape.
+  const rows = (texts, label = null) => page.evaluate((ts, l) => {
+    const cards = [...document.querySelectorAll("button")]
+      .filter((b) => (b.innerText || "").trim() === "수정")
+      .map((b) => b.parentElement.parentElement)
+      .filter((c) => ts.every((t) => (c.innerText || "").includes(t)));
+    const out = cards.map((c) => c.innerText.replace(/\s+/g, " ").trim());
+    if (!l) return { rows: out };
+    const btn = cards[0] && [...cards[0].querySelectorAll("button")].find((b) => (b.innerText || "").trim() === l);
+    if (!btn) return { rows: out, clicked: false };
+    btn.scrollIntoView({ block: "center" });
+    btn.click();
+    return { rows: out, clicked: true };
+  }, texts, label);
+  // Click a page button by its exact label — calendar controls and view chips sit outside any modal, and a
+  // partial match would hit `계약 추가` instead of the `계약` chip.
+  const clickExact = async (label) => {
+    const ok = await page.evaluate((l) => {
+      const b = [...document.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
+      if (!b) return false;
+      b.scrollIntoView({ block: "center" }); b.click(); return true;
+    }, label);
+    if (!ok) throw new Error(`button not found: ${label}`);
+    await sleep(350);
+  };
   // Split coverage around reloads and accumulate (V8 coverage resets on every navigation)
   // The app opens the daily briefing on the first load of each day; dismiss it so the next click
   // reaches the screen behind. Pass { keepModal: true } in steps that assert the briefing itself.
@@ -245,7 +272,7 @@ const typeInto = async (placeholder, value) => {
     await sleep(1000); await closeModal();
     await assertDone(title);
   };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, reload, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, assertDone, modalError, clickTab, reload, rows, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

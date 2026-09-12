@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 19 |
+| State schema version (`freshState.v`) | 20 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v19 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v20 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 19,
+  v: 20,
   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
@@ -29,6 +29,13 @@
   events: [{ id, title, kind("appt"|"due"), date("YYYY-MM-DD"), time?("HH:MM"), note?, place?,   // schedule records: appointments and deadlines —
              repeat?{ freq("daily"|"weekly"|"monthly"), until? },                                // never tasks, never paid, never a metric source
              skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt }],                        // occurrences are expanded at render, not stored
+  folio: [{ id, title, summary?, role?, stack?[string],                       // business records: what was built, what it sells for,
+            period?{ from("YYYY-MM"), to("YYYY-MM") },                        // and what is contracted — records, never tasks: no payout,
+            links[{ label, url }], createdAt }],                              // no trophy, no goal, no streak (rules 1, 18).
+  rates: [{ id, name, unit("month"|"day"|"project"), price, cost?, note?, createdAt }],   // cost is optional and never defaults to 0
+  deals: [{ id, client, title, status("lead"|"quote"|"won"|"lost"),           // a period contract is a billing rule plus the user's own
+            monthly?, costMonthly?, months?, startMonth?("YYYY-MM"),          // payment stamps; months, totals, margin and the
+            paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -37,23 +44,27 @@
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
-  ui: { scheduleView("list"|"calendar") },                      // which view the schedule tab opens on — a preference, never derived data
+  ui: { scheduleView("list"|"calendar"), bizView("deals"|"rates"|"folio") },   // which view a tab opens on — a preference, never derived data
   lastTick, dModel
 }
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
 agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
-the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
+contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
+business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 19,
+  v: 20,
   profile: null,
   areas,
   tasks: [],
   goals: [],
   events: [],
+  folio: [],
+  rates: [],
+  deals: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
@@ -61,13 +72,14 @@ the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacke
   certBest: {},
   room: { trophies: [] },
   role: null,
-  ui: { scheduleView: "list" },
+  ui: { scheduleView: "list", bizView: "deals" },
   lastTick: dstr(),
   dModel: DIFF_RAW_VERSION,
 });
 
 const demoState = () => {
   const today = dstr();
+  const month = today.slice(0, 7);
   const p1 = { id: uid(), name: "사업", grade: 2, achievements: [{ id: uid(), text: "스마트스토어 월 수익 30만 달성", date: shiftDay(today, -12), grade: 2 }] };
   const p2 = { id: uid(), name: "직업·커리어", grade: 3, dir: ["전기·기계"], achievements: [{ id: uid(), text: "초기 산정 — 기계·전자 전공, 하네스 설계 지망", date: shiftDay(today, -30), grade: 3 }] };
   const p3 = { id: uid(), name: "기본지식", grade: 2, dir: ["IT·개발", "재테크·금융"], achievements: [{ id: uid(), text: "보유 자격: 컴퓨터활용능력 2급", date: shiftDay(today, -30), grade: 2 }] };
@@ -112,6 +124,35 @@ const demoState = () => {
     { id: uid(), title: "전기기사 실기 원서 접수 마감", kind: "due", date: shiftDay(today, 9), note: "접수 후 수험표 확인", createdAt: shiftDay(today, -3) },
     { id: uid(), title: "영어 스터디 모임", kind: "appt", date: shiftDay(today, 1), time: "20:00", place: "온라인", repeat: { freq: "weekly" }, createdAt: shiftDay(today, -7) },
   ];
+  // Business records. The finished contract ended two months ago and the signed one starts next month, so this
+  // month is contracted at 0; its third billed month carries no payment stamp, so one unpaid month is outstanding.
+  s.rates = [
+    { id: uid(), name: "웹 앱 개발 (월)", unit: "month", price: 3000000, cost: 800000, note: "기획·개발·배포 포함", createdAt: shiftDay(today, -24) },
+    { id: uid(), name: "AI 도입 컨설팅 (일)", unit: "day", price: 400000, cost: 60000, createdAt: shiftDay(today, -20) },
+    { id: uid(), name: "랜딩 페이지 제작 (프로젝트)", unit: "project", price: 1200000, note: "외주 디자인 비용 미산정", createdAt: shiftDay(today, -16) },
+  ];
+  s.folio = [
+    {
+      id: uid(), title: "사내 문서 검색 AI 프로토타입", summary: "사내 PDF 1,200건을 임베딩해 자연어로 찾는 내부 도구",
+      role: "기획·개발 단독", stack: ["React", "FastAPI", "pgvector"],
+      period: { from: monthAdd(month, -6), to: monthAdd(month, -4) },
+      links: [{ label: "GitHub", url: "https://github.com/example/doc-search" }, { label: "Notion", url: "https://example.notion.site/doc-search" }],
+      createdAt: shiftDay(today, -26),
+    },
+    {
+      id: uid(), title: "스마트스토어 주문 자동 집계", summary: "주문 CSV를 매일 모아 정산 시트로 만드는 자동화",
+      role: "개발 단독", stack: ["Python", "Google Sheets API"],
+      period: { from: monthAdd(month, -10), to: monthAdd(month, -9) },
+      links: [{ label: "배포", url: "https://example.com/order-rollup" }],
+      createdAt: shiftDay(today, -23),
+    },
+  ];
+  s.deals = [
+    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140) },
+    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6) },
+    { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9) },
+    { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3) },
+  ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
     text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
@@ -144,22 +185,26 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v17 → v17 | v17: the schedule tab remembers the chosen view (list or calendar). A preference only — the month, the selection and the occurrences stay derived. |
 | < v18 → v18 | v18: the `meet` activity kind is gone — a meeting belongs to the `일정` tab, not to a goal. Only `kind` is dropped; everything the user recorded (title, difficulty, points, completion dates, minutes evidence) is kept, and an unknown kind is left alone. |
 | < v19 → v19 | v19: life metrics are gone (user decision 2026-09-11). A global self-assessed triple that also grew from unrelated achievements measured nothing; objective measures belong to a goal's metric KR (rule 8). The stored numbers and the check-in stamp are dropped; every other act stamp, record and payout is kept untouched. |
+| < v20 → v20 | v20: business records — folio[] portfolio entries, rates[] unit prices, deals[] period contracts. A contract is a billing rule (startMonth, months, monthly) plus the user's own paidMonths stamps; every month, total and margin stays derived at render. Records, never tasks: nothing here pays P, creates a trophy, moves a goal or touches the streak. ui.bizView is a preference, exactly like ui.scheduleView. |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1221 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3609 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 3609 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 3609 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-profile` | 5063 | App root |
-| `liferpg-img-${slot}` | 5100 | App root |
-| `liferpg-img-ev-${id}` | 5123 | App root |
-| `liferpg-img-ev-${q.id}` | 5301 | App root |
-| `liferpg-img-ev-${t.id}` | 5471 | App root |
-| `liferpg-img-study-${t.id}-1` | 5471 | App root |
-| `liferpg-img-study-${t.id}-2` | 5471 | App root |
+| `liferpg-img-ev-${task.id}` | 3877 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 3877 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 3877 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 5418 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 5651 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 5832 | App root |
+| `liferpg-img-${slot}` | 5872 | App root |
+| `liferpg-img-ev-${id}` | 5895 | App root |
+| `liferpg-img-ev-${q.id}` | 6073 | App root |
+| `liferpg-img-ev-${t.id}` | 6304 | App root |
+| `liferpg-img-study-${t.id}-1` | 6304 | App root |
+| `liferpg-img-study-${t.id}-2` | 6304 | App root |
+| `liferpg-img-folio-${f.id}` | 6310 | App root |
 
 ## Demo data (`demoState`)
 

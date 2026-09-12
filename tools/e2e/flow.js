@@ -30,7 +30,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version", async () => {
     const v = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1"))?.v; } catch { return null; } });
-    if (v !== 19) throw new Error("fresh save schema v" + v + " (expected 19)");
+    if (v !== 20) throw new Error("fresh save schema v" + v + " (expected 20)");
   });
 
   // ── Goal (OKR) creation — metric, count and cert KRs
@@ -122,9 +122,9 @@ module.exports = async (h) => {
   for (const tab of ["홈", "실행", "목표", "성장"]) {
     await step(`switch tab: ${tab}`, async () => { await clickTab(tab); });
   }
-  await step("bottom nav order (home, goals, tasks, schedule, growth)", async () => {
+  await step("bottom nav order (home, goals, tasks, schedule, business, growth)", async () => {
     const labels = await page.evaluate(() => [...document.querySelectorAll("nav button")].map((b) => (b.innerText || "").trim()));
-    const want = ["홈", "목표", "실행", "일정", "성장"];
+    const want = ["홈", "목표", "실행", "일정", "사업", "성장"];
     if (labels.join("·") !== want.join("·")) throw new Error("nav order: " + labels.join("·"));
   });
   await step("state persists after reload", async () => {
@@ -144,6 +144,7 @@ module.exports = async (h) => {
   await require("./flow3.js")(h);
   await require("./flow5.js")(h);
   await require("./flow7.js")(h);
+  await require("./flow8.js")(h);
   await require("./flow4.js")(h);
   await require("./flow6.js")(h);
 
@@ -157,7 +158,7 @@ module.exports = async (h) => {
     await expectText("오늘");
   });
   await step("demo — sweep every tab", async () => {
-    for (const tab of ["실행", "목표", "성장", "일정", "홈"]) { await clickTab(tab); }
+    for (const tab of ["실행", "목표", "성장", "일정", "사업", "홈"]) { await clickTab(tab); }
   });
   await shot("demo");
 

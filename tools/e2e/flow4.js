@@ -10,7 +10,7 @@ module.exports = async (h) => {
     await clickTab("성장"); await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 19) throw new Error("schema version " + st.v + " (expected 19)");
+    if (st.v !== 20) throw new Error("schema version " + st.v + " (expected 20)");
     return st;
   };
   // ── Goal status change and removal
@@ -121,7 +121,7 @@ module.exports = async (h) => {
       try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; }
     });
     if (!st) throw new Error("no state after migration");
-    if (st.v !== 19) throw new Error("schema version " + st.v + " (expected 19)");
+    if (st.v !== 20) throw new Error("schema version " + st.v + " (expected 20)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     const kinds = (st.room?.trophies || []).map((t) => t.kind);
@@ -145,7 +145,7 @@ module.exports = async (h) => {
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 19) throw new Error("schema version " + st.v + " (expected 19)");
+    if (st.v !== 20) throw new Error("schema version " + st.v + " (expected 20)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     // v12 built a life-metric store that v19 then deletes, so nothing v12 produced is observable in an end state.
@@ -274,6 +274,34 @@ module.exports = async (h) => {
     if (st.act?.briefingSeen !== now || st.act?.lastReview !== "2026-01-02") throw new Error("v19 dropped an act stamp it must keep: " + JSON.stringify(st.act));
     if (st.ui?.scheduleView !== "calendar") throw new Error("v19 rewrote the schedule view: " + JSON.stringify(st.ui));
     if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v19 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
+  });
+  await step("v19 save → v20 business", async () => {
+    const s19 = {
+      v: 19,
+      profile: { nick: "v19세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, directions: [] },
+      areas: [{ id: "ab", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tb", title: "레거시 실행", areaId: "ab", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [],
+      events: [{ id: "eb", title: "레거시 면접", kind: "appt", date: "2026-01-05", time: "10:00", createdAt: "2026-01-02" }],
+      journal: [{ id: "jb", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [{ id: "rb", weekOf: "2025-12-29", date: "2026-01-02", wins: "기록 유지", blocks: "없음" }],
+      ui: { scheduleView: "calendar" },
+      act: { streak: 2, lastActive: "2026-01-02", shieldMonth: "2026-01", shieldsLeft: 2, briefingSeen: null, lastReview: "2026-01-02" },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s19);
+    for (const k of ["folio", "rates", "deals"]) {
+      if (!Array.isArray(st[k])) throw new Error(`v20 record array ${k} missing: ` + JSON.stringify(st[k]));
+      if (st[k].length) throw new Error(`v20 invented ${k} rows: ` + JSON.stringify(st[k]));
+    }
+    if (st.ui?.bizView !== "deals") throw new Error("v20 business view missing or not deals: " + JSON.stringify(st.ui));
+    if (st.ui?.scheduleView !== "calendar") throw new Error("v20 rewrote the schedule view: " + JSON.stringify(st.ui));
+    if (st.events?.length !== 1 || st.events[0].title !== "레거시 면접") throw new Error("v20 changed the schedule records: " + JSON.stringify(st.events));
+    if (st.tasks?.length !== 1 || st.tasks[0].id !== "tb") throw new Error("v20 changed the task records: " + JSON.stringify(st.tasks));
+    if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v20 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
+    if (st.act?.streak !== 2 || st.act?.lastReview !== "2026-01-02") throw new Error("v20 changed an act stamp: " + JSON.stringify(st.act));
+    if ("lastCheckin" in (st.act || {}) || "metrics" in st) throw new Error("v20 brought back what v19 removed: " + JSON.stringify(st.act));
   });
   await shot("migrated");
 };
