@@ -50,6 +50,46 @@ module.exports = async (h) => {
     }
   });
 
+  await step("a controlled page does not reload when a new worker takes over", async () => {
+    // The update case the first-visit step cannot reach: a page that already has a controller when it
+    // loads, which is exactly the state the app used to reload on (reported 2026-09-13: the growth tab
+    // jumped back to home a few seconds in — once per deploy, because every build emits a new sw.js).
+    // Registering a second script URL at the same scope replaces the registration, so a new worker
+    // installs, skipWaiting + clients.claim hand it this running page, and `controllerchange` fires.
+    const ctx = await page.browser().createBrowserContext();
+    const fresh = await ctx.newPage();
+    // Polling, not an event: `controllerchange` fires inside the page, and a reload from the pre-fix
+    // build destroys the execution context mid-evaluate, which must not read as a passing step.
+    const until = async (ms, fn) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) { try { if (await fn()) return true; } catch {} await sleep(250); }
+      return false;
+    };
+    try {
+      await fresh.goto(page.url(), { waitUntil: "domcontentloaded" });
+      const claimed = await until(8000, () => fresh.evaluate(() => !!navigator.serviceWorker.controller));
+      if (!claimed) throw new Error("the first worker never took control — the update case cannot be simulated");
+      await fresh.reload({ waitUntil: "domcontentloaded" });
+
+      let navs = 0;
+      fresh.on("framenavigated", (f) => { if (f === fresh.mainFrame()) navs++; });
+      const before = await fresh.evaluate(() => navigator.serviceWorker.controller?.scriptURL || "");
+      if (!before) throw new Error("the reloaded page had no controller at load time — the update case cannot be simulated");
+      await fresh.evaluate(async () => { await navigator.serviceWorker.register("./sw.js?e2e-update=1", { scope: "./" }); });
+
+      const tookOver = await until(8000, async () => {
+        if (navs > 0) return true; // a navigation is itself the takeover; the assertion below names it
+        const now = await fresh.evaluate(() => navigator.serviceWorker.controller?.scriptURL || "");
+        return !!now && now !== before;
+      });
+      if (!tookOver) throw new Error("the new worker never took control — this step proved nothing");
+      await sleep(3000);
+      if (navs !== 0) throw new Error(`the page reloaded itself ${navs} time(s) when a new worker took over`);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("the app opens with the network disabled", async () => {
     await page.setOfflineMode(true);
     try {

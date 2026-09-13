@@ -62,7 +62,7 @@ Schema and storage keys: [docs/generated/db-schema.md](docs/generated/db-schema.
 | `npm run docs:gen` / `docs:check` / `lang:check` | regenerate generated docs / doc integrity / language policy |
 | `node tools/harness/gen-icons.js` | re-render the app icons from `public/icon.svg` (after an icon change) |
 
-Current status (2026-09-13): schema **v20**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 139 steps green, real-device smoke still pending (backlog 2).
+Current status (2026-09-13): schema **v20**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 140 steps green, real-device smoke still pending (backlog 2).
 
 ## Platform notes
 - The app was originally an artifact that used `window.storage`; it was shimmed to `localStorage` on 2026-09-03 behind the same `store` interface — that interface is the seam if a different backend is ever needed.

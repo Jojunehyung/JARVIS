@@ -28,13 +28,13 @@ Reliability for a local-only app means: the user's state survives every version,
 | `cov_map.js` | maps V8 coverage back to `src/LifeManager.jsx` lines (needs `vite build --sourcemap`) |
 | `perf.js`, `prof.js`, `ab.js`, `ab_onboard.js`, `rows.js` | performance probes (see below) |
 
-Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers and day-number tones read from the grid, activity-kind refusal text read from the modal error), not just clicks; 139 steps as of 2026-09-13.
+Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers and day-number tones read from the grid, activity-kind refusal text read from the modal error), not just clicks; 140 steps as of 2026-09-13.
 
 ## Performance measurement rule
 Single-run timings on this machine swing by ±50 % with background load. Compare builds only with `tools/e2e/ab.js` (two builds, one browser, interleaved rounds, medians). Structural counts (mounted rows, DOM nodes via `rows.js`) are reliable; wall-clock deltas under ±10 % are noise.
 
 ## Offline and updates
-The production build ships a generated service worker (`dist/sw.js`): hashed assets cache-first, the document network-first with a cache fallback, and every non-current cache deleted on activate. A new deploy is picked up on the next online load, and the page reloads once when the new worker takes control. `navigator.storage.persist()` is requested at start so the records are not evicted under storage pressure. The E2E asserts both halves — that the worker controls the page, and that a reload with the network disabled still renders the app.
+The production build ships a generated service worker (`dist/sw.js`): hashed assets cache-first, the document network-first with a cache fallback, and every non-current cache deleted on activate. A new deploy installs and takes control in the background; the running page is never reloaded for it, so the new build applies the next time the app is opened (decided 2026-09-13, after the reload dropped the user back on the home tab once per deploy). `navigator.storage.persist()` is requested at start so the records are not evicted under storage pressure. The E2E asserts both halves — that the worker controls the page, and that a reload with the network disabled still renders the app.
 
 ## Known limits
 - No unit-test runner; engine checks are `smoke-logic.js` and the E2E. The planned file split (backlog 3) adds unit tests for `calcExamPayout`, `krProgress`, `migrate`.
