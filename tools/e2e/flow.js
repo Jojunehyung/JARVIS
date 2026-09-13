@@ -83,7 +83,7 @@ module.exports = async (h) => {
   await shot("quest-added");
 
   // ── Tasks tab — completion and catalogue
-  await step("go to tasks tab", async () => { await clickTab("실행"); await expectText("실행"); });
+  await step("go to tasks tab", async () => { await clickTab("실행"); await expectText("실행 — 시간순 할 일"); });
   await step("complete daily task (goal progress delta)", async () => {
     const before = await page.evaluate(() => document.body.innerText);
     await completeQuest("설계 실습 1시간");

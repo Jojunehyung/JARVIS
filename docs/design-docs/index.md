@@ -8,7 +8,7 @@ Engine and structure decisions. Rules are canonical in `core-beliefs.md`; everyt
 | [assistant-bridge.md](assistant-bridge.md) | Agenda buckets, the daily-briefing rules, and what the assistant never does |
 | [job-weighting.md](job-weighting.md) | Job-fit multiplier: matrix, exceptions, intersection rule, evidence thresholds |
 | [decision-log.md](decision-log.md) | Dated product/engineering decisions |
-| [information-architecture.md](information-architecture.md) | Area → goal → KR → task hierarchy, KR–task bridge, milestone/daily/unassigned sections, screen map |
+| [information-architecture.md](information-architecture.md) | Area → goal → KR → task hierarchy, KR–task bridge, the `실행` tab's time groups (not goal groups), screen map |
 | [scoring-engine.md](scoring-engine.md) | Difficulty D, points P, grade cuts, certification and exam payout mechanics |
 | [goal-engine.md](goal-engine.md) | KR progress, goal progress, pace, deadlines, KR check-in, task creation rules |
 | [evidence-and-promotion.md](evidence-and-promotion.md) | Evidence gate, study tiers, activity logs, promotion gates |

@@ -30,7 +30,7 @@ Because every check is `!q.evidence`, a daily activity task asks for a log once 
 | `liferpg-img-study-{taskId}-{n}` (n = 1..2) | `StudyVerifyModal` | `EvidenceViewModal` | `removeTask`, `resetAll` |
 | `liferpg-img-profile` | profile photo picker | app start | `resetAll` |
 
-The state itself lives under `liferpg-state-v1`; all keys are frozen ([Rule 12](core-beliefs.md#rule-12)). A completed row in `TaskTab` reads `완료 · 증거 보기`; the link opens `EvidenceViewModal` with the completion date, the evidence text (or `기록된 텍스트 없음`) and every stored photo under `{합격증 | 성적표 | 산출물 | 증거} 사진 {n}장`.
+The state itself lives under `liferpg-state-v1`; all keys are frozen ([Rule 12](core-beliefs.md#rule-12)). A completed row in `TaskTab` reads `완료 {date} · 🎯 {goal}` (or `목표 기여 없음`), plus ` · 증거 보기` when the task carries `evidence`; the link opens `EvidenceViewModal` with the completion date, the evidence text (or `기록된 텍스트 없음`) and every stored photo under `{합격증 | 성적표 | 산출물 | 증거} 사진 {n}장`.
 
 ## Study verification (`STUDY_REQ`, `StudyVerifyModal`)
 Decided 2026-08-29. The modal uses `STUDY_REQ[task.diff] || STUDY_REQ.D`, so an undefined tier (A) falls back to D.

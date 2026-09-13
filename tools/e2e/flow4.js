@@ -1,6 +1,6 @@
 // Wrap-up — goal status changes and legacy migrations (last, because they affect later steps)
 module.exports = async (h) => {
-  const { step, shot, clickText, clickTab, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
+  const { step, shot, clickText, clickTab, clickExact, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
 
   // Plant a legacy save, reload, and read back the migrated state.
   const migrateFixture = async (save) => {
@@ -94,9 +94,12 @@ module.exports = async (h) => {
     const keep = (st.tasks || []).find((q) => q.id === "tkeep");
     if (!keep) throw new Error("completed task was deleted with its goal");
     if (keep.goalId !== "gdel" || keep.evidence !== "정리 완료") throw new Error("completed task was rewritten: " + JSON.stringify(keep));
+    // The completed task keeps its evidence and now states that it serves no goal; it was completed before
+    // today, so the `완료` archive is where it is listed.
     await clickTab("실행");
-    await expectText("미분류");
+    await clickExact("완료");
     await expectText("남길 실행");
+    await expectText("목표 기여 없음");
   });
 
   // ── Legacy save migration paths

@@ -200,6 +200,40 @@ const typeInto = async (placeholder, value) => {
     btn.click();
     return { rows: out, clicked: true };
   }, texts, label);
+  // The `실행` to-do list, read by group. Each group is a `<section>` led by its label and every row carries its
+  // title in a `.text-sm.font-semibold` node; all three row kinds share the same shell, so the walk up from the
+  // title stops on the shell and the buttons/inputs that come back are exactly that row's controls. `label` null
+  // reads every group. With `tap = { title, button }` the named button of that row is pressed — or the row itself
+  // when `button` is omitted — so a step addresses one row instead of the first same-named button on the screen.
+  const todoRows = (label = null, tap = null) => page.evaluate((l, tp) => {
+    const labelOf = (s) => { const e = s.querySelector(".tracking-widest"); return e ? (e.innerText || "").trim() : null; };
+    const secs = [...document.querySelectorAll("section")].filter((s) => labelOf(s) !== null && (l === null || labelOf(s) === l));
+    if (l !== null && !secs.length) return null;
+    const out = [];
+    for (const sec of secs) {
+      for (const node of sec.querySelectorAll(".text-sm.font-semibold")) {
+        let row = node;
+        for (let i = 0; i < 6 && row.parentElement; i++) {
+          row = row.parentElement;
+          const cls = row.className || "";
+          if (/bg-zinc-950/.test(cls) && /rounded-xl/.test(cls)) break;
+        }
+        const btns = [...row.querySelectorAll("button")];
+        const title = (node.innerText || "").trim();
+        if (tp && tp.title === title) {
+          const b = tp.button ? btns.find((x) => (x.innerText || "").trim() === tp.button) : row.tagName === "BUTTON" ? row : null;
+          if (b) { b.scrollIntoView({ block: "center" }); b.click(); }
+        }
+        out.push({
+          group: labelOf(sec), title,
+          text: (row.innerText || "").replace(/\s+/g, " ").trim(),
+          buttons: btns.map((b) => (b.innerText || "").trim()).filter(Boolean),
+          controls: btns.length + row.querySelectorAll("input").length,
+        });
+      }
+    }
+    return out;
+  }, label, tap);
   // Click a page button by its exact label — calendar controls and view chips sit outside any modal, and a
   // partial match would hit `계약 추가` instead of the `계약` chip.
   const clickExact = async (label) => {
@@ -272,7 +306,7 @@ const typeInto = async (placeholder, value) => {
     await sleep(1000); await closeModal();
     await assertDone(title);
   };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, assertDone, modalError, clickTab, reload, rows, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, assertDone, modalError, clickTab, reload, rows, todoRows, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

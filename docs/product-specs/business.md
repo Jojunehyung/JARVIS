@@ -219,6 +219,18 @@ The same `persisted` check runs after every `state` write; a save that does not 
 
 All three are specified in [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
+## The `실행` tab
+Two of the facts above also render as rows in the unified to-do list ([tasks.md](tasks.md)),
+keyed to the same `bizSummary` call and capped by `BIZ_ALERT_MAX` (3, shared with the briefing's `slice(0,
+BIZ_ALERT_MAX)`): an unpaid billed month (`입금 미확인 {won} · 목표 기여 없음`) and a `won` contract ending inside
+`DEAL_END_SOON` months (`계약 종료 · 남은 계약 {won} · 목표 기여 없음`), each keyed to the month's closing day so
+they land in the same time group a task or an event would. A stale quote is deliberately **not** a row there — it
+has an age, not a date, so there is no day to file it under without inventing one
+([Rule 13](../design-docs/core-beliefs.md#rule-13)); it stays only in the briefing and in this tab's `견적 대기`
+group, and the to-do list's header states its count instead. Every business row there is a full-width button with
+**no completion control** — tapping it opens this tab on `계약`; nothing about a contract or a payment is ever
+reachable from `실행` beyond that.
+
 ## What a business record never does
 - No `goalId`, no difficulty, no points, no trophy, no achievement record, no metric change, no streak effect
   ([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 18](../design-docs/core-beliefs.md#rule-18)).

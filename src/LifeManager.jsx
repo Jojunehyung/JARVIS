@@ -2108,6 +2108,7 @@ const jobWeightForCert = (state, areaId, cert) => {
 const BIZ_REVENUE_MONTHS = 6;  // how many months the contract view rolls up
 const QUOTE_STALE_DAYS = 7;    // a quote older than this is named in the briefing
 const DEAL_END_SOON = 2;       // a contract ending this many months out is named in the briefing
+const BIZ_ALERT_MAX = 3;       // business rows a surface names one by one, so unpaid months cannot bury the tasks
 const DEAL_MAX_MONTHS = 120;   // hard cap on a billing period, so one typo cannot expand every roll-up
 const RATE_UNIT = { month: "월", day: "일", project: "건" };
 const DEAL_STATUS = { lead: "문의", quote: "견적", won: "계약", lost: "무산" };
@@ -2312,6 +2313,107 @@ const upcomingEvents = (state, from, days = EVENT_HORIZON_DAYS) => {
   return out;
 };
 
+/* The one time-ordered expansion of everything that is actionable: open tasks, schedule occurrences and the two
+   dated business facts. Pure — computed at render, never stored (rule 9). A row only carries what a surface has to
+   print; what a row *does* is decided by its kind, and only a task row reaches the completion path (rules 1, 10). */
+const TODO_GROUPS = [["overdue", "기한 지남"], ["today", "오늘"], ["tomorrow", "내일"], ["week", "이번 주"], ["later", "이후"]];
+// Rows tie constantly (a daily task has no time at all), so one deterministic key decides the order, the way
+// `eventsOn` ranks a single day: date, then clock time, then task → event → business, then title.
+const TODO_KIND_RANK = { task: 0, event: 1, biz: 2 };
+const todoKey = (r) => `${r.date || "9999-99-99"}|${r.time || "99:99"}|${TODO_KIND_RANK[r.kind]}|${r.title}`;
+const todoSort = (rows) => [...rows].sort((a, b) => todoKey(a).localeCompare(todoKey(b)));
+// The last day of a "YYYY-MM" month: day 0 of the next month, noon-anchored like every other date here (never toISOString).
+const monthEndDate = (month) => {
+  const y = Number(String(month).slice(0, 4));
+  const m = Number(String(month).slice(5, 7)) - 1;
+  return dstr(new Date(y, m + 1, 0, 12));
+};
+
+const todoOf = (state, today) => {
+  const tomorrow = shiftDay(today, 1);
+  const weekEnd = shiftDay(mondayOf(today), 6);
+  // One bucketing rule for all three kinds. Only a task can be undated: a daily task is due today by definition,
+  // anything else without a date has no day to claim and waits in `이후`.
+  const bucket = (r) => {
+    if (!r.date) return r.kind === "task" && r.task?.type === "daily" ? "today" : "later";
+    if (r.date < today) return "overdue";
+    if (r.date === today) return "today";
+    if (r.date === tomorrow) return "tomorrow";
+    return r.date <= weekEnd ? "week" : "later";
+  };
+  const rows = [];
+
+  // Tasks — `agendaOf` owns the definition of "open", so the tab, the home card and the briefing cannot disagree.
+  for (const q of agendaOf(state, today).all) {
+    rows.push({ key: `t:${q.id}`, kind: "task", date: q.due || null, time: "", title: q.title, task: q });
+  }
+
+  // Schedule occurrences — records, never tasks: a row here completes nothing and pays nothing (rules 1, 10).
+  const evRow = (o) => ({
+    key: `e:${o.ev.id}-${o.date}`, kind: "event", date: o.date, time: o.ev.time || "",
+    title: o.ev.title || "", ev: o.ev, done: o.done,
+  });
+  const past = upcomingEvents(state, shiftDay(today, -EVENT_PAST_DAYS), EVENT_PAST_DAYS).filter((o) => o.ev.kind === "due");
+  const ahead = upcomingEvents(state, today, EVENT_HORIZON_DAYS);
+  const seenLater = new Set();
+  for (const o of [...past, ...ahead]) {
+    if (o.done) continue; // a ticked occurrence is not to-do; un-ticking stays reachable from `오늘 완료` and the schedule tab
+    const r = evRow(o);
+    // `이후` collapses each event to its earliest occurrence, exactly as ScheduleTab does: one weekly repeat would
+    // otherwise add 12 rows over the 90-day horizon and a daily one 83. The near groups stay one row per occurrence.
+    if (bucket(r) === "later") {
+      if (seenLater.has(o.ev.id)) continue;
+      seenLater.add(o.ev.id);
+    }
+    rows.push(r);
+  }
+
+  // Business — the two facts that have a day: a billed month that closes unpaid, and a contract that ends.
+  // A stale quote has an age, not a date, so it stays in the briefing and the `사업` tab rather than claiming
+  // a deadline it does not have (rule 13). Nothing here completes, bills or moves a goal (rules 1, 18).
+  const biz = bizSummary(state, today);
+  for (const u of biz.unpaid.slice(0, BIZ_ALERT_MAX)) {
+    rows.push({
+      key: `b:unpaid:${u.deal.id}-${u.month}`, kind: "biz", date: monthEndDate(u.month), time: "",
+      title: `${u.deal.client} ${u.deal.title}`, deal: u.deal, month: u.month,
+      text: `입금 미확인 ${wonText(u.amount)} · 목표 기여 없음`,
+    });
+  }
+  for (const d of state.deals || []) {
+    const end = dealEnd(d);
+    if (d.status !== "won" || !end) continue;
+    const left = monthsBetween(biz.month, end);
+    if (left < 0 || left > DEAL_END_SOON) continue;
+    rows.push({
+      key: `b:end:${d.id}`, kind: "biz", date: monthEndDate(end), time: "",
+      title: `${d.client} ${d.title}`, deal: d, month: end,
+      text: `계약 종료 · 남은 계약 ${wonText(dealBacklog(d, biz.month))} · 목표 기여 없음`,
+    });
+  }
+
+  const by = { overdue: [], today: [], tomorrow: [], week: [], later: [] };
+  for (const r of rows) by[bucket(r)].push(r);
+  // Today's completions, tasks and ticked occurrences together — business records are never "done".
+  const done = todoSort([
+    ...(state.tasks || [])
+      .filter((q) => (q.type === "daily" ? q.doneDates?.includes(today) : q.status === "done" && q.doneAt === today))
+      .map((q) => ({ key: `t:${q.id}`, kind: "task", date: q.due || null, time: "", title: q.title, task: q, done: true })),
+    ...eventsOn(state, today).filter((o) => o.done).map(evRow),
+  ]);
+  return {
+    groups: TODO_GROUPS.map(([key, label]) => ({ key, label, rows: todoSort(by[key]) })),
+    done,
+    // `week` runs from today to Sunday, so it covers today and tomorrow too: it answers how much is left this
+    // week, not how many rows sit in the group of the same name — the same semantics as ScheduleTab's counts line.
+    counts: {
+      overdue: by.overdue.length,
+      today: by.today.length,
+      week: by.today.length + by.tomorrow.length + by.week.length,
+      open: rows.length,
+    },
+  };
+};
+
 const lastDoneDate = (q) => (q.type === "daily" ? (q.doneDates || []).slice(-1)[0] || null : q.doneAt || null);
 const KIND_LABEL = { book: "📚 독서", fit: "💪 운동" };
 const AREA_STALE_DAYS = 30;
@@ -2385,7 +2487,7 @@ const buildBriefing = (state, today) => {
   const biz = bizSummary(state, today);
   const bizDeals = state.deals || [];
   const bizAlerts = [
-    ...biz.unpaid.slice(0, 3).map((u) => ({
+    ...biz.unpaid.slice(0, BIZ_ALERT_MAX).map((u) => ({
       kind: "biz", severity: 3, text: `${u.deal.client} ${u.deal.title} — ${u.month} 입금 미확인 ${wonText(u.amount)}`,
     })),
     ...bizDeals
@@ -3250,7 +3352,12 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
   const firstAlert = brief.sections.flatMap((s) => s.items).find((it) => it.severity === 3);
   const active = (state.goals || []).filter((g) => g.status === "active");
   const focus = [...active].sort((x, y) => (x.deadline || "9999").localeCompare(y.deadline || "9999")).slice(0, 3);
-  const todayQuests = agendaOf(state, today).all;
+  // The card reads the same expansion the `실행` tab reads, so the two can never disagree about what "today"
+  // means: overdue plus today, tasks only. This week and later belong to the tab, and today's schedule and
+  // business facts already have their own lines above.
+  const td = todoOf(state, today);
+  const byKey = (k) => td.groups.find((g) => g.key === k)?.rows || [];
+  const todayQuests = [...byKey("overdue"), ...byKey("today")].filter((r) => r.kind === "task").map((r) => r.task);
   const doneToday = doneTodayCount(state, today);
   return (
     <>
@@ -3339,7 +3446,7 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
           <button onClick={onGoQuests} className="text-xs text-zinc-500">관리 ›</button>
         </div>
         {todayQuests.length === 0 ? (
-          <p className="text-sm text-zinc-500 text-center py-3">오늘 예정된 할 일이 없습니다.</p>
+          <p className="text-sm text-zinc-500 text-center py-3">오늘 기한인 실행이 없어요 — 이번 주 이후는 실행 탭에 있어요.</p>
         ) : (
           <div className="space-y-1.5">
             {todayQuests.slice(0, 5).map((q) => {
@@ -4062,44 +4169,77 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
   );
 }
 
-/* ───────────────────────── Tasks tab — tasks per goal ───────────────────────── */
-function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onAddFor, onViewEvidence }) {
-  const active = (state.goals || []).filter((g) => g.status === "active");
-  const orphan = state.tasks.filter((q) => !q.goalId || !(state.goals || []).find((g) => g.id === q.goalId));
-  const isMile = (q) => q.isCert || q.isExam || q.isStudy;
-  const row = (q) => {
+/* ───────────────────────── Tasks tab — one time-ordered list of tasks, schedule and business rows ───────────────────────── */
+/* A business row in the to-do list: a link into the `사업` tab and nothing else. No checkbox, no action row, no
+   evidence path, no payout — a contract is a record, never a task (rules 1, 18). Tapping it is its only behaviour. */
+function BizTodoRow({ row, onOpen }) {
+  return (
+    <button onClick={onOpen} className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 active:opacity-70">
+      <span className="font-mono text-xs font-bold border border-zinc-700 text-zinc-400 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">{row.month}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold truncate">{row.title}</div>
+        <div className="text-xs text-zinc-500 truncate">{row.text}</div>
+      </div>
+      <span className="text-xs font-bold border border-zinc-700 text-zinc-300 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">사업</span>
+    </button>
+  );
+}
+
+const TODO_TONE = { overdue: "text-rose-400", today: "text-amber-300", tomorrow: "text-zinc-400", week: "text-zinc-400", later: "text-zinc-500" };
+const TODO_DONE_MAX = 40; // rows the `완료` archive keeps, newest first — the count line still states the full total
+
+/* The list is a view over `todoOf`: the groups, their order and the sort are decided there, so this component only
+   decides what a row of each kind looks like. `onComplete` is passed to task rows and to nothing else — an event
+   row keeps the schedule tab's own buttons (they pay nothing and move no goal) and a business row has no control
+   at all (rules 1, 10, 16, 17). New tasks are created in `목표` only (rules 18, 19). */
+function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onViewEvidence, onEditEvent, onToggleEventDone, onSkipEvent, onGoBiz }) {
+  const [view, setView] = useState("todo"); // open list or completed archive — a view preference, never stored (rule 9)
+  const td = useMemo(() => todoOf(state, today), [state, today]);
+  const biz = useMemo(() => bizSummary(state, today), [state, today]);
+  const doneTasks = useMemo(() => (state.tasks || [])
+    .filter((q) => (q.type === "daily" ? (q.doneDates || []).length : q.status === "done"))
+    .sort((a, b) => (lastDoneDate(b) || "").localeCompare(lastDoneDate(a) || "") || a.title.localeCompare(b.title)), [state.tasks]);
+  const doneShown = doneTasks.slice(0, TODO_DONE_MAX);
+  const activeGoals = (state.goals || []).filter((g) => g.status === "active");
+  // `archived` renders a row that is finished but not finished *today*. The archive holds daily tasks whose last
+  // completion was an earlier day: without this they would draw an open checkbox, and tapping one there would
+  // complete the task for today — turning a list titled `완료` into a second completion surface.
+  const row = (q, archived = false) => {
     const area = state.areas.find((x) => x.id === q.areaId);
     const goal = q.goalId ? state.goals.find((g) => g.id === q.goalId) : null;
     const doneToday = q.type === "daily" ? q.doneDates?.includes(today) : q.status === "done";
+    const closed = archived || doneToday;
     const ev = needsEvidence(q);
     const jw = q.isCert ? jobWeightForCert(state, q.areaId, certByTitle(q.title)) : null;
+    // Every row states its own goal: the list is time-ordered, so nothing above the row says which goal it serves.
+    const goalTag = goal ? <>🎯 {goal.title}</> : <span className="text-zinc-600">목표 기여 없음</span>;
     return (
-      <div key={q.id} className={`flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 ${doneToday ? "opacity-50" : ""}`}>
-        {isMile(q) && !doneToday ? (
+      <div key={q.id} className={`flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 ${closed ? "opacity-50" : ""}`}>
+        {(q.isCert || q.isExam || q.isStudy) && !closed ? (
           <button onClick={() => onComplete(q)} className="shrink-0 p-0.5 active:scale-90 transition-transform">
             <Lock size={15} className="text-zinc-500" />
           </button>
         ) : (
-          <button onClick={() => !doneToday && onComplete(q)} disabled={doneToday}
+          <button onClick={() => !closed && onComplete(q)} disabled={closed}
             className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-transform ${
-              doneToday ? "border-emerald-400 bg-emerald-400" : "border-zinc-700 active:scale-90"}`}>
-            <Check size={13} className={doneToday ? "text-zinc-950" : "text-transparent"} />
+              closed ? "border-emerald-400 bg-emerald-400" : "border-zinc-700 active:scale-90"}`}>
+            <Check size={13} className={closed ? "text-zinc-950" : "text-transparent"} />
           </button>
         )}
         <div className="flex-1 min-w-0">
-          <div className={`text-sm font-semibold truncate ${doneToday ? "line-through" : ""}`}>{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : ""}{q.title}</div>
+          <div className={`text-sm font-semibold truncate ${closed ? "line-through" : ""}`}>{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : ""}{q.title}</div>
           <div className="text-xs text-zinc-500 truncate">
-            {doneToday ? (
-              q.evidence
-                ? <>완료 · <button onClick={() => onViewEvidence(q)} className="underline underline-offset-2 text-zinc-400">증거 보기</button></>
-                : <>완료</>
+            {closed ? (
+              <>완료 {lastDoneDate(q) || "날짜 없음"} · {goalTag}{q.evidence
+                ? <> · <button onClick={() => onViewEvidence(q)} className="underline underline-offset-2 text-zinc-400">증거 보기</button></>
+                : null}</>
             )
-              : q.isCert ? <span className="font-mono">{jw ? <>직무 적합 <b className={TIER_CLS[jw.tier]}>{jw.tier}</b> · </> : null}{q.certD != null ? `D${q.certD} · ` : ""}<span className="text-violet-300">증거 필요</span></span>
-              : q.isExam ? <span className="font-mono">D{q.band?.d} · <span className="text-sky-300">성적표 사진 필수</span></span>
+              : q.isCert ? <>{goalTag} · <span className="font-mono">{jw ? <>직무 적합 <b className={TIER_CLS[jw.tier]}>{jw.tier}</b> · </> : null}{q.certD != null ? `D${q.certD} · ` : ""}<span className="text-violet-300">증거 필요</span></span></>
+              : q.isExam ? <>{goalTag} · <span className="font-mono">D{q.band?.d} · <span className="text-sky-300">성적표 사진 필수</span></span></>
               : <>{area?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{q.isStudy ? " · 📖 산출물검증" : ev ? " · 증거 필요" : ""}{!goal && <span className="text-zinc-600"> · 목표 기여 없음</span>}</>}
           </div>
         </div>
-        {!doneToday && <DueChip due={q.due} today={today} />}
+        {!closed && <DueChip due={q.due} today={today} />}
         {q.isExam ? <span className="text-xs font-mono font-bold text-sky-300 border border-sky-700 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">시험</span>
           : q.isCert ? (
             <span className="flex items-center gap-1 shrink-0">
@@ -4111,63 +4251,84 @@ function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onA
       </div>
     );
   };
+  // One row per kind. `row(q)` is the only branch that reaches `onComplete`; the other two carry their own
+  // behaviour — the schedule tab's three buttons, or a tap into the `사업` tab.
+  const rowOf = (r) =>
+    r.kind === "task" ? row(r.task)
+      : r.kind === "event" ? (
+        <EventRow key={r.key} ev={r.ev} date={r.date} done={r.done} today={today} tail="목표 기여 없음"
+          onToggleDone={onToggleEventDone} onSkip={onSkipEvent} onEdit={onEditEvent} />
+      )
+      : <BizTodoRow key={r.key} row={r} onOpen={onGoBiz} />;
+  const onlyBiz = td.counts.open > 0 && td.groups.every((g) => g.rows.every((r) => r.kind === "biz"));
+
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         <div className="flex items-center justify-between gap-2">
-          <div>
-            <SectionLabel tone="text-zinc-400">실행 — 목표별 할 일</SectionLabel>
-            <p className="text-xs text-zinc-600 mt-0.5">실행은 목표에서만 생성되고, 하루분량으로만 등록됩니다.</p>
+          <div className="min-w-0">
+            <SectionLabel tone="text-zinc-400">실행 — 시간순 할 일</SectionLabel>
+            <p className="text-xs text-zinc-600 mt-0.5">실행·일정·사업을 시간순으로 모아서 보여줘요. 새 실행은 목표 탭에서 만들어요.</p>
           </div>
           <button onClick={onCatalog}
             className="shrink-0 px-3 py-2 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">도감</button>
         </div>
+        <p className="text-xs font-mono text-zinc-400 mt-2">
+          기한 지남 {td.counts.overdue} · 오늘 {td.counts.today} · 이번 주 {td.counts.week}
+        </p>
+        {/* The list names at most BIZ_ALERT_MAX business months and no undated quote at all, so the full counts
+            stay on screen and the cap can never hide an outstanding payment (rule 13). */}
+        {(biz.counts.unpaid > 0 || biz.counts.quote > 0) && (
+          <button onClick={onGoBiz} className="block text-left text-xs font-mono text-zinc-400 mt-1 active:opacity-70">
+            사업 <span className={biz.counts.unpaid > 0 ? "text-rose-400" : ""}>입금 미확인 {biz.counts.unpaid}건</span> · 견적 대기 {biz.counts.quote}건 ›
+          </button>
+        )}
+        <div className="flex gap-1.5 mt-2.5">
+          <Chip on={view === "todo"} onClick={() => setView("todo")}>할 일</Chip>
+          <Chip on={view === "done"} onClick={() => setView("done")}>완료</Chip>
+        </div>
       </section>
 
-      {active.length === 0 && orphan.length === 0 && (
-        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
-          <EmptyQuestSvg />
-          <p className="text-sm text-zinc-500">실행은 목표의 실행 단위입니다 — 목표가 먼저예요.</p>
-          <button onClick={onGoGoals} className="mt-3 px-4 py-2 rounded-xl bg-cyan-500 text-zinc-950 text-xs font-black">목표 먼저 세우기 ›</button>
-        </section>
-      )}
+      {view === "todo" ? (
+        <>
+          {td.counts.open === 0 && (
+            <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+              <EmptyQuestSvg />
+              {activeGoals.length === 0 ? (
+                <>
+                  <p className="text-sm text-zinc-500">실행은 목표의 실행 단위입니다 — 목표가 먼저예요.</p>
+                  <button onClick={onGoGoals} className="mt-3 px-4 py-2 rounded-xl bg-cyan-500 text-zinc-950 text-xs font-black">목표 먼저 세우기 ›</button>
+                </>
+              ) : (
+                <p className="text-sm text-zinc-500">예정된 항목이 없어요 — 실행·일정·사업 모두 0건이에요.</p>
+              )}
+            </section>
+          )}
 
-      {active.map((g) => {
-        const qs = state.tasks.filter((q) => q.goalId === g.id);
-        const dailyQ = qs.filter((q) => !isMile(q));
-        const mile = qs.filter(isMile);
-        const pr = goalProgress(g, state);
-        return (
-          <section key={g.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-black truncate">🎯 {g.title}</span>
-              <span className="text-xs font-mono text-cyan-300 shrink-0">{Math.round(pr * 100)}%</span>
-            </div>
-            {dailyQ.length > 0 && <div className="space-y-1.5 mt-2.5">{dailyQ.map(row)}</div>}
-            {mile.length > 0 && (
-              <>
-                <div className="flex items-center gap-2 mt-3 mb-1.5">
-                  <span className="flex-1 h-px bg-zinc-800" />
-                  <span className="text-xs text-zinc-500 text-center">마일스톤 — 자격·시험·학습 (하루분량 예외 · 증거로만 완료)</span>
-                  <span className="flex-1 h-px bg-zinc-800" />
-                </div>
-                <div className="space-y-1.5">{mile.map(row)}</div>
-              </>
-            )}
-            {qs.length === 0 && <p className="text-xs text-zinc-600 mt-2.5">연결된 실행이 아직 없습니다.</p>}
-            <button onClick={() => onAddFor(g.id)}
-              className="w-full mt-2.5 py-2.5 rounded-xl border border-dashed border-zinc-700 text-zinc-400 text-xs font-medium active:translate-y-0.5">
-              ＋ 이 목표에 실행
-            </button>
-          </section>
-        );
-      })}
+          {td.groups.map((g) => g.rows.length > 0 && (
+            <section key={g.key} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+              <SectionLabel tone={TODO_TONE[g.key]}>{g.label}</SectionLabel>
+              <div className="space-y-1.5">{g.rows.map(rowOf)}</div>
+            </section>
+          ))}
 
-      {orphan.length > 0 && (
-        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 opacity-60">
-          <SectionLabel tone="text-zinc-500">미분류 — 목표 연결 전 항목</SectionLabel>
-          <p className="text-xs text-zinc-600 mb-2">완료·삭제는 가능하지만, 새 실행은 목표에서만 만들 수 있어요.</p>
-          <div className="space-y-1.5">{orphan.map(row)}</div>
+          {/* Business rows complete nothing, so a list made only of them is not a list of open work */}
+          {onlyBiz && <p className="text-xs text-zinc-500">완료할 실행·일정이 없어요 — 남은 항목은 사업 기록이에요.</p>}
+
+          {td.done.length > 0 && (
+            <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+              <SectionLabel tone="text-emerald-400">오늘 완료</SectionLabel>
+              <div className="space-y-1.5">{td.done.map(rowOf)}</div>
+            </section>
+          )}
+        </>
+      ) : (
+        /* The archive keeps `증거 보기` reachable for anything completed before today; events stay in the `일정` tab */
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+          <p className="text-xs font-mono text-zinc-400">완료 {doneTasks.length}건 · 최근 {doneShown.length}건</p>
+          {doneShown.length === 0
+            ? <p className="text-sm text-zinc-500 text-center py-3">완료한 항목이 없어요.</p>
+            : <div className="space-y-1.5 mt-2.5">{doneShown.map((q) => row(q, true))}</div>}
         </section>
       )}
     </>
@@ -4940,7 +5101,7 @@ const HOLIDAY_YEARS = [...new Set(Object.keys(HOLIDAYS).map((d) => d.slice(0, 4)
 
 /* One occurrence row, used by the list groups and by the calendar's selected-day panel. The markup exists
    once so the two views cannot drift apart. */
-function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
+function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit, tail = null }) {
   const due = ev.kind === "due";
   const lead = due ? ddayStr(date) : ev.time || "시간 미정";
   const leadTone = !due ? "text-zinc-300 border-zinc-700"
@@ -4956,6 +5117,8 @@ function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
           <div className="text-xs text-zinc-500 truncate">
             <span className="font-mono">{date}</span>{ev.place ? ` · ${ev.place}` : ""}{ev.note ? ` · ${ev.note}` : ""}
             {ev.repeat && <span className="text-zinc-400"> · 반복 {REPEAT_LABEL[ev.repeat.freq]}</span>}
+            {/* The schedule tab passes nothing; the to-do list uses it to state that an event moves no goal */}
+            {tail && <span className="text-zinc-600"> · {tail}</span>}
           </div>
         </div>
         <span className={`text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${due ? "text-amber-300 border-amber-700" : "text-zinc-300 border-zinc-700"}`}>
@@ -6410,7 +6573,9 @@ export default function LifeManager() {
             onComplete={tryComplete} onRemove={removeTask}
             onCatalog={() => setModal({ type: "catalog" })}
             onGoGoals={() => setTab("goals")}
-            onAddFor={(gid) => setModal({ type: "addQuest", goalId: gid })} />
+            onEditEvent={(ev) => setModal({ type: "event", event: ev })}
+            onToggleEventDone={toggleEventDone} onSkipEvent={skipOccurrence}
+            onGoBiz={() => { setBizView("deals"); setTab("biz"); }} />
         )}
         {tab === "growth" && (
           <GrowthTab state={state}

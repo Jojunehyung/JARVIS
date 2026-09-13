@@ -1,7 +1,7 @@
 // Daily assistant — due dates, the home agenda, the briefing and the journal. The assistant bridge
 // and the weekly review are appended in phase C.
 module.exports = async (h) => {
-  const { step, clickText, clickInModal, clickInModalExact, clickTab, hasText, expectText, typeInto, setValue, openTaskModalFor, closeModal, sleep, page, errors } = h;
+  const { step, clickText, clickInModal, clickInModalExact, clickTab, hasText, expectText, todoRows, typeInto, setValue, openTaskModalFor, closeModal, sleep, page, errors } = h;
   const readState = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
   const patchAct = (patch) => page.evaluate((p) => {
     const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
@@ -38,13 +38,28 @@ module.exports = async (h) => {
     await expectText("D-3");
   });
 
+  // `기한 지남` is a group label, a counts word and a chip, so the assertion is structural: the row has to sit
+  // inside the group of that name, not merely somewhere on the screen.
   await step("overdue task shows as past due", async () => {
     await addDatedTask("밀린 독서 30분", -1);
     await clickTab("실행");
-    await expectText("기한 지남");
+    const overdue = await todoRows("기한 지남");
+    if (!overdue) throw new Error("the overdue group is missing from the list");
+    if (!overdue.some((r) => r.title.includes("밀린 독서 30분"))) {
+      throw new Error("the overdue task is not in the overdue group: " + overdue.map((r) => r.title).join(" | "));
+    }
   });
 
-  await step("home agenda orders overdue → due → daily", async () => {
+  await step("the tasks tab keeps the D-3 item in a later group", async () => {
+    await clickTab("실행");
+    const all = (await todoRows()) || [];
+    const hit = all.filter((r) => r.title.includes("저녁 요가 30분"));
+    if (!hit.length) throw new Error("the dated task is not listed: " + all.map((r) => `${r.group}/${r.title}`).join(" | "));
+    if (hit.some((r) => r.group === "기한 지남")) throw new Error("a task due in three days is listed as overdue");
+  });
+
+  // The card owns overdue plus today; this week and later belong to the `실행` tab.
+  await step("home agenda narrows to overdue and today", async () => {
     await clickTab("홈");
     await sleep(300);
     const order = await page.evaluate(() => {
@@ -55,9 +70,9 @@ module.exports = async (h) => {
     });
     if (!order || !order.length) throw new Error("agenda rows not found");
     const iOver = order.findIndex((t) => t.includes("밀린 독서 30분"));
-    const iDue = order.findIndex((t) => t.includes("저녁 요가 30분"));
-    if (iOver < 0 || iDue < 0) throw new Error("dated tasks missing from the agenda: " + order.join(" | "));
-    if (iOver > iDue) errors.push("agenda order: overdue task listed after the due-today task");
+    if (iOver < 0) throw new Error("the overdue task is missing from the agenda: " + order.join(" | "));
+    if (iOver !== 0) errors.push("agenda order: the overdue task is not the first row — " + order.join(" | "));
+    if (order.some((t) => t.includes("저녁 요가 30분"))) throw new Error("a task due in three days is on the home card: " + order.join(" | "));
   });
 
   await step("home card opens the briefing and stamps it seen", async () => {
@@ -208,5 +223,50 @@ module.exports = async (h) => {
     await openFrom("홈", "브리핑 열기");
     await expectText("이번 주 리뷰 완료");
     await closeModal();
+  });
+
+  await step("the completed archive states its date and completes nothing", async () => {
+    // A daily task finished on an earlier day is finished, not open. Without an inert row the archive would
+    // draw a live checkbox, and tapping it there would complete the task for today — a list titled `완료`
+    // doubling as a second completion surface.
+    const yesterday = await dstrIn(-1);
+    const title = await page.evaluate((y) => {
+      const k = "liferpg-state-v1";
+      const s = JSON.parse(localStorage.getItem(k));
+      const q = (s.tasks || []).find((x) => x.type === "daily");
+      if (!q) return null;
+      q.doneDates = [y];
+      localStorage.setItem(k, JSON.stringify(s));
+      return q.title;
+    }, yesterday);
+    if (!title) throw new Error("no daily task to archive");
+    await h.reload();
+    await clickTab("실행");
+    await clickText("완료");
+    await sleep(400);
+    const before = await readState();
+    const seen = await page.evaluate((t) => {
+      // An activity task renders its kind emoji before the title, so the row is matched on the tail.
+      const node = [...document.querySelectorAll(".text-sm.font-semibold")].find((n) => (n.innerText || "").trim().endsWith(t));
+      if (!node) return null;
+      let row = node;
+      for (let i = 0; i < 6 && row.parentElement; i++) {
+        row = row.parentElement;
+        if (/bg-zinc-950/.test(row.className || "") && /rounded-xl/.test(row.className || "")) break;
+      }
+      // The completion control is the row's first button; the trailing `X` deletes the record and stays live
+      // on purpose. Tap the completion control to prove it does nothing.
+      const first = [...row.querySelectorAll("button")][0] || null;
+      if (first) { first.scrollIntoView({ block: "center" }); first.click(); }
+      return { text: (row.innerText || "").replace(/\s+/g, " ").trim(), completeLive: first ? !first.disabled : null };
+    }, title);
+    if (!seen) throw new Error("the archive does not list the task completed yesterday: " + title);
+    if (!seen.text.includes(`완료 ${yesterday}`)) throw new Error("the archive row does not state its completion date: " + seen.text);
+    if (seen.completeLive !== false) throw new Error(`the archive row's completion control is live (${seen.completeLive}) — it can complete the task`);
+    await sleep(500);
+    const after = await readState();
+    const q = (after.tasks || []).find((x) => x.title === title);
+    if ((q.doneDates || []).join() !== yesterday) throw new Error("the archive changed the completion record: " + JSON.stringify(q.doneDates));
+    if (after.act.streak !== before.act.streak) throw new Error("the archive moved the streak");
   });
 };

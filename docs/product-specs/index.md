@@ -16,7 +16,7 @@ Modals (`Modal` shell, one at a time via `modal` state): `BriefingModal`, `Journ
 | [daily-briefing.md](daily-briefing.md) | Today's briefing, the home card, and the journal |
 | [home.md](home.md) | Profile card, briefing card, today’s focus (pace), today’s agenda |
 | [goals.md](goals.md) | OKR cards, four KR types, KR check-in, goal status, `AddGoalModal` |
-| [tasks.md](tasks.md) | Per-goal groups, milestones, unassigned section, `AddTaskModal` with the KR bridge, `CatalogModal` |
+| [tasks.md](tasks.md) | One time-ordered list (`todoOf`): task / event / business rows, the `할 일` / `완료` views, `AddTaskModal` with the KR bridge, `CatalogModal` |
 | [growth.md](growth.md) | Achievement wall, skill-track gates, role model, direction advice, reset |
 | [schedule.md](schedule.md) | `일정` tab: the `목록` / `달력` views, day groups, occurrence rows, the month grid and its selected-day panel, `EventModal`, what an event never does |
 | [business.md](business.md) | `사업` tab: contracts (`계약`), unit prices (`단가`) and the portfolio (`포트폴리오`), payment chips, the revenue roll-up, `DealModal` / `RateModal` / `FolioModal`, the image and storage guards, what a business record never does |

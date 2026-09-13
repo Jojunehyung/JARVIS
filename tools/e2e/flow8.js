@@ -3,7 +3,7 @@
 // the tasks, the goals, the streak or the trophies. They also prove the portfolio image path: a landscape
 // source keeps its aspect in the stored thumbnail and its key disappears with the record.
 module.exports = async (h) => {
-  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
+  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, todoRows, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
 
   // A 24 × 8 RGB PNG: wider than it is tall and far under the 640 px long edge, so the stored thumbnail
   // proves both that the aspect survives and that a small source is never upscaled.
@@ -362,6 +362,26 @@ module.exports = async (h) => {
     await sleep(500);
     const lines = await headerLines();
     if (lines.length !== 2 || !lines[0].startsWith("이번 달 계약 320만원")) throw new Error("the home line did not open the business tab: " + JSON.stringify(lines));
+  });
+
+  /* The `실행` list names the same unpaid months, capped at BIZ_ALERT_MAX, and the header line states the full
+     counts beside the cap. A business row is a link into this tab: it completes nothing and pays nothing. */
+  await step("the tasks tab lists the unpaid month as a business row that completes nothing", async () => {
+    await clickTab("실행");
+    await expectText("사업 입금 미확인 2건");
+    const all = (await todoRows()) || [];
+    const biz = all.find((r) => r.title.includes("재고 관리 자동화 도구") && r.text.includes("입금 미확인"));
+    if (!biz) throw new Error("the unpaid month is not listed: " + all.map((r) => `${r.group}/${r.title}`).join(" | "));
+    if (!biz.text.includes("사업") || !biz.text.includes("목표 기여 없음")) {
+      throw new Error("the business row does not state its kind and that it moves no goal: " + biz.text);
+    }
+    // The rule boundary: no checkbox, no lock, no action row — tapping the row is its only behaviour (rules 1, 18).
+    if (biz.controls) throw new Error(`the business row carries ${biz.controls} control(s): ` + JSON.stringify(biz.buttons));
+    await todoRows(null, { title: biz.title });
+    await sleep(600);
+    const lines = await headerLines();
+    if (lines.length !== 2 || !lines[0].startsWith("이번 달 계약 320만원")) throw new Error("the business row did not open the business tab: " + JSON.stringify(lines));
+    await expectText("최근 6개월"); // the revenue roll-up only exists in the contract view
   });
 
   await step("the packet carries the business section and a pasted reply creates nothing", async () => {

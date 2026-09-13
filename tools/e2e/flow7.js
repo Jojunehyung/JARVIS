@@ -1,7 +1,7 @@
 // Schedule tab — appointments and deadlines. An event is a record, never a task: these steps assert that
 // registering, ticking and cancelling one changes `events` only, and never the tasks, streak or trophies.
 module.exports = async (h) => {
-  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
+  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, todoRows, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
 
   // Dates are computed in the page with the app's own local-date logic (never toISOString).
   const dstrIn = (delta) => page.evaluate((d) => {
@@ -163,6 +163,32 @@ module.exports = async (h) => {
     const open = await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length);
     if (open) { await closeModal(); throw new Error("the briefing stayed open after its schedule line was tapped"); }
     await expectText("다가오는 일정");
+  });
+
+  /* The same occurrence in the `실행` list: the to-do tab lists an event but never gives it a task's controls.
+     Ticking and un-ticking it here is the schedule tab's own `toggleEventDone`, so the save is left as it was
+     and the packet assertions below still see an open deadline. */
+  await step("the tasks tab lists today's deadline and completes it without a task path", async () => {
+    await clickTab("실행");
+    const open = (await todoRows("오늘")) || [];
+    const ev = open.find((r) => r.title === "서류 제출 마감");
+    if (!ev) throw new Error("today's deadline is not in the today group: " + open.map((r) => r.title).join(" | "));
+    if (!ev.text.includes("마감") || !ev.text.includes("목표 기여 없음")) {
+      throw new Error("the deadline row does not state its kind and that it moves no goal: " + ev.text);
+    }
+    // The rule boundary, read off the row: an event keeps the schedule tab's two buttons and carries no
+    // completion control of its own — no checkbox, no lock, no evidence path, no payout (rules 1, 10, 16).
+    if (ev.buttons.join("·") !== "완료 표시·수정") throw new Error("the deadline row's buttons: " + JSON.stringify(ev.buttons));
+    if (ev.controls !== ev.buttons.length) throw new Error(`the deadline row carries ${ev.controls - ev.buttons.length} unlabelled control(s)`);
+    await todoRows("오늘", { title: "서류 제출 마감", button: "완료 표시" });
+    await sleep(700);
+    const done = (await todoRows("오늘 완료")) || [];
+    if (!done.some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence did not move into the done-today group: " + done.map((r) => r.title).join(" | "));
+    if (((await todoRows("오늘")) || []).some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence is still listed as open");
+    await todoRows("오늘 완료", { title: "서류 제출 마감", button: "완료 취소" });
+    await sleep(700);
+    const back = (await todoRows("오늘")) || [];
+    if (!back.some((r) => r.title === "서류 제출 마감")) throw new Error("un-ticking did not return the deadline to the today group: " + back.map((r) => r.title).join(" | "));
   });
 
   await step("the home card line states the counts and opens the tab", async () => {

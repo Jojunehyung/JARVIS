@@ -51,8 +51,13 @@ and no new copy was needed. The near groups stay one row per occurrence because 
 on individually — ticking or cancelling a single date. Rows stay date-ascending in every group.
 
 ## Row anatomy
-`EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit })` is a module-level component rendered by the
-day groups **and** by the calendar's selected-day panel, so the two views cannot drift apart.
+`EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit, tail = null })` is a module-level component
+rendered by the day groups **and** by the calendar's selected-day panel, so the two views cannot drift apart.
+`tail` is an optional trailing fragment on the sub-line, rendered as `` · {tail}`` in `text-zinc-600` — the same
+markup a task row uses for `목표 기여 없음`. This tab and `ScheduleCalendar` pass nothing, so their `EventRow` is
+byte-identical to before; the `실행` tab ([tasks.md](tasks.md)) is the one caller that passes
+`tail="목표 기여 없음"`, since an event there sits beside tasks and has to state, on the row itself, that it moves
+no goal.
 ```
 [ D-3 ]  전기기사 실기 원서 접수 마감                    [마감]
          2026-09-20 · 접수 후 수험표 확인 · 반복 매주
