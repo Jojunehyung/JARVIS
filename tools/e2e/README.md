@@ -8,7 +8,7 @@ Drives the app (`src/LifeManager.jsx`) end to end in a real browser. It uses the
 npm run build            # from the project root (add --sourcemap when you want line coverage)
 npx vite preview --port 4173
 cd tools/e2e && npm i    # once
-node run.js --tag run    # 140-step scenario
+node run.js --tag run    # 142-step scenario
 node perf.js --tag run   # performance measurement (4× CPU throttle)
 node cov_map.js out/run-coverage.json   # map never-executed source lines (needs a --sourcemap build)
 node prof.js             # top CPU-profile functions
@@ -26,7 +26,7 @@ node rows.js <url> "시작하기"      # rows and DOM nodes mounted in onboardin
 | File | Scope |
 |---|---|
 | `flow.js` | Onboarding, 6 steps (asserts the fresh save is schema v20) → goal (OKR) with three KR types → task registered through the count-KR bridge (`채우기 ›`, the one path that takes no activity kind) → completion → catalogue → bottom nav order → persistence across reload |
-| `flow2.js` | Certification milestone with certificate photo (evidence gate block verified) · study output verification · reading activity log · promotion · role model |
+| `flow2.js` | Certification milestone with certificate photo (evidence gate block verified) · study output verification · reading activity log · promotion · role model · role-model proximity heading the growth tab · an area row collapsing into the promotion gate · the achievement wall stating its counts while collapsed |
 | `flow3.js` | Profile photo · exam KR and score-report submission · exercise activity · a kind-less task refused under a goal · direction advice · task and goal deletion · one-day gap (streak, shields) |
 | end of `flow.js` | Data reset — asserts the state and profile-photo keys are removed (runs last) |
 | `flow5.js` | Due dates and the `실행` tab's time-ordered groups · the home agenda narrowed to overdue and today · the daily briefing (opens on a new day, not twice the same day, streak wording) · journal persistence · the assistant packet, the pasted reply and its import rules · the weekly review, which no longer chains to a metric check-in · the completed-task archive stating its completion date and completing nothing when tapped |
@@ -35,4 +35,4 @@ node rows.js <url> "시작하기"      # rows and DOM nodes mounted in onboardin
 | `flow4.js` | Goal created and taken to 100% → marked achieved → removed from the record · a second goal planted and deleted while active (its open task removed, its completed task kept and shown in `실행`'s `완료` view tagged `목표 기여 없음`) · legacy v10 save migration · save without a `v` field (asserts schema v13 trophy-kind conversion) · v13 → v14 field rename · v14 → v15 assistant fields · v15 → v16 schedule · v16 → v17 schedule view · v17 → v18 meeting task converted to a plain task · v18 → v19 life metrics removed · v19 → v20 business records added |
 | `flow6.js` | Service worker registration and control, a first visit that does not reload itself, a page already under a worker that does not reload when a new one takes over, the precache contents, the app opening offline, and the backup export/import round-trip (runs last: it toggles offline mode) |
 
-Steps assert outcomes rather than just clicking: `assertDone` checks the completed label, `clickInModal` scopes clicks to the open modal, `modalError` reads validation messages. Selector and assertion arguments are Korean UI copy on purpose and must not be translated.
+Steps assert outcomes rather than just clicking: `assertDone` checks the completed label, `clickInModal` scopes clicks to the open modal, `modalError` reads validation messages, `openAreaGate` opens an area row's promotion gate through the collapsed skill track. Selector and assertion arguments are Korean UI copy on purpose and must not be translated.

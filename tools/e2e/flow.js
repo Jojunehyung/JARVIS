@@ -108,8 +108,10 @@ module.exports = async (h) => {
   // ── Growth tab — achievement wall, promotion gate, role model
   await step("go to growth tab", async () => { await clickTab("성장"); await expectText("성취의 벽"); });
   await step("open promotion gate modal", async () => {
-    try { await clickText("관문 증명하기"); } catch { errors.push("승급 버튼 없음"); }
-    await sleep(400); await h.closeModal();
+    // The area row is the control: nothing on the tab promotes, so the gate modal is the only way up.
+    if (!(await h.openAreaGate())) errors.push("no area row to open the promotion gate");
+    await expectText("승급 심사");
+    await h.closeModal();
   });
   await step("open role model modal", async () => {
     try { await clickText("롤모델"); } catch { errors.push("롤모델 버튼 없음"); }
@@ -171,6 +173,8 @@ module.exports = async (h) => {
     });
     await clickTab("성장");
     await sleep(300);
+    // The reset button lives behind the collapsed data line; the header itself never carries its text.
+    await clickText("데이터 — 백업 · 초기화");
     const clicked = await page.evaluate(() => {
       const b = [...document.querySelectorAll("button")].find((x) => x.innerText.includes("데이터 초기화"));
       if (!b) return false; b.scrollIntoView({ block: "center" }); b.click(); return true;

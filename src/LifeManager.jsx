@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useId, forwardRef, useImperativeHandle } from "react";
 import {
-  Trophy, Target, Plus, X, Lock, RotateCcw, TrendingUp, Check, Star,
+  Trophy, Target, Plus, X, Lock, RotateCcw, TrendingUp, Check, Star, ChevronDown,
   Flag, ClipboardList, CalendarDays, Briefcase, Camera, Paperclip, Link as LinkIcon,
 } from "lucide-react";
 
@@ -4103,10 +4103,15 @@ function CatalogModal({ state, initialCat, onClose }) {
 /* ── Role-model direction advice ── */
 function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
   const { rg, gaps } = roleRecommendations(state);
+  // The one surface that explains the proximity bars, one tap from the headline that draws them (rule 14).
+  const legend = <p className="text-xs text-zinc-600">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.</p>;
   return (
     <Modal title={`방향 제안 — ${rg?.name || "롤모델"}`} onClose={onClose}>
       {gaps.length === 0 ? (
-        <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다. 근접도 {rg?.match}%.</p>
+        <div className="space-y-2">
+          <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다. 근접도 {rg?.match}%.</p>
+          {legend}
+        </div>
       ) : (
         <div className="space-y-3">
           {gaps.map((i) => {
@@ -4162,6 +4167,7 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
               </div>
             );
           })}
+          {legend}
           <p className="text-xs text-zinc-600">추천은 직무 분야 매칭과 직무 가중 기준입니다.</p>
         </div>
       )}
@@ -4794,123 +4800,43 @@ function StudyVerifyModal({ task, onClose, onDone }) {
 }
 
 /* ───────────────────────── Growth tab ───────────────────────── */
+/* Four blocks in reading order: how close the verified grades are to the role model, the areas as one row each,
+   the record of what has been verified, and the data controls. Simplified 2026-09-13 — the tab was 1,963 px of
+   four identical cards, each shouting its own cyan promote button, so none of them read as the next thing to do.
+   An area row's only behaviour is opening `PromoteModal`: the tab has no promote control of its own, so submitting
+   evidence stays the single path up (rules 10, 11). The record and data sections collapse; `openWall` / `openData`
+   are component state and never reach the save (rule 9), and a closed section still states its numbers (rule 13). */
 
 function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onExport, onImport }) {
   const rg = roleGap(state);
+  const [openWall, setOpenWall] = useState(false);
+  const [openData, setOpenData] = useState(false);
+  const bests = Object.entries(state.exams?.best || {});
+  const achTotal = state.areas.reduce((n, p) => n + p.achievements.length, 0);
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-          <SectionLabel tone="text-amber-400">성취의 벽</SectionLabel>
-          {state.room.trophies.length === 0 && Object.keys(state.exams?.best || {}).length === 0 && (
-            <div className="text-center py-3">
-              <EmptyWallSvg />
-              <p className="text-xs text-zinc-600 mt-2">아직 검증된 성취가 없습니다 — 완료는 증거로만 기록됩니다.</p>
-            </div>
-          )}
-          {state.room.trophies.length > 0 && (
-            <div className="relative bg-zinc-950 rounded-xl overflow-hidden px-2.5 pt-3 pb-2 mb-2">
-              <WallFrame />
-              <div className="relative flex flex-wrap gap-2 justify-center items-end">
-                {state.room.trophies.slice(-10).map((t) => (
-                  <div key={t.id} title={t.label} className="flex flex-col items-center w-12">
-                    <TrophySvg kind={t.kind} tier={t.tier} size={26} />
-                    <div className="text-xs text-zinc-600 truncate w-full text-center">{t.label}</div>
-                  </div>
-                ))}
+        <SectionLabel tone="text-cyan-400">롤모델 근접도</SectionLabel>
+        {rg ? (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-zinc-100 truncate">「{state.role.name}」</div>
+                <div className="text-xs text-zinc-500">검증 기준 근접도</div>
               </div>
+              <div className="font-mono font-black text-4xl text-cyan-300 shrink-0">{rg.match}%</div>
             </div>
-          )}
-          {Object.entries(state.exams?.spec || {}).filter(([, v]) => v).map(([l]) => (
-            <div key={l} className="text-xs text-amber-300 font-bold mb-1.5">🎖 {LANG_KO[l] || l} 전문화 — 고난도 감쇠 하한 70%</div>
-          ))}
-          {Object.entries(state.exams?.best || {}).length > 0 && (
-            <div className="space-y-1.5">
-              {Object.entries(state.exams.best).map(([id, b]) => {
-                const fam = examOf(id);
-                return (
-                  <div key={id} className="flex justify-between text-xs bg-zinc-950 rounded-lg px-3 py-2">
-                    <span className="text-zinc-300">{fam?.n} <b className="text-cyan-300">{b.label}</b></span>
-                    <span className="font-mono text-zinc-500">D{b.d} · 누적 {b.p.toLocaleString()}P</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-      </section>
-
-      <SectionLabel tone="text-cyan-400">실력 트랙 — 영역별 승급 관문</SectionLabel>
-      {state.areas.map((p) => {
-        const cur = RANKS[p.grade];
-        const next = RANKS[p.grade + 1];
-        return (
-          <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="w-8 h-8 shrink-0 rounded-lg border border-zinc-700 bg-zinc-950 flex items-center justify-center font-mono font-bold text-sm text-cyan-300">{p.grade}</span>
-                <div className="min-w-0">
-                  <div className="font-bold text-sm truncate">{p.name}{p.dir?.length ? <span className="text-zinc-500 font-normal text-xs"> · {p.dir.join("·")}</span> : null}</div>
-                  <div className="text-xs text-zinc-500 truncate">등급 <span className="text-cyan-300 font-bold">{cur.name}</span> · {cur.gate}</div>
-                </div>
-              </div>
-              <span className="text-xs font-mono text-zinc-600 shrink-0">{p.grade}/9</span>
-            </div>
-            {next ? (
-              <div className="bg-zinc-950 rounded-xl p-3">
-                <div className="text-xs text-zinc-300 font-medium mb-1 flex items-center gap-1.5">
-                  <Lock size={13} className="text-zinc-500 shrink-0" /> <span>다음 관문 — <span className="text-cyan-400 font-semibold">{next.name}</span> · {next.gate}</span>
-                </div>
-                <div className="text-xs text-zinc-500 mt-1">필요 증거: {next.req}</div>
-                <button onClick={() => onPromote(p)}
-                  className="w-full mt-2.5 py-2 rounded-lg bg-cyan-400 text-zinc-950 text-xs font-bold active:translate-y-0.5">
-                  관문 증명하기
-                </button>
-              </div>
-            ) : (
-              <div className="text-xs text-amber-300 flex items-center gap-1"><Trophy size={13} /> 정점 도달</div>
-            )}
-            {p.achievements.length > 0 && (
-              <div className="pt-1">
-                <div className="text-xs text-zinc-600 mb-1.5">검증된 성취 {p.achievements.length}건</div>
-                <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
-                  {p.achievements.slice(-30).reverse().map((ac) => (
-                    <div key={ac.id} className="text-xs bg-zinc-950 rounded-lg px-2.5 py-2 flex gap-2">
-                      <Star size={11} className="text-cyan-500 shrink-0 mt-0.5" />
-                      <div className="min-w-0">
-                        <div className="text-zinc-300 break-words">{ac.text}</div>
-                        <div className="text-zinc-600 font-mono">{ac.date} · {RANKS[ac.grade].name} 인정</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <SectionLabel tone="text-zinc-400">롤모델</SectionLabel>
-          {rg?.match != null && (
-            <div className="text-right">
-              <div className="text-xs text-zinc-500">근접도</div>
-              <div className="font-mono font-black text-2xl text-cyan-300">{rg.match}%</div>
-            </div>
-          )}
-        </div>
-        {state.role && rg ? (
-          <div className="mb-2">
-            <div className="text-sm font-bold text-zinc-100">「{state.role.name}」 <span className="font-normal text-zinc-500">검증 기준 근접도</span></div>
-            <div className="space-y-2 mt-2">
+            <div className="space-y-2 mt-3">
               {rg.items.map((i) => (
-                <div key={i.area.id} className="bg-zinc-950 rounded-xl p-3">
+                <div key={i.area.id}>
                   <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-zinc-100 font-medium">{i.area.name}</span>
-                    <span className={`font-mono text-right ${i.gap === 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    <span className="text-zinc-100 font-medium truncate">{i.area.name}</span>
+                    <span className={`font-mono text-right shrink-0 ${i.gap === 0 ? "text-emerald-400" : "text-rose-400"}`}>
                       {RANKS[i.have].name} / 요구 {RANKS[i.need].name}{i.gap > 0 ? ` · ${i.gap}단계 부족` : " · 충족"}
                     </span>
                   </div>
-                  <div className="flex h-3.5 gap-0.5 mt-2">
+                  {/* Cell widths are the squared curve itself — the same formula as `roleGap` (rule 14) */}
+                  <div className="flex h-2 gap-0.5 mt-1">
                     {Array.from({ length: i.need }, (_, k) => {
                       const w = (Math.pow((k + 1) / i.need, 2) - Math.pow(k / i.need, 2)) * 100;
                       return (
@@ -4922,12 +4848,17 @@ function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onExp
                 </div>
               ))}
             </div>
-            <p className="text-xs text-zinc-600 mt-2">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.</p>
-          </div>
+          </>
         ) : (
-          <p className="text-xs text-zinc-500 mb-2">목표 인물상의 영역별 요구 등급을 정하면, 검증된 등급으로만 근접도를 계산합니다.</p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm text-zinc-300">롤모델 미설정 — 근접도 계산 대상 없음</div>
+              <p className="text-xs text-zinc-500 mt-1">목표 인물상의 영역별 요구 등급을 정하면, 검증된 등급으로만 근접도를 계산합니다.</p>
+            </div>
+            <div className="font-mono font-black text-4xl text-zinc-600 shrink-0">—</div>
+          </div>
         )}
-        <div className="flex gap-2">
+        <div className="flex gap-2 mt-3">
           <button onClick={onRoleModel} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">
             {state.role ? "롤모델 수정" : "롤모델 설정"}
           </button>
@@ -4940,17 +4871,125 @@ function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onExp
       </section>
 
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <SectionLabel tone="text-zinc-400">백업</SectionLabel>
-        <p className="text-xs text-zinc-500 mt-1.5">기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.</p>
-        <div className="flex gap-1.5 mt-2.5">
-          <button onClick={onExport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
-          <button onClick={onImport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 불러오기</button>
+        <SectionLabel tone="text-cyan-400">실력 트랙 — 영역별 승급 관문</SectionLabel>
+        <div className="space-y-1.5">
+          {state.areas.map((p) => {
+            const cur = RANKS[p.grade];
+            const next = RANKS[p.grade + 1];
+            const body = (
+              <>
+                <span className="w-7 h-7 shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 flex items-center justify-center font-mono font-bold text-xs text-cyan-300">{p.grade}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate">{p.name}</div>
+                  <div className="text-xs text-zinc-500 truncate">{next ? `등급 ${cur.name} · 다음 관문 ${next.name}` : "정점 도달"}</div>
+                </div>
+                <span className="text-xs font-mono text-zinc-600 shrink-0">{p.grade}/9</span>
+              </>
+            );
+            // Grade 9: `PromoteModal` returns null, so the row is not a button and nothing can be tapped.
+            if (!next) return (
+              <div key={p.id} className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5">
+                {body}<Trophy size={13} className="text-amber-300 shrink-0" />
+              </div>
+            );
+            return (
+              <button key={p.id} onClick={() => onPromote(p)}
+                className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 active:opacity-70">
+                {body}<Lock size={13} className="text-zinc-500 shrink-0" /><span className="text-zinc-600 shrink-0">›</span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
-      <button onClick={onReset} className="w-full py-2.5 text-xs text-rose-400 border border-rose-400/30 rounded-xl flex items-center justify-center gap-1.5">
-        <RotateCcw size={12} /> 데이터 초기화
-      </button>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <button onClick={() => setOpenWall((v) => !v)} className="w-full text-left flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <SectionLabel tone="text-amber-400">성취의 벽</SectionLabel>
+            <div className="text-xs font-mono text-zinc-500">트로피 {state.room.trophies.length}개 · 시험 {bests.length}개 · 검증된 성취 {achTotal}건</div>
+          </div>
+          <ChevronDown size={14} className={openWall ? "text-zinc-500 rotate-180" : "text-zinc-500"} />
+        </button>
+        {openWall && (
+          <div className="mt-3 space-y-3">
+            {state.room.trophies.length === 0 && bests.length === 0 && (
+              <div className="text-center py-3">
+                <EmptyWallSvg />
+                <p className="text-xs text-zinc-600 mt-2">아직 검증된 성취가 없습니다 — 완료는 증거로만 기록됩니다.</p>
+              </div>
+            )}
+            {state.room.trophies.length > 0 && (
+              <div className="relative bg-zinc-950 rounded-xl overflow-hidden px-2.5 pt-3 pb-2">
+                <WallFrame />
+                <div className="relative flex flex-wrap gap-2 justify-center items-end">
+                  {state.room.trophies.slice(-10).map((t) => (
+                    <div key={t.id} title={t.label} className="flex flex-col items-center w-12">
+                      <TrophySvg kind={t.kind} tier={t.tier} size={26} />
+                      <div className="text-xs text-zinc-600 truncate w-full text-center">{t.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {Object.entries(state.exams?.spec || {}).filter(([, v]) => v).map(([l]) => (
+              <div key={l} className="text-xs text-amber-300 font-bold">🎖 {LANG_KO[l] || l} 전문화 — 고난도 감쇠 하한 70%</div>
+            ))}
+            {bests.length > 0 && (
+              <div className="space-y-1.5">
+                {bests.map(([id, b]) => {
+                  const fam = examOf(id);
+                  return (
+                    <div key={id} className="flex justify-between text-xs bg-zinc-950 rounded-lg px-3 py-2">
+                      <span className="text-zinc-300">{fam?.n} <b className="text-cyan-300">{b.label}</b></span>
+                      <span className="font-mono text-zinc-500">D{b.d} · 누적 {b.p.toLocaleString()}P</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {state.areas.map((p) => (
+              <div key={p.id}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-zinc-400 truncate">{p.name}</span>
+                  <span className="text-xs font-mono text-zinc-600 shrink-0">검증된 성취 {p.achievements.length}건</span>
+                </div>
+                {p.achievements.length > 0 && (
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1 mt-1.5">
+                    {p.achievements.slice(-30).reverse().map((ac) => (
+                      <div key={ac.id} className="text-xs bg-zinc-950 rounded-lg px-2.5 py-2 flex gap-2">
+                        <Star size={11} className="text-cyan-500 shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <div className="text-zinc-300 break-words">{ac.text}</div>
+                          <div className="text-zinc-600 font-mono">{ac.date} · {RANKS[ac.grade].name} 인정</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <button onClick={() => setOpenData((v) => !v)} className="w-full text-left flex items-center justify-between gap-2">
+          <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
+          <ChevronDown size={14} className={openData ? "text-zinc-500 rotate-180" : "text-zinc-500"} />
+        </button>
+        {openData && (
+          <>
+            <p className="text-xs text-zinc-500">기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.</p>
+            <div className="flex gap-1.5 mt-2.5">
+              <button onClick={onExport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
+              <button onClick={onImport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 불러오기</button>
+            </div>
+            <button onClick={onReset} className="w-full mt-2.5 py-2.5 text-xs text-rose-400 border border-rose-400/30 rounded-xl flex items-center justify-center gap-1.5">
+              <RotateCcw size={12} /> 데이터 초기화
+            </button>
+          </>
+        )}
+      </section>
     </>
   );
 }
@@ -4969,6 +5008,7 @@ function PromoteModal({ area, onClose, onSubmit }) {
       <div className="bg-zinc-950 rounded-xl p-3 mb-3">
         <div className="text-xs text-zinc-500">'{area.name}' 영역 · {RANKS[area.grade].name} → <span className="text-cyan-300 font-bold">{next.name}</span></div>
         <div className="text-sm text-zinc-200 mt-1">{next.gate}</div>
+        <div className="text-xs text-zinc-500 mt-1">필요 증거: {next.req}</div>
       </div>
       <div className="text-xs text-zinc-500 mb-2">해당하는 증거를 선택하세요 (1개 이상)</div>
       <EvidencePicker

@@ -16,9 +16,9 @@ Reliability for a local-only app means: the user's state survives every version,
 ### E2E harness (`tools/e2e`)
 | File | Scope |
 |---|---|
-| `run.js` | runner, shared helpers (`clickTab`, `clickInModal*`, `completeQuest`, `assertDone`, `attach`, `openTaskModalFor`, `addKindTask`, `submitPhotoEvidence`, `logActivity`, `rows`, `clickExact`, `todoRows`), coverage capture across reloads, screenshots on failure |
+| `run.js` | runner, shared helpers (`clickTab`, `clickInModal*`, `completeQuest`, `assertDone`, `attach`, `openTaskModalFor`, `addKindTask`, `submitPhotoEvidence`, `logActivity`, `rows`, `clickExact`, `todoRows`, `openAreaGate`), coverage capture across reloads, screenshots on failure |
 | `flow.js` | onboarding (6 steps) → goal with metric/count/cert KRs → KR bridge → daily completion → catalog → bottom nav order → reload persistence → schema version assert; ends with data reset (image keys cleared) |
-| `flow2.js` | certification milestone with the photo gate (blocked without photo), evidence viewer, study artifact verification, reading log, role model |
+| `flow2.js` | certification milestone with the photo gate (blocked without photo), evidence viewer, study artifact verification, reading log, role model, role-model proximity heading the growth tab, area rows collapsing into the promotion gate, the achievement wall's counts stated while collapsed |
 | `flow3.js` | profile photo, exam KR → score report, fitness activity log, the kind-less-task refusal under a goal, promotion with evidence chips, direction advice, task deletion, streak after a day gap |
 | `flow4.js` | goal completion and removal (task registered through the count-KR bridge), an active goal's deletion with its record-less tasks — the kept task now surfaces in `실행`'s `완료` archive tagged `목표 기여 없음`, not a `미분류` section — v10 / no-version / v13 / v14 / v15 / v16 / v17 / v18 / v19 migrations |
 | `flow6.js` | service worker registers and controls the page, the app opens with the network disabled, backup export and import round-trip |
@@ -28,7 +28,7 @@ Reliability for a local-only app means: the user's state survives every version,
 | `cov_map.js` | maps V8 coverage back to `src/LifeManager.jsx` lines (needs `vite build --sourcemap`) |
 | `perf.js`, `prof.js`, `ab.js`, `ab_onboard.js`, `rows.js` | performance probes (see below) |
 
-Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers and day-number tones read from the grid, activity-kind refusal text read from the modal error), not just clicks; 140 steps as of 2026-09-13.
+Selectors match Korean UI copy on purpose — a copy change must update the harness in the same plan. Steps assert outcomes (completion marks, stored schema, image data URLs, calendar markers and day-number tones read from the grid, activity-kind refusal text read from the modal error), not just clicks; 142 steps as of 2026-09-13, three of them new this cycle — the controlled-page service-worker update in `flow6.js`, and `flow2.js`'s growth-tab headline and collapsed-counts steps. Two of the new assertions were proven non-vacuous by deliberate mutation before being trusted: rendering the headline one point off (`{rg.match + 1}%`) fails `role-model proximity leads the growth tab` with the mismatched percentages named in the error, and removing the reset step's collapsed-toggle click fails `data reset — clears evidence photo keys too` with `data reset button not found` — exactly the two steps expected to break, no others.
 
 ## Performance measurement rule
 Single-run timings on this machine swing by ±50 % with background load. Compare builds only with `tools/e2e/ab.js` (two builds, one browser, interleaved rounds, medians). Structural counts (mounted rows, DOM nodes via `rows.js`) are reliable; wall-clock deltas under ±10 % are noise.

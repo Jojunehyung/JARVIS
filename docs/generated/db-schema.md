@@ -195,16 +195,16 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | `liferpg-img-ev-${task.id}` | 3984 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
 | `liferpg-img-study-${task.id}-1` | 3984 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
 | `liferpg-img-study-${task.id}-2` | 3984 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 5581 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 5814 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 5995 | App root |
-| `liferpg-img-${slot}` | 6035 | App root |
-| `liferpg-img-ev-${id}` | 6058 | App root |
-| `liferpg-img-ev-${q.id}` | 6236 | App root |
-| `liferpg-img-ev-${t.id}` | 6467 | App root |
-| `liferpg-img-study-${t.id}-1` | 6467 | App root |
-| `liferpg-img-study-${t.id}-2` | 6467 | App root |
-| `liferpg-img-folio-${f.id}` | 6473 | App root |
+| `liferpg-img-folio-${id}` | 5621 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 5854 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 6035 | App root |
+| `liferpg-img-${slot}` | 6075 | App root |
+| `liferpg-img-ev-${id}` | 6098 | App root |
+| `liferpg-img-ev-${q.id}` | 6276 | App root |
+| `liferpg-img-ev-${t.id}` | 6507 | App root |
+| `liferpg-img-study-${t.id}-1` | 6507 | App root |
+| `liferpg-img-study-${t.id}-2` | 6507 | App root |
+| `liferpg-img-folio-${f.id}` | 6513 | App root |
 
 ## Demo data (`demoState`)
 

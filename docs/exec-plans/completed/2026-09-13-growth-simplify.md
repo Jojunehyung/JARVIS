@@ -1,6 +1,6 @@
 # Stop the self-reload, and simplify the `성장` tab
 
-- Status: active
+- Status: completed
 - Date: 2026-09-13
 - Needs approval: **no** — no `CERTS` / `EXAMS` / `WEIGHT_MATRIX` / `CERT_W_EXC` row, no `migrate` block, no `v` bump, no `liferpg-*` key, no user data deleted. Everything Phase B adds is derived at render or component state ([Rule 9](../../design-docs/core-beliefs.md#rule-9)). Phase A changes `src/main.jsx` and one comment in `tools/harness/gen-sw.js`; the generated worker's behaviour is unchanged.
 - Agents: planner → implementer → cleanup → verifier → docs-syncer
@@ -171,10 +171,19 @@ Rules touched: [9](../../design-docs/core-beliefs.md#rule-9), [10](../../design-
 
 ## Steps
 
-1. [ ] **Phase A** — `src/main.jsx` (listener, `hadController`, `reloading` removed; comment rewritten), `tools/harness/gen-sw.js` header comment, `flow6.js` new step; confirm the step fails on the pre-fix build. Gate: `npm run verify` 140 steps green, `npm run finish` exit 0.
-2. [ ] **Phase B1** — `GrowthTab` rewrite (headline, skill-track rows, record section, data line) + the `PromoteModal` `필요 증거:` line + the `RoleAdviceModal` legend paragraph.
-3. [ ] **Phase B2** — `run.js` `openAreaGate`, the four existing E2E fixes, the two new `flow2.js` steps. Gate: `npm run verify` 142 steps green + the 390 px measurement.
-4. [ ] **Phase C** — `npm run finish`, `npm run lang:check`, `npm run verify -- --smoke`, `npm run docs:gen`, `npm run docs:check`; hand to docs-syncer with the table below; move this plan to `docs/exec-plans/completed/`.
+1. [x] **Phase A** — `src/main.jsx` (listener, `hadController`, `reloading` removed; comment rewritten), `tools/harness/gen-sw.js` header comment, `flow6.js` new step; confirm the step fails on the pre-fix build. Gate: `npm run verify` 140 steps green, `npm run finish` exit 0.
+2. [x] **Phase B1** — `GrowthTab` rewrite (headline, skill-track rows, record section, data line) + the `PromoteModal` `필요 증거:` line + the `RoleAdviceModal` legend paragraph.
+3. [x] **Phase B2** — `run.js` `openAreaGate`, the four existing E2E fixes, the two new `flow2.js` steps. Gate: `npm run verify` 142 steps green + the 390 px measurement.
+4. [x] **Phase C** — `npm run finish` exit 0, `npm run lang:check` clean, `npm run verify` 142 steps green (0 failed, 0 console errors); docs synced per the table below (`npm run docs:gen && npm run docs:check` clean); plan moved to `docs/exec-plans/completed/`.
+
+### Phase B implementation notes (2026-09-13)
+
+- **B.8.7 area name.** The plan's `h.openAreaGate("기본지식")` cannot match: the main E2E save carries exactly one area, `사업`. `flow.js` "step 3 — areas and knowledge directions" clicks `기본지식` and `커리어`, which are *toggle* chips that start selected, so the step deselects both and onboarding proceeds with `["사업"]` alone. The new step uses `사업`; the per-area assertions in the record step are data-driven (read from the save) so they hold for any area list.
+- **B.8.6 percentage assertion.** `text.includes(\`${match}%\`)` would pass on `40%` when `match` is `0`, so the step extracts the figure with `/(\d+)%/` and compares it numerically. Proven by mutation: rendering `{rg.match + 1}%` fails the step with `the headline states 1%, roleGap computes 0%`.
+- **Steps that did not need the toggle.** `flow.js` `go to growth tab` (`성취의 벽` is in the collapsed header) and `open role model modal` (`롤모델 설정` / `롤모델 수정` is always visible) are unchanged; `flow6.js` `backup import restores the saved state` is unchanged because its file input lives on `Shell`. Verified, not assumed. The collapse is real: with the `flow.js` reset-step toggle removed, that step fails with `data reset button not found`.
+- **Legend paragraph.** Bound once to a `legend` element const inside `RoleAdviceModal` and rendered in both branches, instead of repeating the sentence verbatim twice.
+- **Grade-9 row.** Renders as a `<div>` without `active:opacity-70` — a row that cannot be tapped must not show a press state.
+- **Measured** `<main>` at 390 px on the demo save: **1,963 px → 800 px** (target ≤ 900), no horizontal scroll (`scrollWidth === innerWidth === 390`).
 
 ## Verification
 
@@ -187,11 +196,11 @@ Rules touched: [9](../../design-docs/core-beliefs.md#rule-9), [10](../../design-
 
 ## Cleanup checklist
 
-- [ ] `npm run finish` exit 0 (unused symbols/imports, duplicates, residue, language).
-- [ ] `hadController` / `reloading` fully removed from `src/main.jsx`; no `location.reload()` reachable from a service-worker event anywhere in `src/`.
-- [ ] `EmptyWallSvg`, `WallFrame`, `TrophySvg`, `LANG_KO`, `examOf`, `Lock`, `Trophy`, `Star`, `RotateCcw` still referenced after the rewrite; `ChevronDown` imported and used; no other icon import added.
-- [ ] `openAreaGate` defined once in `run.js` and used by both flows (no duplicated ≥ 6-line helper).
-- [ ] No allowlist addition expected; any addition carries a reason and is mirrored in `docs/exec-plans/tech-debt-tracker.md`.
+- [x] `npm run finish` exit 0 (unused symbols/imports, duplicates, residue, language).
+- [x] `hadController` / `reloading` fully removed from `src/main.jsx`; no `location.reload()` reachable from a service-worker event anywhere in `src/`.
+- [x] `EmptyWallSvg`, `WallFrame`, `TrophySvg`, `LANG_KO`, `examOf`, `Lock`, `Trophy`, `Star`, `RotateCcw` still referenced after the rewrite; `ChevronDown` imported and used; no other icon import added.
+- [x] `openAreaGate` defined once in `run.js` and used by `flow.js`, `flow2.js` and `flow3.js` (no duplicated ≥ 6-line helper).
+- [x] No allowlist addition was needed. `lang-check` did flag the first draft's `errors.push("…")` failure messages, which only escape the check when a selector call sits earlier on the same line; they are now English.
 
 ## Docs to sync
 

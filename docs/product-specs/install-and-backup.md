@@ -42,7 +42,7 @@ One catch specific to project pages: a Trusted Web Activity verifies its site th
 4. Turn on airplane mode and open it again — it should start normally. That is the check that the service worker took.
 
 ## Backup — `백업 내보내기` / `백업 불러오기`
-Both sit on the growth tab under `백업`, with the line `기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.`
+Both sit on the growth tab behind the collapsed `데이터 — 백업 · 초기화` line (2026-09-13, alongside the reset button — [growth.md](growth.md)), with the same line as before: `기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.`
 
 **Export** writes `life-manager-backup-{date}.json` holding `{ app: "life-manager", exportedAt, state, images }`, where `images` is every evidence and study photo plus the profile photo, keyed exactly as they are stored. Toast: `백업 파일을 내보냈어요 · 사진 {n}장`.
 

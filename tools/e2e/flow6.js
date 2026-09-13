@@ -106,6 +106,7 @@ module.exports = async (h) => {
 
   await step("backup export writes the state to a file", async () => {
     await clickTab("성장");
+    await clickText("데이터 — 백업 · 초기화"); // backup sits behind the collapsed data line
     await expectText("백업");
     // Capture the download without touching the filesystem: stub the anchor click and read the blob.
     await page.evaluate(() => {

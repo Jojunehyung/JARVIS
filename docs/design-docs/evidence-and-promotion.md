@@ -66,10 +66,10 @@ Fitness measures go through `applyMeasures`: for each label (`체중`, `골격�
 | 8 | 거장 | 분야에 영향을 줌 | 업계의 레퍼런스가 된 증거 |
 | 9 | 정점 | 그 분야의 정상 | 대체 불가능한 위치의 증거 |
 
-The growth tab shows each area as `등급 {cur.name} · {cur.gate}`, `다음 관문 — {next.name} · {next.gate}`, `필요 증거: {next.req}` and the button `관문 증명하기`; at grade 9 it shows `정점 도달`.
+The growth tab shows each area as one row — a grade box, `{name}`, `등급 {cur.name} · 다음 관문 {next.name}` (or `정점 도달` at grade 9) — and tapping the row is the only way to reach `PromoteModal` ([Rule 11](core-beliefs.md#rule-11)); the tab itself carries no promote button (2026-09-13, [growth.md](../product-specs/growth.md)).
 
 ## Promotion (`PromoteModal` → `promoteArea`)
-`승급 심사 — {next.name}` offers `GATE_CHIPS[area.grade + 1]` ([table](../generated/onboarding-tables.md#gate_chips)) plus a memo. At least one chip is required (`해당하는 증거가 없다면 아직 이 등급이 아닌 거예요.`); the evidence text is
+`승급 심사 — {next.name}` opens on a tap of the area row (not a button of its own) and offers `GATE_CHIPS[area.grade + 1]` ([table](../generated/onboarding-tables.md#gate_chips)) plus a memo, under a lead card stating `'{area.name}' 영역 · {RANKS[grade].name} → {next.name}`, `next.gate`, and — moved here from the tab's per-area card, 2026-09-13 — `필요 증거: {next.req}`. At least one chip is required (`해당하는 증거가 없다면 아직 이 등급이 아닌 거예요.`); the evidence text is
 ```
 composeEvidence(chips, memo) = chips.join(" · ") + (memo.trim() ? ` — ${memo.trim()}` : "")
 ```

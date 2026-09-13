@@ -234,6 +234,22 @@ const typeInto = async (placeholder, value) => {
     }
     return out;
   }, label, tap);
+  // The `성장` tab's area rows: one button per area, each stating its `{grade}/9` counter. Tapping a row is the
+  // only route into the promotion gate modal — the tab carries no promote button of its own — so every promotion
+  // step goes through here. `name` picks the row of that area; omitted, the first row is taken. Returns false
+  // when no row matched, so a caller can report it instead of silently passing.
+  const openAreaGate = async (name = null) => {
+    const ok = await page.evaluate((n) => {
+      const rows = [...document.querySelectorAll("main button")].filter((b) => /\d\/9/.test(b.innerText || ""));
+      const row = n ? rows.find((b) => (b.innerText || "").includes(n)) : rows[0];
+      if (!row) return false;
+      row.scrollIntoView({ block: "center" });
+      row.click();
+      return true;
+    }, name);
+    if (ok) await sleep(450);
+    return ok;
+  };
   // Click a page button by its exact label — calendar controls and view chips sit outside any modal, and a
   // partial match would hit `계약 추가` instead of the `계약` chip.
   const clickExact = async (label) => {
@@ -306,7 +322,7 @@ const typeInto = async (placeholder, value) => {
     await sleep(1000); await closeModal();
     await assertDone(title);
   };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, assertDone, modalError, clickTab, reload, rows, todoRows, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, assertDone, modalError, clickTab, reload, rows, todoRows, openAreaGate, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

@@ -114,8 +114,72 @@ module.exports = async (h) => {
     await clickInModalExact("저장");
     await sleep(800); await closeModal();
   });
-  await step("role model proximity displayed", async () => { await clickTab("성장"); await sleep(300); });
+  await step("role-model proximity leads the growth tab", async () => {
+    await clickTab("성장");
+    await sleep(300);
+    // The headline is the first block on the tab, and its number must be the one `roleGap` computes from the save.
+    const res = await page.evaluate(() => {
+      const head = document.querySelector("main")?.firstElementChild;
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      const sq = (s.areas || [])
+        .filter((p) => (s.role?.targets?.[p.id] || 0) > 0)
+        .map((p) => Math.pow(Math.min(1, p.grade / s.role.targets[p.id]), 2));
+      return {
+        text: (head?.innerText || "").replace(/\s+/g, " ").trim(),
+        match: sq.length ? Math.round((sq.reduce((a, b) => a + b, 0) / sq.length) * 100) : null,
+      };
+    });
+    if (!res.text.includes("근접도")) throw new Error("the growth tab does not lead with proximity: " + res.text);
+    if (!res.text.includes("시니어 하네스 설계자")) throw new Error("the headline does not name the role model: " + res.text);
+    if (res.match === null) throw new Error("the save carries no role-model requirement — proximity cannot be checked");
+    const shown = res.text.match(/(\d+)%/);
+    if (!shown) throw new Error("the headline states no percentage: " + res.text);
+    if (Number(shown[1]) !== res.match) throw new Error(`the headline states ${shown[1]}%, roleGap computes ${res.match}% — ${res.text}`);
+  });
   await shot("rolemodel");
+
+  await step("area rows collapse to one line and open the promotion gate", async () => {
+    await clickTab("성장");
+    await sleep(300);
+    const before = await page.evaluate(() => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").includes("실력 트랙"));
+      return {
+        body: document.body.innerText,
+        rows: sec ? [...sec.querySelectorAll("button")].map((b) => (b.innerText || "").replace(/\s+/g, " ").trim()) : [],
+      };
+    });
+    if (before.body.includes("관문 증명하기")) throw new Error("the tab still carries a promote button of its own");
+    if (before.body.includes("필요 증거:")) throw new Error("the tab still spells out the required evidence");
+    if (!before.rows.length) throw new Error("no area row was found in the skill track");
+    if (!before.rows.every((r) => /\d\/9/.test(r))) throw new Error("an area row drops its grade counter: " + before.rows.join(" | "));
+    if (!before.rows.some((r) => r.includes("다음 관문"))) throw new Error("no area row names its next gate: " + before.rows.join(" | "));
+    if (!(await h.openAreaGate("사업"))) throw new Error("the area row did not open the promotion gate");
+    await expectText("승급 심사");
+    await expectText("필요 증거:"); // the line the row dropped is stated by the modal instead
+    await closeModal();
+  });
+
+  await step("the achievement wall states its counts while collapsed", async () => {
+    await clickTab("성장");
+    await sleep(300);
+    // Collapsing may not remove a number from the screen: the header states all three totals while closed.
+    const read = () => page.evaluate(() => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").includes("성취의 벽"));
+      if (!sec) return null;
+      const text = (sec.innerText || "").replace(/\s+/g, " ").trim();
+      return { text, lines: (text.match(/검증된 성취/g) || []).length };
+    });
+    const closed = await read();
+    if (!closed) throw new Error("the achievement wall section was not found");
+    if (!/트로피 \d+개 · 시험 \d+개 · 검증된 성취 \d+건/.test(closed.text)) throw new Error("the collapsed header hides its counts: " + closed.text);
+    if (closed.lines !== 1) throw new Error(`${closed.lines} achievement lines while closed — the per-area lists are not folded away`);
+    await clickText("성취의 벽");
+    const open = await read();
+    const areas = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).areas.map((p) => p.name));
+    if (open.lines !== areas.length + 1) throw new Error(`${open.lines} achievement lines when open, expected ${areas.length + 1}`);
+    for (const n of areas) if (!open.text.includes(n)) throw new Error("the opened wall omits an area: " + n);
+    await clickText("성취의 벽"); // leave the section as the tab opens it
+  });
 
   // ── Catalogue exam mode
   await step("catalogue — exam tab", async () => {

@@ -61,7 +61,7 @@ module.exports = async (h) => {
   // ── Promotion (evidence chip selection → actual promotion)
   await step("promotion — submit after selecting evidence chips", async () => {
     await clickTab("성장");
-    try { await clickText("관문 증명하기"); } catch { errors.push("승급 버튼 없음"); }
+    if (!(await h.openAreaGate())) errors.push("no area row to open the promotion gate");
     await sleep(500);
     await page.evaluate(() => {
       const ov = document.querySelector(".fixed.inset-0");
