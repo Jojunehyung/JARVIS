@@ -1160,6 +1160,11 @@ const OUTPUT_OPTS = [
   { k: "pub", t: "공개·배포한 산출물 있음", g: 3 },
   { k: "rev", t: "수익·사용자가 있는 산출물", g: 3 },
 ];
+/* CV chips. The degree keys are EDU_OPTS keys on purpose: the starting-grade table stays frozen, and its sixth
+   key `col` (undergraduate enrolment, g 1) is produced by the status rule in eduKeyOf, never picked directly. */
+const EDU_LEVELS = [{ k: "hs", t: "고등학교" }, { k: "assoc", t: "전문학사" }, { k: "ba", t: "학사" }, { k: "ms", t: "석사" }, { k: "phd", t: "박사" }];
+const EDU_STATUS = [{ k: "enroll", t: "재학" }, { k: "leave", t: "휴학" }, { k: "expect", t: "졸업예정" }, { k: "grad", t: "졸업" }, { k: "course", t: "수료" }, { k: "drop", t: "중퇴" }];
+const EMP_KINDS = [{ k: "full", t: "정규·계약" }, { k: "free", t: "프리랜서·외주" }, { k: "intern", t: "인턴·알바" }];
 const gFromD = (d) => (d >= 82 ? 5 : d >= 67 ? 4 : d >= 55 ? 3 : d >= 40 ? 2 : d >= 25 ? 1 : 0);
 
 /* Option combination → starting grade per area (same choices = same grade; based on V1.1 D) */
@@ -1207,6 +1212,79 @@ const computeGrades = (profile, areaNames) => {
     return { name, grade, why: why.filter(Boolean).join(" · ") };
   });
 };
+
+/* ── CV → starting-grade keys ──
+   The facts the user records (school, degree, dates, employment) are turned into the EDU_OPTS / CAREER_OPTS keys
+   computeGrades already reads, so no frozen table moves. eduKeyOf and careerKeyOf have exactly one call site each
+   (the onboarding profile assembly): a later CV edit must never recompute a grade that was already awarded
+   (rules 4, 11). Everything else here is derived in render and stored nowhere (rule 9).
+   These run from render and from event handlers, never at module initialisation, so the forward reference to
+   monthAdd / monthsBetween (defined further down, in the business region) is resolved by the time they are called. */
+const ageOf = (birth, today) => {
+  const [by, bm, bd] = String(birth).split("-").map(Number);
+  const [ty, tm, td] = String(today).split("-").map(Number);
+  // Whole years only: the birthday of the current year must already have passed.
+  return ty - by - (tm < bm || (tm === bm && td < bd) ? 1 : 0);
+};
+// A band this app never wrote (hand-edited or imported save) is not printed as a fact.
+const ageText = (p, today) => (p?.birth ? `만 ${ageOf(p.birth, today)}세` : AGE_OPTS.includes(p?.age) ? p.age : "나이 미입력");
+// The union of the months covered, not the sum: two concurrent jobs are one stretch of practice, not two.
+// Absent `to` means still employed. The span is clamped so a malformed month cannot build a huge set in render.
+const careerMonths = (careers, today) => {
+  const cur = String(today).slice(0, 7);
+  const months = new Set();
+  for (const c of careers || []) {
+    if ((c?.emp !== "full" && c?.emp !== "free") || !c.from) continue;
+    const n = Math.min(monthsBetween(c.from, c.to || cur), 1200);
+    for (let i = 0; i <= n; i++) months.add(monthAdd(c.from, i));
+  }
+  return months.size;
+};
+const careerText = (n) => {
+  const y = Math.floor(n / 12), m = n % 12;
+  return n ? [y ? `${y}년` : "", m ? `${m}개월` : ""].filter(Boolean).join(" ") : "없음";
+};
+// Highest completed degree; failing that, current enrolment above high school; failing that, high school.
+// A withdrawal (`drop`) counts as neither. Ties on g are broken by the order of the frozen table.
+const eduKeyOf = (edus) => {
+  let best = null;
+  for (const e of edus || []) {
+    if (e?.status !== "grad") continue;
+    const i = EDU_OPTS.findIndex((o) => o.k === e.degree);
+    if (i < 0) continue;
+    if (!best || EDU_OPTS[i].g > best.g || (EDU_OPTS[i].g === best.g && i > best.i)) best = { ...EDU_OPTS[i], i };
+  }
+  if (best) return best.k;
+  const ongoing = ["enroll", "leave", "expect", "course"];
+  return (edus || []).some((e) => ["assoc", "ba", "ms", "phd"].includes(e?.degree) && ongoing.includes(e?.status)) ? "col" : "hs";
+};
+// The CAREER_OPTS labels read literally; an intern-only record is the `intern` band, no practice months at all.
+const careerKeyOf = (careers, today) => {
+  const m = careerMonths(careers, today);
+  if (m >= 120) return "y10";
+  if (m >= 60) return "y510";
+  if (m >= 36) return "y35";
+  if (m >= 12) return "y13";
+  if (m >= 1) return "u1";
+  return (careers || []).some((c) => c?.emp === "intern") ? "intern" : "none";
+};
+// The one record each CV surface speaks for. `topEdu`: the highest completed degree, or the most recently
+// started entry while nothing is completed. `latestCareer`: the most recently started job, running or not.
+const topEdu = (edus) => {
+  const list = (edus || []).filter(Boolean);
+  if (!list.length) return null;
+  const grad = list.filter((e) => e.status === "grad");
+  if (grad.length) {
+    const rank = (e) => EDU_OPTS.findIndex((o) => o.k === e.degree);
+    return grad.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+  }
+  return list.reduce((a, b) => ((b.from || "") > (a.from || "") ? b : a));
+};
+const latestCareer = (careers) => {
+  const list = (careers || []).filter(Boolean);
+  return list.length ? list.reduce((a, b) => ((b.from || "") > (a.from || "") ? b : a)) : null;
+};
+const displayName = (p) => p?.nick?.trim() || p?.name?.trim() || "사용자";
 
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
 const dstr = (d = new Date()) => {
@@ -2602,6 +2680,21 @@ const buildAssistantPacket = (state, today) => {
   const sec = (title, lines) => (lines.length ? [`## ${title}`, ...lines] : [`## ${title}`, "- 없음"]);
 
   const briefLines = brief.sections.flatMap((s) => s.items.filter((it) => it.severity >= 2).map((it) => `- [${s.title}] ${it.text}`)).slice(0, 12);
+  /* The CV at the level the user agreed to share: degree, department, months of practice and the most recent
+     role. It deliberately carries none of `profile.name`, `profile.birth`, `profile.email`, `profile.phone`,
+     `profile.edus[].school` or `profile.careers[].company` — a school or an employer names a person nearly as
+     well as a name does, and this packet is the one place data leaves the device (SECURITY.md). One line at
+     most; `sec` prints `- 없음` when there is nothing to state. */
+  const prof = state.profile || {};
+  const te = topEdu(prof.edus);
+  const lc = latestCareer(prof.careers);
+  const cvLines = [];
+  if (te || lc) {
+    const degree = te ? [EDU_LEVELS.find((l) => l.k === te.degree)?.t, EDU_STATUS.find((s) => s.k === te.status)?.t].filter(Boolean).join(" ") : "";
+    const eduPart = te ? `${degree || "학력"} · ${te.major || te.field || "전공 미기재"}` : "학력 미입력";
+    const carPart = lc ? `실무 ${careerText(careerMonths(prof.careers, today))} · 최근 ${lc.role}` : "경력 없음";
+    cvLines.push(`- ${eduPart} / ${carPart}`);
+  }
   const goalLines = active.map((g) => {
     const pc = paceOf(g, state);
     const krs = (g.krs || []).slice(0, 4).map((kr) => `${kr.title} ${krRemainText(kr, g, state)}`).join(" · ");
@@ -2637,7 +2730,7 @@ const buildAssistantPacket = (state, today) => {
 
   const build = (jl) => [
     `[인생 관리 — 오늘 점검 요청 ${today}]`, ...PACKET_HEAD, "",
-    ...sec("오늘 브리핑", briefLines), ...sec("목표", goalLines), ...sec("열린 실행", taskLines),
+    ...sec("오늘 브리핑", briefLines), ...sec("이력", cvLines), ...sec("목표", goalLines), ...sec("열린 실행", taskLines),
     ...sec(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines), ...sec("사업 (계약·매출)", bizLines),
     ...sec("최근 일지 (7일)", jl), ...sec("최근 주간 리뷰", reviewLines), ...sec("연속·롤모델", stateLines),
   ].join("\n");
@@ -2678,11 +2771,18 @@ const parseAssistantReply = (text, state) => {
 
 /* ── State lifecycle ── */
 /**
- * @schema v20 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v21 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 20,
- *   profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
+ *   v: 21,
+ *   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
+ *              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
+ *                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
+ *              careers: [{ id, company, role, emp("full"|"free"|"intern"), from("YYYY-MM"), to?("YYYY-MM" — absent = still employed) }],
+ *              edu(EDU_OPTS key — snapshot input of the one-time starting-grade computation, never recomputed),
+ *              career(CAREER_OPTS key — same), lead, biz, output, certs[], examsOwned[],
+ *              directions[], look{skin,hair,hairColor,outfit,face}, startDate,
+ *              age?(legacy AGE_OPTS band — read only when birth is absent), majorField?(legacy), majorName?(legacy), roleModel? },
  *   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
  *             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
@@ -2717,7 +2817,8 @@ const parseAssistantReply = (text, state) => {
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
  * agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
  * contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
- * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
+ * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
+ * the displayed age (`ageText`) and the total months of practice (`careerMonths`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -2794,6 +2895,16 @@ const migrate = (s) => {
     s = { ...s, v: 20, folio: s.folio || [], rates: s.rates || [], deals: s.deals || [],
           ui: { ...(s.ui || {}), bizView: ["rates", "folio"].includes(s.ui?.bizView) ? s.ui.bizView : "deals" } };
   }
+  if (s.v < 21) {
+    // v21: the CV — exact personal facts replace the vague chips. name, birth, email, phone and the two record
+    // arrays profile.edus / profile.careers are added empty; nothing is removed. age, edu, career, majorField and
+    // majorName stay exactly as the old save wrote them: edu and career are the frozen inputs of the one-time
+    // starting-grade computation and must never be recomputed (rules 4, 11), and the age band is the only age fact
+    // an old save has until the user enters a birth date. profile stays null on a save that never finished
+    // onboarding, so the root still routes it to Onboarding.
+    const p = s.profile;
+    s = { ...s, v: 21, profile: p ? { ...p, name: p.name ?? "", birth: p.birth ?? null, email: p.email ?? "", phone: p.phone ?? "", edus: p.edus || [], careers: p.careers || [] } : p };
+  }
   return s;
 };
 
@@ -2805,7 +2916,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 20,
+  v: 21,
   profile: null,
   areas,
   tasks: [],
@@ -2842,7 +2953,13 @@ const demoState = () => {
     ],
   };
   const s = freshState([p1, p2, p3, p4]);
-  s.profile = { nick: "하네스 지망생", gender: "남성", age: "20대 중반", status: "취업 준비", edu: "univ4", majorField: "공학", directions: ["IT·개발", "재테크·금융"], look: { skin: 0, hair: 0, hairColor: 0, outfit: 1, face: 0 }, startDate: shiftDay(today, -30) };
+  // Synthetic CV: no contact fields at all, and every value is obviously made up (SECURITY.md — the demo ships no personal data).
+  s.profile = {
+    name: "데모 사용자", nick: "하네스 지망생", birth: shiftDay(today, -9855), gender: "남성", status: "취업 준비",
+    edus: [{ id: uid(), school: "데모대학교", major: "기계공학", field: "공학", degree: "ba", status: "grad", from: "2017-03", to: "2023-02" }],
+    careers: [{ id: uid(), company: "데모전장", role: "설계 지원", emp: "intern", from: monthAdd(month, -14), to: monthAdd(month, -8) }],
+    edu: "ba", directions: ["IT·개발", "재테크·금융"], look: { skin: 0, hair: 0, hairColor: 0, outfit: 1, face: 0 }, startDate: shiftDay(today, -30),
+  };
   const gFit = {
     id: uid(), title: "체력 기반 만들기", areaId: p4.id, deadline: shiftDay(today, 60),
     note: "", status: "active", createdAt: shiftDay(today, -10),
@@ -2936,17 +3053,126 @@ function Shell({ children }) {
 
 /* ───────────────────────── Onboarding (click-driven) ───────────────────────── */
 
+/* One chip row, one choice. Module level so that typing in a neighbouring input does not remount it. */
+function OptRow({ label, opts, val, set, getK = (o) => o.k, getT = (o) => o.t }) {
+  return (
+    <div>
+      <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {opts.map((o) => (
+          <Chip key={getK(o)} on={val === getK(o)} onClick={() => set(getK(o))}>{getT(o)}</Chip>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── CV records (education, career) ──
+   One entry row and one add form serve onboarding and the profile screen, so the fields, the order and the
+   validation messages cannot drift apart. `kind` is "edu" or "career". Nothing here computes a grade. */
+function CvEntryRow({ entry, kind, onRemove }) {
+  const edu = kind === "edu";
+  const head = edu ? entry.school : entry.company;
+  const sub = edu
+    ? [EDU_LEVELS.find((l) => l.k === entry.degree)?.t, EDU_STATUS.find((s) => s.k === entry.status)?.t, entry.major, entry.field]
+    : [EMP_KINDS.find((e) => e.k === entry.emp)?.t, entry.role];
+  // A career entry with no end month is still running; an education entry simply prints what it has.
+  const span = [entry.from, edu ? entry.to : entry.to || "재직 중"].filter(Boolean).join(" ~ ");
+  return (
+    <div className="flex items-start gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold truncate">{head}</div>
+        <div className="text-xs text-zinc-500">{sub.filter(Boolean).join(" · ")}</div>
+        {span && <div className="text-xs text-zinc-600 font-mono">{span}</div>}
+      </div>
+      <button onClick={onRemove} className="text-zinc-600 p-1"><X size={13} /></button>
+    </div>
+  );
+}
+
+function CvAddForm({ kind, onAdd }) {
+  const edu = kind === "edu";
+  const [main, setMain] = useState("");      // school | company
+  const [sub, setSub] = useState("");        // major | role
+  const [lvl, setLvl] = useState(null);      // degree | employment kind
+  const [stat, setStat] = useState(null);    // education status
+  const [field, setField] = useState(null);  // MAJOR_FIELDS, education only
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [current, setCurrent] = useState(false); // still employed — an entry with no end month
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    const a = main.trim(), b = sub.trim();
+    if (edu) {
+      if (!a) { setErr("학교 이름을 입력해 주세요."); return; }
+      if (!lvl || !stat) { setErr("학위와 상태를 선택해 주세요."); return; }
+      if (from && to && monthsBetween(from, to) < 0) { setErr("졸업 연월이 입학 연월보다 앞서요."); return; }
+      onAdd({ id: uid(), school: a, degree: lvl, status: stat, ...(b ? { major: b } : {}), ...(field ? { field } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) });
+    } else {
+      if (!a || !b) { setErr("회사 이름과 직책을 입력해 주세요."); return; }
+      if (!lvl) { setErr("고용 형태를 선택해 주세요."); return; }
+      if (!from) { setErr("입사 연월을 입력해 주세요."); return; }
+      if (!current && to && monthsBetween(from, to) < 0) { setErr("퇴사 연월이 입사 연월보다 앞서요."); return; }
+      onAdd({ id: uid(), company: a, role: b, emp: lvl, from, ...(current || !to ? {} : { to }) });
+    }
+    setMain(""); setSub(""); setLvl(null); setStat(null); setField(null); setFrom(""); setTo(""); setCurrent(false); setErr("");
+  };
+
+  return (
+    <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
+      <input value={main} onChange={(e) => setMain(e.target.value)}
+        placeholder={edu ? "학교 이름 — 예: 한국대학교" : "회사·조직 이름 — 예: 한국부품"}
+        className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm outline-none focus:border-cyan-500" />
+      <input value={sub} onChange={(e) => setSub(e.target.value)}
+        placeholder={edu ? "전공·학과 (선택) — 예: 기계공학" : "직책·직무 — 예: 설계 엔지니어"}
+        className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm outline-none focus:border-cyan-500" />
+      <OptRow label={edu ? "학위" : "고용 형태"} opts={edu ? EDU_LEVELS : EMP_KINDS} val={lvl} set={setLvl} />
+      {edu && <OptRow label="상태" opts={EDU_STATUS} val={stat} set={setStat} />}
+      {edu && <OptRow label="계열 (선택)" opts={MAJOR_FIELDS} val={field} set={setField} getK={(o) => o} getT={(o) => o} />}
+      {!edu && (
+        <Chip on={current} onClick={() => { setCurrent((c) => !c); setTo(""); }}>재직 중</Chip>
+      )}
+      <div className="flex items-center gap-2">
+        <input type="month" value={from} onChange={(e) => setFrom(e.target.value)}
+          className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm font-mono" />
+        <span className="text-xs text-zinc-500">~</span>
+        <input type="month" value={to} onChange={(e) => setTo(e.target.value)} disabled={!edu && current}
+          className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm font-mono disabled:opacity-30" />
+      </div>
+      {err && <div className="text-xs text-rose-400">{err}</div>}
+      <button onClick={submit} className="w-full py-2 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-bold">
+        {edu ? "학력 추가" : "경력 추가"}
+      </button>
+    </div>
+  );
+}
+
+function CvSection({ kind, label, note, entries, onChange }) {
+  return (
+    <div>
+      <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">{label}</div>
+      <div className="space-y-1.5">
+        {entries.map((e) => (
+          <CvEntryRow key={e.id} entry={e} kind={kind} onRemove={() => onChange(entries.filter((x) => x.id !== e.id))} />
+        ))}
+        {entries.length === 0 && <p className="text-xs text-zinc-600">{note}</p>}
+        <CvAddForm kind={kind} onAdd={(e) => onChange([...entries, e])} />
+      </div>
+    </div>
+  );
+}
+
 function Onboarding({ onStart, onDemo }) {
   const [step, setStep] = useState("title");
   const [err, setErr] = useState("");
   // Basic info
+  const [name, setName] = useState("");
   const [nick, setNick] = useState("");
-  const [age, setAge] = useState(null);
+  const [birth, setBirth] = useState("");
   const [gender, setGender] = useState(null);
   const [status, setStatus] = useState(null);
-  const [edu, setEdu] = useState(null);
-  const [majorField, setMajorField] = useState(null);
-  const [majorName, setMajorName] = useState("");
+  const [edus, setEdus] = useState([]);
   // Appearance
   const [look, setLook] = useState({ skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 1 });
   const setL = (k, v) => setLook((s) => ({ ...s, [k]: v }));
@@ -2970,7 +3196,7 @@ function Onboarding({ onStart, onDemo }) {
   const [gradeF, setGradeF] = useState("전체");
   const [query, setQuery] = useState("");
   // Experience
-  const [career, setCareer] = useState(null);
+  const [careers, setCareers] = useState([]);
   const [lead, setLead] = useState(null);
   const [biz, setBiz] = useState(null);
   const [output, setOutput] = useState(null);
@@ -3008,26 +3234,34 @@ function Onboarding({ onStart, onDemo }) {
     return [...picked, ...rest].slice(0, 60);
   }, [filtered, certSetSel]);
 
+  // The one and only call site of eduKeyOf / careerKeyOf: the keys are a snapshot of the CV as it stands when
+  // the app starts, and the grades they produce are never recomputed afterwards (rules 4, 11).
   const profile = {
-    nick: nick.trim() || "사용자", age, gender, status,
-    edu, majorField, majorName: majorName.trim(),
-    directions, look, examsOwned,
-    certs: certSel, career: career ?? "none", lead: lead ?? "no",
-    biz: biz ?? "none", output: output ?? "none",
+    name: name.trim(), nick: nick.trim(), birth, gender, status, email: "", phone: "",
+    edus, careers, directions, look, examsOwned, certs: certSel,
+    edu: eduKeyOf(edus), career: careerKeyOf(careers, dstr()),
+    lead: lead ?? "no", biz: biz ?? "none", output: output ?? "none",
   };
   const results = computeGrades(profile, areaNames);
+  const eduLabel = EDU_OPTS.find((e) => e.k === profile.edu)?.t;
+  const careerLabel = CAREER_OPTS.find((c) => c.k === profile.career)?.t;
 
   const next = () => {
     setErr("");
     if (step === 0) {
-      if (!age || !gender || !status || !edu || !majorField) { setErr("연령대·성별·신분·학력·전공 계열을 모두 선택해 주세요."); return; }
+      if (!name.trim()) { setErr("이름을 입력해 주세요."); return; }
+      if (!birth) { setErr("생년월일을 입력해 주세요."); return; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) { setErr("생년월일 형식이 올바르지 않아요 — YYYY-MM-DD로 입력해요."); return; }
+      if (birth > dstr()) { setErr("생년월일이 오늘보다 뒤예요."); return; }
+      if (!gender || !status) { setErr("성별과 현재 신분을 선택해 주세요."); return; }
+      if (edus.length === 0) { setErr("학력을 1개 이상 추가해 주세요."); return; }
     }
     if (step === 2) {
       if (areaNames.length === 0) { setErr("영역을 하나 이상 선택해 주세요."); return; }
       if (areaNames.includes("기본지식") && directions.length === 0) { setErr("기본지식이 향할 방향을 1개 이상 선택해 주세요."); return; }
     }
     if (step === 4) {
-      if (hasJob && (!career || !lead)) { setErr("직무 경력과 리드 경험을 선택해 주세요."); return; }
+      if (hasJob && !lead) { setErr("리드 경험을 선택해 주세요."); return; }
       if (hasBiz && !biz) { setErr("사업 경험을 선택해 주세요."); return; }
       if (!output) { setErr("산출물 항목을 선택해 주세요."); return; }
     }
@@ -3081,17 +3315,6 @@ function Onboarding({ onStart, onDemo }) {
     onStart({ areas: finalized, profile: { ...profile, startDate: dstr() }, exams: ex, certBest: cb });
   };
 
-  const OptRow = ({ label, opts, val, set, getK = (o) => o.k, getT = (o) => o.t }) => (
-    <div>
-      <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">{label}</div>
-      <div className="flex flex-wrap gap-1.5">
-        {opts.map((o) => (
-          <Chip key={getK(o)} on={val === getK(o)} onClick={() => set(getK(o))}>{getT(o)}</Chip>
-        ))}
-      </div>
-    </div>
-  );
-
   const Swatch = ({ label, colors, val, set }) => (
     <div>
       <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">{label}</div>
@@ -3138,19 +3361,23 @@ function Onboarding({ onStart, onDemo }) {
         <div className="space-y-4">
           <div>
             <span className="font-mono text-xs font-bold text-cyan-400">1 / 6</span><span className="text-lg font-black ml-1.5">기본 정보</span>
-            <p className="text-xs text-zinc-400 mt-1">선택만 하면 시작 등급이 자동 산정됩니다.</p>
+            <p className="text-xs text-zinc-400 mt-1">입력한 학력·경력으로 시작 등급이 산정돼요.</p>
           </div>
+          <input value={name} onChange={(e) => setName(e.target.value)}
+            placeholder="이름"
+            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-500" />
           <input value={nick} onChange={(e) => setNick(e.target.value)}
             placeholder="닉네임 (선택)"
             className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-500" />
-          <OptRow label="연령대" opts={AGE_OPTS} val={age} set={setAge} getK={(o) => o} getT={(o) => o} />
+          <div>
+            <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">생년월일</div>
+            <input type="date" value={birth} onChange={(e) => setBirth(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:border-cyan-500" />
+          </div>
           <OptRow label="성별" opts={["남성", "여성", "선택 안 함"]} val={gender} set={setGender} getK={(o) => o} getT={(o) => o} />
           <OptRow label="현재 신분" opts={STATUS_OPTS} val={status} set={setStatus} getK={(o) => o} getT={(o) => o} />
-          <OptRow label="최종 학력" opts={EDU_OPTS} val={edu} set={setEdu} />
-          <OptRow label="전공 계열" opts={MAJOR_FIELDS} val={majorField} set={setMajorField} getK={(o) => o} getT={(o) => o} />
-          <input value={majorName} onChange={(e) => setMajorName(e.target.value)}
-            placeholder="전공 이름 (선택, 예: 경영학)"
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs outline-none focus:border-cyan-500" />
+          <CvSection kind="edu" label="학력" entries={edus} onChange={setEdus}
+            note="학력을 1개 이상 추가해요. 최종 학력이 기본지식 시작 등급의 근거가 돼요." />
         </div>
       )}
 
@@ -3162,11 +3389,12 @@ function Onboarding({ onStart, onDemo }) {
               <PortraitSprite look={look} gender={gender} size={84} />
             </div>
             <div className="flex flex-col gap-2 min-w-0 flex-1">
-              <div className="font-bold text-sm truncate">{nick.trim() || "사용자"}</div>
+              <div className="font-bold text-sm truncate">{displayName({ nick, name })}</div>
               <button onClick={randomLook}
                 className="px-3 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-medium self-start">무작위</button>
             </div>
           </div>
+          <p className="text-xs text-zinc-600">사진은 시작한 뒤 홈 프로필 카드에서 등록해요.</p>
           <Swatch label="피부" colors={SKINS} val={look.skin} set={(v) => setL("skin", v)} />
           <Swatch label="머리색" colors={HAIR_COLORS} val={look.hairColor} set={(v) => setL("hairColor", v)} />
           <Swatch label="옷 색상" colors={OUTFITS} val={look.outfit} set={(v) => setL("outfit", v)} />
@@ -3290,10 +3518,12 @@ function Onboarding({ onStart, onDemo }) {
       {step === 4 && (
         <div className="space-y-4">
           <div>
-            <span className="font-mono text-xs font-bold text-cyan-400">5 / 6</span><span className="text-lg font-black ml-1.5">경험</span>
+            <span className="font-mono text-xs font-bold text-cyan-400">5 / 6</span><span className="text-lg font-black ml-1.5">경력·경험</span>
             <p className="text-xs text-zinc-400 mt-1">정직하게, 상향 없이.</p>
           </div>
-          {hasJob && <OptRow label="직무 경력" opts={CAREER_OPTS} val={career} set={setCareer} />}
+          <CvSection kind="career" label="경력" entries={careers} onChange={setCareers}
+            note="경력이 없으면 비워 둬요. 직업·커리어 시작 등급은 경력 없음 기준이에요." />
+          <p className="text-xs text-zinc-500">합산 실무 {careerText(careerMonths(careers, dstr()))} · 시작 등급 기준 {careerLabel}</p>
           {hasJob && <OptRow label="리드 경험" opts={LEAD_OPTS} val={lead} set={setLead} />}
           {hasBiz && <OptRow label="사업 경험" opts={BIZ_OPTS} val={biz} set={setBiz} />}
           <OptRow label="산출물·포트폴리오" opts={OUTPUT_OPTS} val={output} set={setOutput} />
@@ -3308,10 +3538,11 @@ function Onboarding({ onStart, onDemo }) {
               <PortraitSprite look={look} gender={gender} size={60} />
             </div>
             <div className="min-w-0">
-              <div className="font-black text-base truncate">{nick.trim() || "사용자"}</div>
-              <div className="text-xs text-zinc-500">{age} · {status}{directions.length ? ` · ${directions.join("·")}` : ""}</div>
+              <div className="font-black text-base truncate">{displayName({ nick, name })}</div>
+              <div className="text-xs text-zinc-500">{ageText({ birth }, dstr())} · {status}{directions.length ? ` · ${directions.join("·")}` : ""}</div>
             </div>
           </div>
+          <p className="text-xs text-zinc-500">학력 {eduLabel} · 경력 {careerLabel}</p>
           {results.map((r) => (
             <div key={r.name} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
               <div className="flex items-center justify-between mb-1.5">
@@ -3346,7 +3577,7 @@ function Onboarding({ onStart, onDemo }) {
 }
 
 /* ───────────────────────── Home — today's focus ───────────────────────── */
-function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoals, onGoQuests, onGoSchedule, onGoBiz, onBriefing, onJournal, onReview }) {
+function HomeTab({ state, today, imgs, onProfile, onComplete, onGoGoals, onGoQuests, onGoSchedule, onGoBiz, onBriefing, onJournal, onReview }) {
   const a = state.act;
   const brief = buildBriefing(state, today);
   const firstAlert = brief.sections.flatMap((s) => s.items).find((it) => it.severity === 3);
@@ -3363,21 +3594,17 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         <div className="flex items-center gap-4">
-          <div className="relative rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-700 shrink-0">
+          <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-700 shrink-0">
             <Portrait img={imgs?.profile} look={state.profile.look} gender={state.profile.gender} size={72} />
-            {imgs?.profile && (
-              <button onClick={() => onClearImg("profile")}
-                className="absolute top-1 right-1 w-5 h-5 rounded-md bg-zinc-950 bg-opacity-80 text-xs text-zinc-400 flex items-center justify-center">✕</button>
-            )}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="font-black text-base truncate">{state.profile.nick}</div>
+            <div className="font-black text-base truncate">{displayName(state.profile)}</div>
             <div className="text-xs text-zinc-500 mt-0.5 truncate">{state.areas.map((p) => `${p.name} ${RANKS[Math.min(p.grade, RANKS.length - 1)].name}`).join(" · ")}</div>
             <div className="flex items-center gap-2 mt-2">
-              <button onClick={() => onUpload("profile")}
-                className="flex items-center gap-1 bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium">
-                <Camera size={13} /> 업로드
-              </button>
+              {/* The one profile control on this screen. The photo, the personal facts and the CV are all edited
+                  in the screen this opens, so the card only states facts and points at the screen that owns them. */}
+              <button onClick={onProfile}
+                className="bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium">프로필</button>
               <span className="text-xs text-zinc-500">오늘 {doneToday}건 완료</span>
             </div>
           </div>
@@ -3475,6 +3702,123 @@ function HomeTab({ state, today, imgs, onUpload, onClearImg, onComplete, onGoGoa
         )}
       </section>
     </>
+  );
+}
+
+/* ── Profile — the CV as a screen: the photo, the personal facts, and the education and career records the
+   app asked for once at onboarding. A modal rather than a seventh tab: it is opened occasionally, and the
+   `Modal` shell already scrolls and sits as a bottom sheet on a phone.
+   Nothing here computes a grade. `profile.edu` and `profile.career` were the inputs of the one-time starting
+   grade computation and are left exactly as onboarding wrote them (rules 4, 11) — this modal never writes
+   them — so a degree added years later moves no area; only the evidence gate does. `보유 기록` is read-only
+   for the same reason: certifications, exam bests and portfolio entries are registered where they are paid
+   for, and re-typing them here would be a second, unpaid record of the same fact.
+   The photo has no file input of its own: it calls the root's `askUpload("profile")`, whose input is mounted
+   on `Shell` and therefore survives this modal closing mid-pick. ── */
+function ProfileModal({ profile, state, img, today, onUpload, onClearImg, onSave, onClose }) {
+  const [name, setName] = useState(profile.name || "");
+  const [nick, setNick] = useState(profile.nick || "");
+  const [birth, setBirth] = useState(profile.birth || "");
+  const [gender, setGender] = useState(profile.gender || null);
+  const [status, setStatus] = useState(profile.status || null);
+  const [email, setEmail] = useState(profile.email || "");
+  const [phone, setPhone] = useState(profile.phone || "");
+  const [edus, setEdus] = useState(profile.edus || []);
+  const [careers, setCareers] = useState(profile.careers || []);
+  const [err, setErr] = useState("");
+
+  const certs = profile.certs || [];
+  const bests = Object.entries(state.exams?.best || {});
+  const field = "w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-500";
+
+  const submit = () => {
+    if (!name.trim()) { setErr("이름을 입력해 주세요."); return; }
+    if (!birth) { setErr("생년월일을 입력해 주세요."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) { setErr("생년월일 형식이 올바르지 않아요 — YYYY-MM-DD로 입력해요."); return; }
+    if (birth > today) { setErr("생년월일이 오늘보다 뒤예요."); return; }
+    if (!gender || !status) { setErr("성별과 현재 신분을 선택해 주세요."); return; }
+    if (!edus.length) { setErr("학력을 1개 이상 추가해 주세요."); return; }
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErr("이메일 형식이 올바르지 않아요."); return; }
+    // Exactly the fields this screen owns. `edu`, `career`, `certs`, `examsOwned`, `look` and the areas are
+    // not in this object and are not touched by the handler that receives it.
+    onSave({ name: name.trim(), nick: nick.trim(), birth, gender, status, email: email.trim(), phone: phone.trim(), edus, careers });
+  };
+
+  return (
+    <Modal title="프로필" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-xs text-zinc-500">학력·경력을 고쳐도 시작 등급은 바뀌지 않아요. 승급은 관문 증거로만 올라가요.</p>
+
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">사진</div>
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-700 shrink-0">
+              <Portrait img={img} look={profile.look} gender={gender} size={64} />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={onUpload}
+                className="flex items-center gap-1 bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium">
+                <Camera size={13} /> 사진 등록
+              </button>
+              {img && (
+                <button onClick={onClearImg}
+                  className="border border-zinc-700 text-zinc-400 rounded-lg px-2.5 py-1.5 text-xs font-medium">사진 삭제</button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-xs font-bold tracking-widest text-zinc-500">인적사항</div>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="이름" className={field} />
+          <input value={nick} onChange={(e) => setNick(e.target.value)} placeholder="닉네임 (선택)" className={field} />
+          <div>
+            <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">생년월일</div>
+            <input type="date" value={birth} onChange={(e) => setBirth(e.target.value)} className={`${field} font-mono`} />
+            {/* Derived at render from the date beside it — the age itself is never stored (rule 9) */}
+            <div className="text-xs text-zinc-500 mt-1">{ageText({ birth }, today)}</div>
+          </div>
+          <OptRow label="성별" opts={["남성", "여성", "선택 안 함"]} val={gender} set={setGender} getK={(o) => o} getT={(o) => o} />
+          <OptRow label="현재 신분" opts={STATUS_OPTS} val={status} set={setStatus} getK={(o) => o} getT={(o) => o} />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="이메일 (선택)" className={field} />
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="연락처 (선택)" className={field} />
+        </div>
+
+        <CvSection kind="edu" label="학력" entries={edus} onChange={setEdus}
+          note="학력을 1개 이상 추가해요. 최종 학력이 기본지식 시작 등급의 근거가 돼요." />
+
+        <div>
+          <CvSection kind="career" label="경력" entries={careers} onChange={setCareers}
+            note="경력이 없으면 비워 둬요. 직업·커리어 시작 등급은 경력 없음 기준이에요." />
+          {/* The months are counted here and nowhere else; no grade reads them (rules 4, 9) */}
+          <p className="text-xs text-zinc-500 mt-1.5">합산 실무 {careerText(careerMonths(careers, today))}</p>
+        </div>
+
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">보유 기록</div>
+          <div className="space-y-1.5">
+            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
+              <div className="text-xs font-mono text-zinc-500">자격 {certs.length}건</div>
+              <div className="text-xs text-zinc-300 break-words">{certs.length ? certs.join(" · ") : "없음"}</div>
+            </div>
+            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
+              <div className="text-xs font-mono text-zinc-500">시험 성적 {bests.length}건</div>
+              <div className="text-xs text-zinc-300 break-words">
+                {bests.length ? bests.map(([id, b]) => `${examOf(id)?.n || id} ${b.label}`).join(" · ") : "없음"}
+              </div>
+            </div>
+            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
+              <div className="text-xs font-mono text-zinc-500">포트폴리오 {(state.folio || []).length}건</div>
+            </div>
+            <p className="text-xs text-zinc-600">여기서는 고칠 수 없어요 — 자격·시험은 목표의 핵심결과에서, 포트폴리오는 사업 탭에서 관리해요.</p>
+          </div>
+        </div>
+
+        {err && <div className="text-xs text-rose-400">{err}</div>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-400 text-zinc-950 font-black text-sm">저장</button>
+        <p className="text-xs text-zinc-600 text-center">창을 닫으면 저장되지 않아요.</p>
+      </div>
+    </Modal>
   );
 }
 
@@ -6490,6 +6834,21 @@ export default function LifeManager() {
     if (!silent) { setModal(null); showToast({ msg: "일지를 저장했어요" }); }
   };
 
+  /* A CV edit records facts and nothing else. The nine fields below are the whole write: `profile.edu` and
+     `profile.career` — the snapshot inputs of the starting grade computed once at onboarding — and every
+     `areas[].grade` are deliberately absent, so adding a degree here moves no area (rules 4, 11). The photo
+     is not part of this: it is written under `liferpg-img-profile` by `askUpload` / `clearImg` (rule 16). */
+  const saveProfile = (next) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const { name, nick, birth, gender, status, email, phone, edus, careers } = next;
+      s.profile = { ...s.profile, name, nick, birth, gender, status, email, phone, edus, careers };
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "프로필을 저장했어요" });
+  };
+
   const setAreaDir = (areaId, dirs) => {
     setState((prev) => {
       const s = structuredClone(prev);
@@ -6584,7 +6943,7 @@ export default function LifeManager() {
       <header className="px-5 pt-5 pb-3 flex items-center justify-between">
         <div>
           <div className="text-xs tracking-widest text-cyan-400 font-mono font-bold">LIFE MANAGER</div>
-          <div className="font-black">{state.profile.nick}<span className="text-zinc-600 text-xs font-normal"> · {state.profile.status}</span></div>
+          <div className="font-black">{displayName(state.profile)}<span className="text-zinc-600 text-xs font-normal"> · {state.profile.status}</span></div>
         </div>
         <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono font-bold">
           <span className="text-amber-300">🔥 {state.act.streak}일</span>
@@ -6595,7 +6954,7 @@ export default function LifeManager() {
 
       <main className="px-4 pb-24 space-y-4">
         {tab === "home" && (
-          <HomeTab state={state} today={today} imgs={imgs} onUpload={askUpload} onClearImg={clearImg}
+          <HomeTab state={state} today={today} imgs={imgs} onProfile={() => setModal({ type: "profile" })}
             onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("tasks")}
             onGoSchedule={() => setTab("schedule")} onGoBiz={() => setTab("biz")}
             onBriefing={() => setModal({ type: "briefing" })} onJournal={() => setModal({ type: "journal" })}
@@ -6719,6 +7078,11 @@ export default function LifeManager() {
       )}
       {modal?.type === "review" && (
         <ReviewModal state={state} today={today} onClose={() => setModal(null)} onSave={saveReview} />
+      )}
+      {modal?.type === "profile" && (
+        <ProfileModal profile={state.profile} state={state} img={imgs?.profile} today={today}
+          onUpload={() => askUpload("profile")} onClearImg={() => clearImg("profile")}
+          onSave={saveProfile} onClose={() => setModal(null)} />
       )}
 
       {overlay && <Overlay data={overlay} onClose={() => setOverlay(null)} />}

@@ -428,6 +428,37 @@ module.exports = async (h) => {
     if ((after.tasks || []).length !== (before.tasks || []).length) throw new Error("a pasted business reply created a task");
   });
 
+  /* The packet is the only place data deliberately leaves the device, so what it carries about the person is
+     asserted both ways: the CV facts are present, and every identifying field typed at onboarding is absent.
+     The absence checks are non-vacuous because those values are distinctive strings this run typed itself. */
+  await step("the packet states the CV at degree and role level and no identifying field", async () => {
+    await closeModal();
+    const txt = await packetText();
+    const iBrief = txt.indexOf("## 오늘 브리핑");
+    const iCv = txt.indexOf("## 이력");
+    const iGoals = txt.indexOf("## 목표");
+    if (iCv < 0) throw new Error("the packet has no CV section");
+    if (!(iBrief < iCv && iCv < iGoals)) throw new Error(`the CV section is not between the briefing and the goals: ${iBrief},${iCv},${iGoals}`);
+    const line = txt.slice(iCv, iGoals);
+    // Degree, department, practice months and the most recent role — the four facts the section exists to carry
+    for (const t of ["박사 졸업", "기계공학", "실무 2년 2개월", "설계 엔지니어"]) {
+      if (!line.includes(t)) throw new Error("the CV section does not state a fact it must carry: " + t + " — " + line.trim());
+    }
+    // Name, birth date, e-mail, phone, school names and the employer name: all typed during this run, all absent
+    const p = (await readState()).profile || {};
+    const schools = (p.edus || []).map((e) => e.school);
+    const companies = (p.careers || []).map((c) => c.company);
+    if (!schools.includes("E2E대학교") || !companies.includes("E2E전장")) {
+      throw new Error("the distinctive values this step checks for are not in the save: " + JSON.stringify({ schools, companies }));
+    }
+    const identifying = [p.name, p.birth, p.email, p.phone, ...schools, ...companies];
+    for (const t of identifying) {
+      if (!t) throw new Error("an identifying field is empty, so its absence would prove nothing: " + JSON.stringify(identifying));
+      if (txt.includes(t)) throw new Error("the packet carries an identifying field: " + t);
+    }
+    await closeModal();
+  });
+
   await step("the month's revenue line survives a section full of alerts", async () => {
     // `add()` caps a briefing section at five items. Three unpaid months plus two contracts ending this month
     // fill that cap exactly, and the line the section exists to state must still be there (rule 13).

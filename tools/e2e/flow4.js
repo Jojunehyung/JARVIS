@@ -10,7 +10,7 @@ module.exports = async (h) => {
     await clickTab("성장"); await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 20) throw new Error("schema version " + st.v + " (expected 20)");
+    if (st.v !== 21) throw new Error("schema version " + st.v + " (expected 21)");
     return st;
   };
   // ── Goal status change and removal
@@ -124,7 +124,7 @@ module.exports = async (h) => {
       try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; }
     });
     if (!st) throw new Error("no state after migration");
-    if (st.v !== 20) throw new Error("schema version " + st.v + " (expected 20)");
+    if (st.v !== 21) throw new Error("schema version " + st.v + " (expected 21)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     const kinds = (st.room?.trophies || []).map((t) => t.kind);
@@ -148,7 +148,7 @@ module.exports = async (h) => {
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 20) throw new Error("schema version " + st.v + " (expected 20)");
+    if (st.v !== 21) throw new Error("schema version " + st.v + " (expected 21)");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     // v12 built a life-metric store that v19 then deletes, so nothing v12 produced is observable in an end state.
@@ -305,6 +305,62 @@ module.exports = async (h) => {
     if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v20 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
     if (st.act?.streak !== 2 || st.act?.lastReview !== "2026-01-02") throw new Error("v20 changed an act stamp: " + JSON.stringify(st.act));
     if ("lastCheckin" in (st.act || {}) || "metrics" in st) throw new Error("v20 brought back what v19 removed: " + JSON.stringify(st.act));
+  });
+  await step("v20 save → v21 CV records", async () => {
+    // A save that never finished onboarding keeps profile === null, so the root still routes it to the
+    // onboarding screen instead of trapping it in the main app with no profile. Read back without a tab
+    // click: there is no nav bar on that screen.
+    await page.evaluate(() => localStorage.setItem("liferpg-state-v1", JSON.stringify({
+      v: 20, profile: null, areas: [], tasks: [], goals: [], events: [], folio: [], rates: [], deals: [],
+      journal: [], reviews: [], ui: { scheduleView: "list", bizView: "deals" },
+      act: { streak: 0, lastActive: null, shieldMonth: "2026-01", shieldsLeft: 2, briefingSeen: null, lastReview: null },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] }, role: null,
+      lastTick: "2026-01-02", dModel: "1.3",
+    })));
+    await h.reload();
+    await sleep(900);
+    const half = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
+    if (!half) throw new Error("no state");
+    if (half.v !== 21) throw new Error("schema version " + half.v + " (expected 21)");
+    if (half.profile !== null) throw new Error("v21 materialised a profile on a half-onboarded save: " + JSON.stringify(half.profile));
+    if (!(await hasText("시작하기"))) throw new Error("a profile-less save no longer routes to onboarding");
+
+    // shieldMonth carries the current month so the monthly shield reset (applyDailyTick) cannot move
+    // shieldsLeft — what the step compares is then the work of the v21 block alone, as in the v18 step.
+    const now = await page.evaluate(() => { const d = new Date(); const p2 = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; });
+    const s20 = {
+      v: 20,
+      profile: { nick: "v20세이브", gender: "남성", age: "30대 초반", status: "직장인 1~3년", edu: "ba", career: "y13", lead: "yes", biz: "none", output: "priv", majorField: "공학", majorName: "기계공학", certs: [], examsOwned: [], directions: [], look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
+      areas: [{ id: "ac", name: "커리어", grade: 3, achievements: [{ id: "ach1", text: "초기 산정 — 실무 1~3년", date: "2026-01-01", grade: 3 }] }],
+      tasks: [{ id: "tc", title: "레거시 실행", areaId: "ac", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [],
+      events: [{ id: "ec", title: "레거시 면접", kind: "appt", date: "2026-01-05", time: "10:00", createdAt: "2026-01-02" }],
+      folio: [{ id: "fc", title: "레거시 포트폴리오", links: [], createdAt: "2026-01-02" }],
+      rates: [], deals: [],
+      journal: [{ id: "jc", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [{ id: "rc", weekOf: "2025-12-29", date: "2026-01-02", wins: "기록 유지", blocks: "없음" }],
+      ui: { scheduleView: "calendar", bizView: "folio" },
+      act: { streak: 5, lastActive: "2026-01-02", shieldMonth: now.slice(0, 7), shieldsLeft: 1, briefingSeen: now, lastReview: "2026-01-02" },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s20);
+    const p = st.profile || {};
+    if (!Array.isArray(p.edus) || p.edus.length) throw new Error("v21 education records missing or invented: " + JSON.stringify(p.edus));
+    if (!Array.isArray(p.careers) || p.careers.length) throw new Error("v21 career records missing or invented: " + JSON.stringify(p.careers));
+    if (p.name !== "" || p.email !== "" || p.phone !== "") throw new Error("v21 invented a personal field: " + JSON.stringify({ name: p.name, email: p.email, phone: p.phone }));
+    if (p.birth !== null) throw new Error("v21 invented a birth date: " + JSON.stringify(p.birth));
+    // The starting-grade inputs are one-time snapshots: recomputing them from the (empty) CV would
+    // retroactively rescore the area grades this save already holds (rules 4, 11).
+    if (p.edu !== "ba" || p.career !== "y13") throw new Error("v21 recomputed a starting-grade input: " + JSON.stringify({ edu: p.edu, career: p.career }));
+    if (p.age !== "30대 초반" || p.majorName !== "기계공학" || p.majorField !== "공학") throw new Error("v21 dropped a legacy profile fact: " + JSON.stringify(p));
+    if (p.nick !== "v20세이브" || p.status !== "직장인 1~3년" || p.lead !== "yes" || p.output !== "priv") throw new Error("v21 changed a profile field it must keep: " + JSON.stringify(p));
+    if (st.areas?.[0]?.grade !== 3 || st.areas[0].achievements?.length !== 1) throw new Error("v21 changed the area record: " + JSON.stringify(st.areas));
+    if (st.tasks?.length !== 1 || st.tasks[0].id !== "tc") throw new Error("v21 changed the task records: " + JSON.stringify(st.tasks));
+    if (st.events?.length !== 1 || st.folio?.length !== 1) throw new Error("v21 changed a record array: " + JSON.stringify({ events: st.events?.length, folio: st.folio?.length }));
+    if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v21 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
+    if (st.act?.streak !== 5 || st.act?.shieldsLeft !== 1 || st.act?.lastReview !== "2026-01-02") throw new Error("v21 changed an act stamp: " + JSON.stringify(st.act));
+    if (st.ui?.scheduleView !== "calendar" || st.ui?.bizView !== "folio") throw new Error("v21 rewrote a view preference: " + JSON.stringify(st.ui));
   });
   await shot("migrated");
 };

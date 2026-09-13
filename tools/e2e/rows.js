@@ -1,26 +1,18 @@
 // Counts the rows actually mounted in onboarding step 4 (certification picker) — reuses the run.js flow
 const puppeteer = require("puppeteer-core");
-const fs = require("fs");
+const { CHROME, sleep, clickLabel, onboardBasics } = require("./bench-lib");
 const URL = process.argv[2];
 const START = process.argv[3] || "시작하기";
-const CHROME = ["C:/Program Files/Google/Chrome/Application/chrome.exe"].find((p) => fs.existsSync(p));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"], defaultViewport: { width: 430, height: 932, isMobile: true } });
   const page = await b.newPage();
-  const click = (t) => page.evaluate((s) => {
-    const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    let h = [...document.querySelectorAll("button")].filter((e) => vis(e) && (e.innerText || "").includes(s));
-    h = h.filter((e) => !h.some((o) => o !== e && e.contains(o)));
-    if (!h[0]) return false; h[0].click(); return true;
-  }, t);
+  const click = (t) => clickLabel(page, t);
   await page.goto(URL, { waitUntil: "networkidle2" });
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle2" }); await sleep(400);
   console.log("start:", await click(START));
   await sleep(400);
-  const nick = await page.$('input[placeholder*="닉네임"]'); if (nick) await nick.type("AB");
-  for (const t of ["20대 후반", "남성", "취업 준비", "학사 졸", "공학"]) { await click(t); await sleep(70); }
+  await onboardBasics(page);
   await click("다음"); await sleep(400);                       // → step 2
   await click("다음"); await sleep(400);                       // → step 3
   for (const t of ["기본지식", "IT·개발"]) { await click(t); await sleep(90); }

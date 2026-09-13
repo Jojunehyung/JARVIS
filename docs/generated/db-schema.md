@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 20 |
+| State schema version (`freshState.v`) | 21 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,11 +11,18 @@
 ## Field reference
 
 ```js
-@schema v20 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v21 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 20,
-  profile: { nick, gender, age, status, edu, majorField, directions[], look{skin,hair,hairColor,outfit,face}, startDate, roleModel? },
+  v: 21,
+  profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
+             edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
+                      status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
+             careers: [{ id, company, role, emp("full"|"free"|"intern"), from("YYYY-MM"), to?("YYYY-MM" — absent = still employed) }],
+             edu(EDU_OPTS key — snapshot input of the one-time starting-grade computation, never recomputed),
+             career(CAREER_OPTS key — same), lead, biz, output, certs[], examsOwned[],
+             directions[], look{skin,hair,hairColor,outfit,face}, startDate,
+             age?(legacy AGE_OPTS band — read only when birth is absent), majorField?(legacy), majorName?(legacy), roleModel? },
   areas: [{ id, name, grade(0-9), dir?, achievements[{id,text,date,grade}] }],
   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
@@ -50,13 +57,14 @@
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
 agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
 contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
-business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`).
+business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
+the displayed age (`ageText`) and the total months of practice (`careerMonths`).
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 20,
+  v: 21,
   profile: null,
   areas,
   tasks: [],
@@ -93,7 +101,13 @@ const demoState = () => {
     ],
   };
   const s = freshState([p1, p2, p3, p4]);
-  s.profile = { nick: "하네스 지망생", gender: "남성", age: "20대 중반", status: "취업 준비", edu: "univ4", majorField: "공학", directions: ["IT·개발", "재테크·금융"], look: { skin: 0, hair: 0, hairColor: 0, outfit: 1, face: 0 }, startDate: shiftDay(today, -30) };
+  // Synthetic CV: no contact fields at all, and every value is obviously made up (SECURITY.md — the demo ships no personal data).
+  s.profile = {
+    name: "데모 사용자", nick: "하네스 지망생", birth: shiftDay(today, -9855), gender: "남성", status: "취업 준비",
+    edus: [{ id: uid(), school: "데모대학교", major: "기계공학", field: "공학", degree: "ba", status: "grad", from: "2017-03", to: "2023-02" }],
+    careers: [{ id: uid(), company: "데모전장", role: "설계 지원", emp: "intern", from: monthAdd(month, -14), to: monthAdd(month, -8) }],
+    edu: "ba", directions: ["IT·개발", "재테크·금융"], look: { skin: 0, hair: 0, hairColor: 0, outfit: 1, face: 0 }, startDate: shiftDay(today, -30),
+  };
   const gFit = {
     id: uid(), title: "체력 기반 만들기", areaId: p4.id, deadline: shiftDay(today, 60),
     note: "", status: "active", createdAt: shiftDay(today, -10),
@@ -186,25 +200,26 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v18 → v18 | v18: the `meet` activity kind is gone — a meeting belongs to the `일정` tab, not to a goal. Only `kind` is dropped; everything the user recorded (title, difficulty, points, completion dates, minutes evidence) is kept, and an unknown kind is left alone. |
 | < v19 → v19 | v19: life metrics are gone (user decision 2026-09-11). A global self-assessed triple that also grew from unrelated achievements measured nothing; objective measures belong to a goal's metric KR (rule 8). The stored numbers and the check-in stamp are dropped; every other act stamp, record and payout is kept untouched. |
 | < v20 → v20 | v20: business records — folio[] portfolio entries, rates[] unit prices, deals[] period contracts. A contract is a billing rule (startMonth, months, monthly) plus the user's own paidMonths stamps; every month, total and margin stays derived at render. Records, never tasks: nothing here pays P, creates a trophy, moves a goal or touches the streak. ui.bizView is a preference, exactly like ui.scheduleView. |
+| < v21 → v21 | v21: the CV — exact personal facts replace the vague chips. name, birth, email, phone and the two record arrays profile.edus / profile.careers are added empty; nothing is removed. age, edu, career, majorField and majorName stay exactly as the old save wrote them: edu and career are the frozen inputs of the one-time |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
-| `liferpg-state-v1` | 1221 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 3984 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 3984 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 3984 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 5621 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 5854 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 6035 | App root |
-| `liferpg-img-${slot}` | 6075 | App root |
-| `liferpg-img-ev-${id}` | 6098 | App root |
-| `liferpg-img-ev-${q.id}` | 6276 | App root |
-| `liferpg-img-ev-${t.id}` | 6507 | App root |
-| `liferpg-img-study-${t.id}-1` | 6507 | App root |
-| `liferpg-img-study-${t.id}-2` | 6507 | App root |
-| `liferpg-img-folio-${f.id}` | 6513 | App root |
+| `liferpg-state-v1` | 1299 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
+| `liferpg-img-ev-${task.id}` | 4328 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 4328 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 4328 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 5965 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 6198 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 6379 | App root |
+| `liferpg-img-${slot}` | 6419 | App root |
+| `liferpg-img-ev-${id}` | 6442 | App root |
+| `liferpg-img-ev-${q.id}` | 6620 | App root |
+| `liferpg-img-ev-${t.id}` | 6866 | App root |
+| `liferpg-img-study-${t.id}-1` | 6866 | App root |
+| `liferpg-img-study-${t.id}-2` | 6866 | App root |
+| `liferpg-img-folio-${f.id}` | 6872 | App root |
 
 ## Demo data (`demoState`)
 

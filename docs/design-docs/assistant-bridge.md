@@ -63,6 +63,7 @@ A text packet the user copies into an external chat. It opens with the role and 
 | Section | Content | Cap |
 |---|---|---|
 | `## 오늘 브리핑` | briefing lines of severity 2 and above | 12 |
+| `## 이력` | one line built from `topEdu(profile.edus)` / `latestCareer(profile.careers)`: degree + status label (`박사 졸업`, not a bare `박사` — `topEdu` falls back to the most recent entry when nothing is completed, and a bare degree would imply one the user does not hold) + major/field (or `전공 미기재`), then total practice months (`careerMonths`) + the latest role; `학력 미입력` when there is no education entry at all. Deliberately excludes `profile.name`, `birth`, `email`, `phone`, the school name and the employer name — a school or an employer identifies a person nearly as well as a name does, and this is the one place data leaves the device by design (see `docs/SECURITY.md`) | 1 |
 | `## 목표` | active goals: deadline, D-day, progress, pace, KR remainders | 5 goals × 4 KRs |
 | `## 열린 실행` | the agenda in order: goal, title, difficulty, cadence, due | 12 |
 | `## 다가오는 일정 (14일)` | `- {date} {HH:MM\|시간 미정} · {약속\|마감} · {title}{ · 반복 {매일\|매주\|매월}}`, date-ascending from `upcomingEvents(state, today, PACKET_EVENT_DAYS)`; the heading and the window read the same constant | 8 |

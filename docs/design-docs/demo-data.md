@@ -15,7 +15,9 @@
 `기본지식` carries two 방향 (directions), which `normDirs` maps to the jobs `개발` and `금융`. Registering a certification there takes the intersection of both, so most qualifications land at tier C and pay nothing ([Rule 15](core-beliefs.md#rule-15)) — the demo therefore registers 전기기사 under `직업·커리어`, whose direction is `전기·기계`.
 
 ## Profile
-`{ nick: "하네스 지망생", gender: "남성", age: "20대 중반", status: "취업 준비", edu: "univ4", majorField: "공학", directions: ["IT·개발", "재테크·금융"], look: { skin: 0, hair: 0, hairColor: 0, outfit: 1, face: 0 }, startDate: today − 30 }`. No `roleModel` field — the role model lives in `state.role`.
+`{ name: "데모 사용자", nick: "하네스 지망생", birth: today − 9855 days (≈ 만 27세), gender: "남성", status: "취업 준비", edus: [{ school: "데모대학교", major: "기계공학", field: "공학", degree: "ba", status: "grad", from: "2017-03", to: "2023-02" }], careers: [{ company: "데모전장", role: "설계 지원", emp: "intern", from: month − 14, to: month − 8 }], edu: "ba", directions: ["IT·개발", "재테크·금융"], look: { skin: 0, hair: 0, hairColor: 0, outfit: 1, face: 0 }, startDate: today − 30 }`. No `email` / `phone` — both are optional and the demo ships no contact-shaped data at all ([SECURITY.md](../SECURITY.md)). No `roleModel` field — the role model lives in `state.role`.
+
+`edu: "ba"` is carried over from the pre-v21 shape, fixing the invalid `"univ4"` key it used to hold — never a real `EDU_OPTS` key ([TD-28](../exec-plans/tech-debt-tracker.md), resolved 2026-09-13). There is still no `career`, `lead`, `biz`, `output`, `certs` or `examsOwned` key, exactly as before v21: the demo's area grades are authored directly on `p1`–`p4` below, never run through `computeGrades`, so a key that computation would consume is simply absent rather than faked. The legacy `age` and `majorField` fields are dropped outright (not carried as dead weight) because a v21 onboarding never writes either.
 
 ## Goals
 

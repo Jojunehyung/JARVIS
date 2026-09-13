@@ -1,12 +1,35 @@
 // Full real-usage flow — required and run by run.js (helpers are injected as arguments)
 module.exports = async (h) => {
-  const { step, shot, clickText, clickInModal, clickTab, modalError, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors } = h;
+  const { step, shot, clickText, clickExact, clickInModal, clickInModalExact, clickTab, modalError, hasText, expectText, typeInto, typeExact, setValue, completeQuest, closeModal, sleep, page, errors } = h;
+
+  // Fill and submit one CV add form — the education and career forms share their shape, so they share this.
+  // The chips are clicked by exact label: a chip row can hold a longer label that contains a shorter one.
+  const addCvEntry = async ({ main, sub, chips, from, to, add }) => {
+    await typeInto(main[0], main[1]);
+    await typeInto(sub[0], sub[1]);
+    for (const c of chips) await clickExact(c);
+    await setValue('input[type="month"]', from, 0);
+    await setValue('input[type="month"]', to, 1);
+    await clickText(add);
+    await sleep(250);
+  };
 
   // ── Onboarding, 6 steps
   await step("onboarding start", async () => { await clickText("시작하기"); await expectText("1 / 6"); });
   await step("step 1 — basic info", async () => {
-    await typeInto("닉네임", "E2E테스터");
-    for (const t of ["20대 후반", "남성", "취업 준비", "학사 졸", "공학"]) { try { await clickText(t); } catch { errors.push(`선택 실패: ${t}`); } }
+    // Exact placeholder match: the school-name field of the education form carries the same word.
+    await typeExact("이름", "E2E테스터");
+    await typeInto("닉네임", "E2E닉");
+    await setValue('input[type="date"]', "1998-05-14"); // onboarding is not inside .fixed.inset-0, so unscoped
+    for (const t of ["남성", "취업 준비"]) { try { await clickText(t); } catch { errors.push(`선택 실패: ${t}`); } }
+  });
+  await step("step 1 — education entry", async () => {
+    await addCvEntry({
+      main: ["학교 이름", "E2E대학교"], sub: ["전공·학과", "기계공학"],
+      chips: ["학사", "졸업", "공학"], from: "2017-03", to: "2023-02", add: "학력 추가",
+    });
+    await expectText("E2E대학교");
+    await expectText("2017-03 ~ 2023-02");
     await clickText("다음"); await expectText("2 / 6");
   });
   await step("step 2 — appearance", async () => { await clickText("무작위"); await clickText("다음"); await expectText("3 / 6"); });
@@ -22,15 +45,100 @@ module.exports = async (h) => {
     await clickText("정보처리기사");
     await clickText("다음"); await expectText("5 / 6");
   });
+  await step("step 5 — career entry", async () => {
+    await expectText("경력·경험");
+    await addCvEntry({
+      main: ["회사·조직 이름", "E2E전장"], sub: ["직책·직무", "설계 엔지니어"],
+      chips: ["정규·계약"], from: "2022-01", to: "2024-02", add: "경력 추가",
+    });
+    await expectText("E2E전장");
+    // 26 months of practice, read straight out of the CAREER_OPTS bands — the derived line, not a stored value
+    await expectText("합산 실무 2년 2개월 · 시작 등급 기준 실무 1~3년");
+  });
   await step("step 5 — experience and outputs", async () => {
     for (const t of ["경험 없음", "개인 프로젝트 있음"]) { try { await clickText(t); } catch { errors.push(`선택 실패: ${t}`); } }
     await clickText("다음"); await expectText("6 / 6");
   });
-  await step("step 6 — computed result → start", async () => { await clickText("이 설정으로 시작"); await sleep(600); await expectText("오늘"); });
+  await step("step 6 — computed result → start", async () => {
+    await expectText("학력 학사 졸 · 경력 실무 1~3년"); // the two derived keys, in the frozen tables' own labels
+    await clickText("이 설정으로 시작"); await sleep(600); await expectText("오늘");
+  });
   await shot("home");
-  await step("fresh state schema version", async () => {
-    const v = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1"))?.v; } catch { return null; } });
-    if (v !== 20) throw new Error("fresh save schema v" + v + " (expected 20)");
+  await step("fresh state schema version and CV records", async () => {
+    const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
+    if (st?.v !== 21) throw new Error("fresh save schema v" + st?.v + " (expected 21)");
+    const p = st.profile || {};
+    if (p.name !== "E2E테스터" || p.nick !== "E2E닉" || p.birth !== "1998-05-14") throw new Error("personal facts not stored: " + JSON.stringify({ name: p.name, nick: p.nick, birth: p.birth }));
+    const e0 = (p.edus || [])[0] || {};
+    if (e0.school !== "E2E대학교" || e0.major !== "기계공학" || e0.degree !== "ba" || e0.status !== "grad" || e0.from !== "2017-03" || e0.to !== "2023-02") throw new Error("education record not stored: " + JSON.stringify(p.edus));
+    const c0 = (p.careers || [])[0] || {};
+    if (c0.company !== "E2E전장" || c0.role !== "설계 엔지니어" || c0.emp !== "full" || c0.from !== "2022-01" || c0.to !== "2024-02") throw new Error("career record not stored: " + JSON.stringify(p.careers));
+    // The keys the frozen tables are read with — derived once here, never again (rules 4, 11).
+    if (p.edu !== "ba" || p.career !== "y13") throw new Error("starting-grade keys: " + JSON.stringify({ edu: p.edu, career: p.career }));
+  });
+
+  // ── Profile screen — the only way to see or change the CV after onboarding
+  await step("profile modal — opens from the home card and lists the CV", async () => {
+    await clickTab("홈");
+    if (await hasText("업로드")) throw new Error("the home card still carries its own photo button");
+    await clickText("프로필"); await sleep(400);
+    // Everything typed at onboarding comes back, in both record sections
+    for (const t of ["E2E대학교", "기계공학", "E2E전장", "설계 엔지니어"]) await expectText(t);
+    await expectText("합산 실무 2년 2개월");
+    await expectText("보유 기록");
+    await expectText("여기서는 고칠 수 없어요 — 자격·시험은 목표의 핵심결과에서, 포트폴리오는 사업 탭에서 관리해요.");
+    await expectText("학력·경력을 고쳐도 시작 등급은 바뀌지 않아요. 승급은 관문 증거로만 올라가요.");
+  });
+  await step("profile modal — validation", async () => {
+    await setValue('.fixed.inset-0 input[placeholder="이름"]', "");
+    await clickInModalExact("저장");
+    const noName = await modalError();
+    if (!noName.includes("이름을 입력해 주세요.")) throw new Error("a profile without a name was accepted: " + noName);
+    await typeExact("이름", "E2E테스터");
+    await typeExact("이메일 (선택)", "not-an-address");
+    await clickInModalExact("저장");
+    const badMail = await modalError();
+    if (!badMail.includes("이메일 형식이 올바르지 않아요.")) throw new Error("a malformed e-mail was accepted: " + badMail);
+    // Real contact values from here on: flow8 asserts the packet carries neither of them
+    await typeExact("이메일 (선택)", "e2e@example.com");
+    await typeExact("연락처 (선택)", "010-1234-5678");
+    // An education entry whose end month precedes its start month — the add form refuses it
+    await typeInto("학교 이름", "E2E역순대학교");
+    for (const c of ["석사", "졸업"]) await clickExact(c);
+    await setValue('input[type="month"]', "2020-03", 0);
+    await setValue('input[type="month"]', "2019-02", 1);
+    await clickText("학력 추가"); await sleep(250);
+    const backwards = await modalError();
+    if (!backwards.includes("졸업 연월이 입학 연월보다 앞서요.")) throw new Error("an end month before its start month was accepted: " + backwards);
+    // An input value is not part of innerText, so this can only match an entry row the form added
+    if (await hasText("E2E역순대학교")) throw new Error("the rejected education entry was added to the list anyway");
+  });
+  // The load-bearing step: the CV is a record, the starting grade is a one-time snapshot (rules 4, 11).
+  await step("profile modal — a CV edit never moves a grade", async () => {
+    const read = () => page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      return {
+        grades: (s.areas || []).map((a) => `${a.name}:${a.grade}`).join(" · "),
+        edu: s.profile.edu, career: s.profile.career, edus: (s.profile.edus || []).length,
+        contact: `${s.profile.email}/${s.profile.phone}`,
+      };
+    });
+    const before = await read();
+    if (!before.grades) throw new Error("no area grades to compare");
+    await addCvEntry({
+      main: ["학교 이름", "E2E대학원"], sub: ["전공·학과", "기계공학"],
+      chips: ["박사", "졸업"], from: "2023-03", to: "2026-02", add: "학력 추가",
+    });
+    await expectText("E2E대학원");
+    await clickInModalExact("저장"); await sleep(500);
+    await expectText("프로필을 저장했어요");
+    await sleep(900);
+    const after = await read();
+    if (after.edus !== before.edus + 1) throw new Error(`the doctorate was not stored: ${before.edus} -> ${after.edus}`);
+    if (after.contact !== "e2e@example.com/010-1234-5678") throw new Error("the contact fields were not stored: " + after.contact);
+    if (after.grades !== before.grades) throw new Error(`a CV edit moved an area grade: ${before.grades} -> ${after.grades}`);
+    if (after.edu !== before.edu) throw new Error(`a CV edit rewrote profile.edu: ${before.edu} -> ${after.edu}`);
+    if (after.career !== before.career) throw new Error(`a CV edit rewrote profile.career: ${before.career} -> ${after.career}`);
   });
 
   // ── Goal (OKR) creation — metric, count and cert KRs

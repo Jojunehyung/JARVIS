@@ -8,7 +8,7 @@ Vite 5 · React 18 · Tailwind v3 (core utilities only) · lucide-react. Node 24
 
 ## Files
 ```
-src/LifeManager.jsx    the app (≈ 6,500 lines) — see "File regions"
+src/LifeManager.jsx    the app (≈ 7,100 lines) — see "File regions"
 src/main.jsx           React root
 src/index.css          Tailwind directives
 index.html             shell; data-URI favicon; manifest link
@@ -24,7 +24,7 @@ docs/                  product, design, engine, plans, generated tables
 | Region | What lives there | Grep anchor |
 |---|---|---|
 | Constants & rules | `RANKS`, `DIFFS`, `EVIDENCE_MIN`, `certP`, `achGrade`, `GRADE_*`, `CERT_CATS`, **`CERTS` (1,011 rows)**, `DIFF_RAW_VERSION` | `const CERTS = [` |
-| Onboarding option data | `AGE_OPTS … OUTPUT_OPTS`, `MAJOR_FIELDS`, `KNOWLEDGE_FIELDS`, `gFromD`, `computeGrades`, `GATE_CHIPS`, `AREA_PRESETS`, `ROLE_PRESETS`, `TASK_TEMPLATES`, `detectKind`, `goalKinds` | `초기 설정 선택지` |
+| Onboarding option data | `AGE_OPTS … OUTPUT_OPTS`, `MAJOR_FIELDS`, `KNOWLEDGE_FIELDS`, `gFromD`, `computeGrades`, the CV chip lists `EDU_LEVELS` / `EDU_STATUS` / `EMP_KINDS` (deliberately not in `DATA_TABLES`), the CV → starting-grade helpers `ageOf`, `ageText`, `careerMonths`, `careerText`, `eduKeyOf`, `careerKeyOf`, `displayName`, `topEdu`, `latestCareer`, `GATE_CHIPS`, `AREA_PRESETS`, `ROLE_PRESETS`, `TASK_TEMPLATES`, `detectKind`, `goalKinds` | `초기 설정 선택지` |
 | Storage adapter | `KEY`, `store` (`get/set/del`, JSON, memory fallback) — **call sites are frozen** — plus the image-storage guards `persisted`, `storageUsedBytes`, `saveImageChecked` and their constants `IMG_FILE_MAX`, `THUMB_MAX_EDGE`, `THUMB_MAX_CHARS`, `STORAGE_BUDGET` | `const store =` |
 | Illustrations & utils | `PortraitSprite`, `Portrait`, `resizeImage`, `resizeImageFit` (aspect-preserving sibling resize, never upscales), `TrophySvg`, `TIER_COLORS`, empty-state SVGs, `uid`, `dstr`, `shiftDay`, `monthStr`, `Bar`, `Chip`, `DiffBadge`, `CertBadge`, `Modal` | `function TrophySvg` |
 | Exam engine | `EXAMS` (17 families), `EXAM_BY_ID`, `examOf`, `LANG_KO`, `DIM_STEPS`, `calcExamPayout`, `POINT_POLICY_VERSION` | `function calcExamPayout` |
@@ -32,14 +32,14 @@ docs/                  product, design, engine, plans, generated tables
 | Job-fit weighting | `DIR_CATS`, `JOB_FIELDS`, `areaCatHints`, `TIER_MULT`, `TIER_CLS`, `WEIGHT_MATRIX`, `CERT_W_EXC`, lookup indexes (`CERT_BY_NAME`, `CERTS_LONGEST_FIRST`, `CERT_NAME_LC`, `CERTS_BY_CAT`, `certOf`, `certByTitle`), `DIR_ALIAS`, `normDirs`, `jobWeightForCert` | `const WEIGHT_MATRIX = {` |
 | Business | Records, never tasks: `wonText`, `monthAdd`, `monthsBetween`, `dealMonths`, `dealEnd`, `dealTotal`, `dealCostTotal`, `marginOf`, `dealPhase`, `monthRevenue`, `dealBacklog`, `billedMonths`, `revenueByMonth`, `bizSummary` — the one object the tab header, the briefing, the home card and the packet all read — plus `RATE_UNIT`, `DEAL_STATUS`, `DEAL_PHASE_LABEL` and the constants `BIZ_REVENUE_MONTHS`, `QUOTE_STALE_DAYS`, `DEAL_END_SOON`, `DEAL_MAX_MONTHS`, `BIZ_ALERT_MAX` (shared by `buildBriefing` and `todoOf`, so both name the same three unpaid months) | `const BIZ_REVENUE_MONTHS =` |
 | Daily assistant | `daysBetween`, `mondayOf`, `doneTodayCount`, `agendaOf`, the event helpers (`occurrencesOf`, `eventsOn`, `upcomingEvents` + `EVENT_*` constants), `TAB_ACTIONS` (the tab-switch whitelist `closeBriefing` checks), `buildBriefing`, `PACKET_HEAD`, `PACKET_BIZ_LINES`, `buildAssistantPacket`, `parseAssistantReply`, `todoOf` (the single time-ordered expansion of tasks + events + business rows the `실행` tab and the home card both read) with `TODO_GROUPS`, `TODO_KIND_RANK`, `todoKey`, `todoSort`, `monthEndDate` | `const agendaOf =` |
-| State lifecycle | `migrate` (v11 → v20 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
-| Onboarding | `Onboarding` (6 steps: basics → appearance → areas & directions → qualifications/exams → experience → computed grades) | `function Onboarding` |
+| State lifecycle | `migrate` (v11 → v21 blocks, `@schema` JSDoc above it), `applyDailyTick`, `freshState`, `demoState` | `const migrate =` |
+| Onboarding | `OptRow` (shared chip row) and the shared CV entry components `CvEntryRow` / `CvAddForm` / `CvSection` (education and career add-and-list forms, reused by `ProfileModal`), then `Onboarding` (6 steps: basics + education record → appearance → areas & directions → qualifications/exams → career record + experience → computed grades) | `function Onboarding` |
 | Tabs | `HomeTab`, `GoalsTab`, `TaskTab` (rewritten 2026-09-13 into one time-ordered list over `todoOf`; own row components `BizTodoRow`, tone map `TODO_TONE`, archive cap `TODO_DONE_MAX`), `GrowthTab` (the fourth tab, `ScheduleTab`, and the fifth, `BizTab`, each have their own region below) | `function GoalsTab` |
 | Schedule | `EventRow` (the occurrence row both views render), `ScheduleCalendar` (month grid, markers, day-number tones, selected-day panel, `CAL_RANGE_MONTHS`, `WEEKDAY_LABEL`, `HOLIDAYS`, `HOLIDAY_YEARS`), `ScheduleTab` (`목록` / `달력` toggle, day groups) and `EventModal` — appointments and deadlines, never tasks | `function ScheduleTab` |
 | Business tab | `BizTab` (`계약` / `단가` / `포트폴리오` views), `DealsView`, `RatesView`, `FolioView` (its own thumbnail-loading effect), row components (`BizRowHead`, `MoneyLine`, `DealRow`), `DealModal`, `RateModal`, `FolioModal` — contracts, unit prices and the portfolio, never tasks | `function BizTab` |
-| Modals | `AddGoalModal`, `EvidenceViewModal`, `CatalogModal`, `RoleAdviceModal`, `AddTaskModal`, `EvidenceModal`, `ActivityLogModal`, `StudyVerifyModal`, `PromoteModal`, `RoleModelModal` | `function AddTaskModal` |
+| Modals | `AddGoalModal`, `EvidenceViewModal`, `CatalogModal`, `RoleAdviceModal`, `AddTaskModal`, `EvidenceModal`, `ActivityLogModal`, `StudyVerifyModal`, `PromoteModal`, `RoleModelModal`, `ProfileModal` (the CV screen — photo, personal facts, education/career records, read-only held records) | `function AddTaskModal` |
 | Feedback | `ToastHost` (ref API), `Overlay` (`gradeup` / `achieve`) | `const ToastHost =` |
-| App root | `LifeManager`: load → migrate → render; handlers `completeTask`, `tryComplete`, `promoteArea`, `addGoal`, `goalStatus`, `checkinKR`, `setAreaDir`, `applyMeasures`, `removeTask`, `removeGoal`, `resetAll`, `addBiz`, `updateBiz`, `removeBiz`, `toggleDealPaid`; `Shell`, `NAV` | `export default function LifeManager` |
+| App root | `LifeManager`: load → migrate → render; handlers `completeTask`, `tryComplete`, `promoteArea`, `addGoal`, `goalStatus`, `checkinKR`, `setAreaDir`, `applyMeasures`, `removeTask`, `removeGoal`, `resetAll`, `saveProfile`, `addBiz`, `updateBiz`, `removeBiz`, `toggleDealPaid`; `Shell`, `NAV` | `export default function LifeManager` |
 
 The data regions (`CERTS`, `EXAMS`, matrices, option lists) are about a quarter of the file; the harness skips them for duplicate detection and the `data-guard` hook protects them. Splitting the file into `src/data`, `src/engine`, `src/components` is backlog item 3 (`docs/exec-plans/backlog.md`), to be done with unit tests for `calcExamPayout`, `krProgress`, `migrate`.
 
@@ -62,7 +62,7 @@ Schema and storage keys: [docs/generated/db-schema.md](docs/generated/db-schema.
 | `npm run docs:gen` / `docs:check` / `lang:check` | regenerate generated docs / doc integrity / language policy |
 | `node tools/harness/gen-icons.js` | re-render the app icons from `public/icon.svg` (after an icon change) |
 
-Current status (2026-09-13): schema **v20**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 142 steps green, real-device smoke still pending (backlog 2).
+Current status (2026-09-13): schema **v21**, difficulty table **V1.3** (`DIFF_RAW_VERSION "1.3"`, 1,011 certifications, 17 exam families, 21 jobs × 15 categories), E2E 149 steps green, real-device smoke still pending (backlog 2).
 
 ## Platform notes
 - The app was originally an artifact that used `window.storage`; it was shimmed to `localStorage` on 2026-09-03 behind the same `store` interface — that interface is the seam if a different backend is ever needed.

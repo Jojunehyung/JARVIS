@@ -94,17 +94,18 @@ const expectText = async (t) => {
 };
 // Set a controlled React input/textarea directly — needed for <input type="date"> and long pastes,
 // where per-character typing is slow or unsupported. Uses the native setter so React sees the change.
-const setValue = async (selector, value) => {
-  const ok = await page.evaluate((sel, val) => {
-    const el = document.querySelector(sel);
+// `nth` addresses one of several same-typed inputs (the from/to month pair of a CV entry, for instance).
+const setValue = async (selector, value, nth = 0) => {
+  const ok = await page.evaluate((sel, val, n) => {
+    const el = document.querySelectorAll(sel)[n];
     if (!el) return false;
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, "value").set.call(el, val);
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
-  }, selector, value);
-  if (!ok) throw new Error(`setValue target not found: ${selector}`);
+  }, selector, value, nth);
+  if (!ok) throw new Error(`setValue target not found: ${selector}[${nth}]`);
   await sleep(150);
 };
 const typeExact = async (placeholder, value) => {

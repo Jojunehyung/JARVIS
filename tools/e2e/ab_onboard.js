@@ -1,15 +1,9 @@
 // A/B — onboarding step 4 (certification picker) entry and search-input latency. Compares rendering all 1,011 rows vs the 60-row cap
 const fs = require("fs");
-const { sleep, med, launchThrottled } = require("./bench-lib");
+const { sleep, med, launchThrottled, clickLabel, onboardBasics } = require("./bench-lib");
 const A = process.argv[2] || "http://localhost:5001/";
 const B = process.argv[3] || "http://localhost:5002/";
 const ROUNDS = +(process.argv[4] || 5);
-const clickText = (page, t) => page.evaluate((s) => {
-  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-  let hit = [...document.querySelectorAll("button")].filter((e) => vis(e) && (e.innerText || "").includes(s));
-  hit = hit.filter((e) => !hit.some((o) => o !== e && e.contains(o)));
-  if (!hit[0]) return false; hit[0].click(); return true;
-}, t);
 
 async function run(page, url) {
   await page.goto(url, { waitUntil: "networkidle2" });
@@ -17,15 +11,13 @@ async function run(page, url) {
   await page.reload({ waitUntil: "networkidle2" });
   await sleep(400);
   // pass onboarding steps 1–3 (button copy differs between the builds, so try both)
-  if (!(await clickText(page, "시작하기"))) await clickText(page, "새 인생 시작하기");
+  if (!(await clickLabel(page, "시작하기"))) await clickLabel(page, "새 인생 시작하기");
   await sleep(400);
-  const nick = await page.$('input[placeholder*="닉네임"]');
-  if (nick) await nick.type("AB", { delay: 0 });
-  for (const t of ["20대 후반", "남성", "취업 준비", "학사 졸", "공학"]) { await clickText(page, t); await sleep(80); }
-  await clickText(page, "다음"); await sleep(350);
-  await clickText(page, "다음"); await sleep(350);      // appearance
-  await clickText(page, "기본지식"); await sleep(120);
-  await clickText(page, "다음"); await sleep(350);      // areas → just before step 4
+  await onboardBasics(page);
+  await clickLabel(page, "다음"); await sleep(350);
+  await clickLabel(page, "다음"); await sleep(350);      // appearance
+  await clickLabel(page, "기본지식"); await sleep(120);
+  await clickLabel(page, "다음"); await sleep(350);      // areas → just before step 4
   // step 4 entry render time
   const enter = await page.evaluate(async () => {
     const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };

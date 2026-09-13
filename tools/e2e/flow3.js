@@ -1,11 +1,20 @@
 // Remaining paths — exam KR and score report, exercise activity, the activity-kind gate, profile photo, direction advice, task and goal deletion, streak after a day gap
 module.exports = async (h) => {
   const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity } = h;
-  // ── Profile photo upload (resizeImage path)
-  await step("profile photo upload", async () => {
+  // ── Profile photo upload (resizeImage path). The picker lives in the profile modal now, but the file input
+  // it drives is mounted on the app shell — so `attach` finds it through its unscoped fallback, and the modal
+  // closing mid-pick cannot take the input with it.
+  await step("profile photo upload through the profile modal", async () => {
     await clickTab("홈");
+    await clickText("프로필"); await sleep(400);
+    if (await page.$('.fixed.inset-0 input[type="file"]')) throw new Error("the profile modal declared a file input of its own");
+    await clickInModal("사진 등록");
     await attach();
     await sleep(500);
+    const stored = await page.evaluate(() => (localStorage.getItem("liferpg-img-profile") || "").length);
+    if (!stored) throw new Error("the profile photo key was not written");
+    await expectText("사진 삭제");
+    await closeModal();
   });
 
   // ── Goal with an exam KR → exam milestone → score report submission

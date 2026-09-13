@@ -21,14 +21,14 @@ Verdicts against the current code, last refreshed 2026-09-08 against the Phase 4
 | 1 pure payouts | `completeTask` (cert/exam branches), `certGainOf`, `examBandGain` | verified (smoke payouts) |
 | 2 exam snapshot / decay / spec | `calcExamPayout`, `exams.best/dim/spec` | by-review; dim lock timing differs between onboarding (register) and completion — see tech-debt |
 | 3 stage-group difference | `certGainOf`, `certBest` | verified (80 ladders sum to top step) |
-| 4 no rescoring | `exams.best[].ver`, `state.dModel` | partial — `achievements`/`trophies` carry no `ver` |
+| 4 no rescoring | `exams.best[].ver`, `state.dModel`; `saveProfile` (CV edits never touch `profile.edu`/`career` or `areas[].grade`) | partial — `achievements`/`trophies` carry no `ver`; the CV-edit path is separately verified (E2E, mutation-tested: planting a `profile.edu` rewrite plus a grade bump in `saveProfile` fails the step) |
 | 5 grade cuts | `achGrade` | verified |
 | 6 frozen tables | `data-guard` hook, data-curator only | verified (hook denies) |
 | 7 no game mechanics | code and copy scan (`finish-check` residue) | verified |
 | 8 no global metric store | `migrate` v19 (drops `metrics`, `act.lastCheckin`), `checkinKR` | verified — the global store and its check-in were removed 2026-09-11; objective measures live only in a goal's metric KR |
-| 9 derived progress | `krProgress`, `goalProgress` | verified |
+| 9 derived progress | `krProgress`, `goalProgress`, `ageText`, `careerMonths` | verified |
 | 10 evidence gate | `needsEvidence`, `tryComplete` | verified (E2E: submit disabled without photo) |
-| 11 promotion by evidence | `PromoteModal`, `promoteArea` | verified (E2E) |
+| 11 promotion by evidence | `PromoteModal`, `promoteArea` | verified (E2E) — a CV edit through `ProfileModal` is confirmed not to be an alternate path (E2E, mutation-tested) |
 | 12 migrations | `migrate` v11–v14, `v` normalisation | verified (E2E: v10, no-`v`, v13 fixtures → v14) |
 | 13 tone | copy review | by-review; `PromoteModal` line "스스로에게 정직하게…" is borderline (tech-debt) |
 | 14 squared proximity | `roleGap` | verified (formula) |
