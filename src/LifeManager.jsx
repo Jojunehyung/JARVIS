@@ -2769,6 +2769,197 @@ const parseAssistantReply = (text, state) => {
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
 };
 
+/* ───────────────────────── Calendar export — the phone-calendar file (RFC 5545) ───────────────────────── */
+/* The app sends no notification: there is no push server, and no browser API schedules a local alarm. The phone's
+   own calendar raises the alarms, from a file the user exports here and imports once. The file is a snapshot built
+   from records at export time: it reads events, tasks and goals and no other part of the save, writes nothing back
+   (rules 9, 18) and makes no request (rule 7); of an event it reads the title, kind, date, time, repeat rule and the
+   user's own stamps only. Times are floating local time, like every date in the app — no zone is asserted, nothing
+   is converted to UTC except DTSTAMP.
+   Every declaration is a top-level const so tools/harness/smoke-logic.js can lift and check it without a browser. */
+const ICS_RANGE_DAYS = [30, 90, 365];         // the sheet's range chips; 365 stays within MAX_OCC, so no daily repeat is cut short
+const ICS_REMIND_DEFAULT = "08:00";           // the sheet's starting reminder time, reset each time it opens (component state, never stored)
+const ICS_APPT_LEAD_MIN = 60;                 // a timed appointment alarms this many minutes before it starts
+const ICS_APPT_MINUTES = 60;                  // nominal appointment length: the app stores no end time and RFC 5545 forbids DTEND = DTSTART
+const ICS_DIGEST_MINUTES = 10;                // the daily digest is a short timed entry, so a calendar that ignores VALARM still alerts near its start
+const ICS_LINE_OCTETS = 75;                   // RFC 5545 3.1: a content line folds at 75 octets, counted in UTF-8 bytes, never characters
+const ICS_SEQ_EPOCH = Date.UTC(2026, 0, 1);   // SEQUENCE counts whole seconds from here: it grows with every later export and fits int32 until 2094
+const ICS_UID_HOST = "life-manager";          // the UID domain part, a fixed string that names no person
+
+// TEXT escaping (RFC 5545 3.3.11): the backslash first, so the escapes added after it are not escaped a second time.
+const icsText = (s) => String(s ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r\n|\r|\n/g, "\\n");
+
+/* Folds one content line. Octets are UTF-8 bytes counted per code point (a Hangul syllable is 3, an emoji 4), so a
+   split never lands inside a character or between the halves of a surrogate pair; counting `.length` would let a
+   Korean line run to three times the limit. A continuation line spends one of its octets on the leading space. */
+const icsFold = (line) => {
+  const parts = [];
+  let cur = "";
+  let used = 0;
+  for (const ch of line) {
+    const cp = ch.codePointAt(0);
+    const size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    const room = parts.length ? ICS_LINE_OCTETS - 1 : ICS_LINE_OCTETS;
+    if (used + size > room) { parts.push(cur); cur = ""; used = 0; }
+    cur += ch;
+    used += size;
+  }
+  parts.push(cur);
+  return parts.join("\r\n ");
+};
+
+const icsDate = (d) => String(d).replace(/-/g, "");                                       // "2026-09-14" -> "20260914"
+const icsLocal = (d, hhmm) => `${icsDate(d)}T${hhmm.slice(0, 2)}${hhmm.slice(3, 5)}00`;   // floating local time: no TZ parameter, no Z
+
+// Wall-clock minutes added to a date and an "HH:MM"; the day rolls over through shiftDay (23:30 + 60 -> next day 00:30).
+const icsAddMinutes = (d, hhmm, minutes) => {
+  const total = Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5)) + minutes;
+  const days = Math.floor(total / 1440);
+  const rest = total - days * 1440;
+  const p = (n) => String(n).padStart(2, "0");
+  return { date: shiftDay(d, days), time: `${p(Math.floor(rest / 60))}:${p(rest % 60)}` };
+};
+
+// DTSTAMP is the one value RFC 5545 (3.8.7.2) requires in UTC. It is never displayed, and these are the only UTC
+// accessors in the app: every date a person sees stays local and noon-anchored (TD-04).
+const icsUtcStamp = (ms) => {
+  const t = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${t.getUTCFullYear()}${p(t.getUTCMonth() + 1)}${p(t.getUTCDate())}T${p(t.getUTCHours())}${p(t.getUTCMinutes())}${p(t.getUTCSeconds())}Z`;
+};
+
+// An alarm offset in minutes as a DURATION (RFC 5545 3.3.6): 0 -> PT0S, 480 -> PT8H, 510 -> PT8H30M, -60 -> -PT1H.
+const icsDuration = (min) => {
+  if (!min) return "PT0S";
+  const h = Math.floor(Math.abs(min) / 60);
+  const m = Math.abs(min) % 60;
+  return `${min < 0 ? "-" : ""}PT${h ? `${h}H` : ""}${m ? `${m}M` : ""}`;
+};
+
+/* A UID stays the same across exports, so a calendar that matches on it can recognise a re-import: the record id,
+   plus the occurrence date for a monthly event written one entry per date. An id with a character outside
+   [A-Za-z0-9_-] is percent-encoded whole, which is reversible, so two ids never share a UID. Record ids come from
+   `uid`, which is random, so a UID says nothing about the person. */
+const icsUid = (kind, id, date) => {
+  const safe = /^[A-Za-z0-9_-]+$/.test(String(id)) ? String(id) : encodeURIComponent(String(id));
+  return `${kind}-${safe}${date ? `-${icsDate(date)}` : ""}@${ICS_UID_HOST}`;
+};
+
+/* What the file carries, as descriptors — no RFC text here. The window is `today` to `end`, the span
+   `upcomingEvents(state, today, days)` covers. Reads `state.events`, `state.tasks` and `state.goals`, nothing else.
+   - Events: an occurrence the user ticked is left out, as `todoOf` leaves it out. A repeat the RFC rule states
+     exactly (daily, weekly, monthly on day 1-28) is one entry with a rule, and its cancelled and ticked dates become
+     exceptions. A monthly event on day 29-31 is written as the dates `occurrencesOf` returns, one entry each: a
+     conforming calendar drops every month FREQ=MONTHLY cannot fit that day into, where the app clamps to the last day.
+   - Daily tasks become one digest at the reminder time: a dozen alarms at the same minute say nothing one list does not.
+   - An open task or an active goal whose date has passed has no truthful date in the window: it is counted in
+     `skipped`, never dropped silently (rule 13). Progress and pace are never written — frozen at export, a number
+     is false the next day (rule 9).
+   Entry fields: `time` null on a timed entry is the reminder time chosen in the sheet (the digest); `alarm` is in
+   minutes from the start, or null for the reminder time on the day of an all-day entry. */
+const calendarExportOf = (state, today, days) => {
+  const span = ICS_RANGE_DAYS.includes(days) ? days : EVENT_HORIZON_DAYS;
+  const end = shiftDay(today, span - 1);
+  const tail = `${today}에 인생 관리에서 내보냈어요. 앱에서 바꾼 내용은 다시 내보내야 반영돼요.`;
+  const entry = (source, uid, date, summary, body, more = {}) => ({
+    uid, source, date, allDay: true, time: null, minutes: 0, summary,
+    description: [...body, tail].join("\n"), rrule: null, exdates: [], alarm: null, ...more,
+  });
+  const entries = [];
+  const skipped = { tasks: 0, goals: 0 };
+
+  for (const ev of state.events || []) {
+    const ticked = new Set(ev.doneDates || []);
+    const dates = occurrencesOf(ev, today, end).filter((d) => !ticked.has(d));
+    if (!dates.length) continue;
+    const time = /^\d{2}:\d{2}$/.test(ev.time || "") ? ev.time : "";
+    // A deadline is a date in the app (its row leads with a D-day), so it is all-day and a stored time stays as text.
+    const due = ev.kind === "due";
+    const summary = due ? `${EVENT_KIND_LABEL.due}${time ? ` ${time}` : ""} · ${ev.title || ""}` : `${EVENT_KIND_LABEL.appt} · ${ev.title || ""}`;
+    const timed = !due && time ? { allDay: false, time, minutes: ICS_APPT_MINUTES, alarm: -ICS_APPT_LEAD_MIN } : {};
+    const freq = ev.repeat?.freq;
+    if (freq === "monthly" && Number(ev.date.slice(8, 10)) > 28) {
+      for (const d of dates) entries.push(entry("event", icsUid("event", ev.id, d), d, summary, ["목표 기여 없음"], timed));
+      continue;
+    }
+    if (!freq) {
+      entries.push(entry("event", icsUid("event", ev.id), dates[0], summary, ["목표 기여 없음"], timed));
+      continue;
+    }
+    // The bare rule (date and repeat only, no skip list) between the first and last included dates, minus those
+    // dates: skipped and ticked dates become exceptions alike, and no exception names a date the rule cannot produce.
+    const last = dates[dates.length - 1];
+    const kept = new Set(dates);
+    const exdates = occurrencesOf({ date: ev.date, repeat: ev.repeat }, dates[0], last).filter((d) => !kept.has(d));
+    // occurrencesOf steps every frequency other than weekly and monthly one day at a time, so DAILY is the same set.
+    const rule = { freq: freq === "weekly" ? "WEEKLY" : freq === "monthly" ? "MONTHLY" : "DAILY", until: last };
+    entries.push(entry("event", icsUid("event", ev.id), dates[0], summary, ["목표 기여 없음"], { ...timed, rrule: rule, exdates }));
+  }
+
+  const goalById = new Map((state.goals || []).map((g) => [g.id, g]));
+  for (const q of state.tasks || []) {
+    if (q.type === "daily" || q.status === "done" || !q.due) continue;
+    if (q.due < today) { skipped.tasks += 1; continue; }
+    if (q.due > end) continue;
+    const g = goalById.get(q.goalId);
+    entries.push(entry("task", icsUid("task", q.id), q.due, `실행 기한 · ${q.title}`, [g ? `목표 · ${g.title}` : "목표 기여 없음"]));
+  }
+
+  const daily = (state.tasks || []).filter((q) => q.type === "daily");
+  if (daily.length) {
+    const summary = `매일 실행 ${daily.length}건 · ${daily[0].title}${daily.length > 1 ? ` 외 ${daily.length - 1}건` : ""}`;
+    entries.push(entry("daily", icsUid("daily", "tasks"), today, summary, daily.map((q) => `- ${q.title}`),
+      { allDay: false, minutes: ICS_DIGEST_MINUTES, rrule: { freq: "DAILY", until: end }, alarm: 0 }));
+  }
+
+  for (const g of state.goals || []) {
+    if (g.status !== "active" || !g.deadline) continue;
+    if (g.deadline < today) { skipped.goals += 1; continue; }
+    if (g.deadline > end) continue;
+    entries.push(entry("goal", icsUid("goal", g.id), g.deadline, `목표 기한 · ${g.title}`, ["진행률·페이스는 넣지 않아요 — 내보낸 뒤 바로 달라져요."]));
+  }
+
+  // Plain code-unit comparison rather than localeCompare, so the order cannot depend on the runtime's locale.
+  const rank = { event: 0, task: 1, daily: 2, goal: 3 };
+  const key = (e) => `${e.date}|${rank[e.source]}|${e.summary}|${e.uid}`;
+  entries.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  const counts = { event: 0, task: 0, daily: 0, goal: 0 };
+  for (const e of entries) counts[e.source] += 1;
+  return { end, entries, counts, skipped };
+};
+
+/* The file (RFC 5545): CRLF after every line including the last, lines folded at 75 UTF-8 octets, TEXT escaped,
+   floating local times. Pure given `now` (ms), which the caller passes in. An all-day entry alarms at the reminder
+   time on its day, a timed appointment ICS_APPT_LEAD_MIN before it, the digest at its start. A VCALENDAR with no
+   entry is still complete. It declares no scheduling method: a plain import is not an iTIP message. */
+const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {}) => {
+  const sel = calendarExportOf(state, today, days);
+  const at = /^\d{2}:\d{2}$/.test(remindAt) ? remindAt : ICS_REMIND_DEFAULT;
+  const atMinutes = Number(at.slice(0, 2)) * 60 + Number(at.slice(3, 5));
+  const stamp = icsUtcStamp(now);
+  const seq = Math.max(0, Math.floor((now - ICS_SEQ_EPOCH) / 1000));
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Life Manager//Calendar Export//KO", "CALSCALE:GREGORIAN", `X-WR-CALNAME:${icsText("인생 관리")}`];
+  for (const e of sel.entries) {
+    const time = e.allDay ? null : e.time || at;
+    lines.push("BEGIN:VEVENT", `UID:${e.uid}`, `DTSTAMP:${stamp}`, `SEQUENCE:${seq}`);
+    if (e.allDay) {
+      lines.push(`DTSTART;VALUE=DATE:${icsDate(e.date)}`, `DTEND;VALUE=DATE:${icsDate(shiftDay(e.date, 1))}`);
+    } else {
+      const stop = icsAddMinutes(e.date, time, e.minutes);
+      lines.push(`DTSTART:${icsLocal(e.date, time)}`, `DTEND:${icsLocal(stop.date, stop.time)}`);
+    }
+    // UNTIL and EXDATE take the value type of DTSTART (RFC 5545 3.3.10, 3.8.5.1).
+    if (e.rrule) lines.push(`RRULE:FREQ=${e.rrule.freq};UNTIL=${e.allDay ? icsDate(e.rrule.until) : icsLocal(e.rrule.until, time)}`);
+    for (const x of e.exdates) lines.push(e.allDay ? `EXDATE;VALUE=DATE:${icsDate(x)}` : `EXDATE:${icsLocal(x, time)}`);
+    lines.push(`SUMMARY:${icsText(e.summary)}`, `DESCRIPTION:${icsText(e.description)}`);
+    // A timed appointment is busy time; a date and the reminder digest are not.
+    if (e.allDay || e.source === "daily") lines.push("TRANSP:TRANSPARENT");
+    lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${icsText(e.summary)}`, `TRIGGER:${icsDuration(e.alarm ?? atMinutes)}`, "END:VALARM", "END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+  return { text: `${lines.map(icsFold).join("\r\n")}\r\n`, entries: sel.entries, counts: sel.counts, skipped: sel.skipped, end: sel.end };
+};
+
 /* ── State lifecycle ── */
 /**
  * @schema v21 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
@@ -2818,7 +3009,7 @@ const parseAssistantReply = (text, state) => {
  * agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
  * contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
  * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
- * the displayed age (`ageText`) and the total months of practice (`careerMonths`).
+ * the displayed age (`ageText`) and the total months of practice (`careerMonths`), and the calendar export file (`buildIcs`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -5633,7 +5824,7 @@ function ScheduleCalendar({ state, today, onAdd, onEdit, onToggleDone, onSkip })
   );
 }
 
-function ScheduleTab({ state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip }) {
+function ScheduleTab({ state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip, onExport }) {
   const cal = view === "calendar"; // any other value, including a save written before v17, opens the list
   const tomorrow = shiftDay(today, 1);
   const weekEnd = shiftDay(mondayOf(today), 6);
@@ -5685,9 +5876,14 @@ function ScheduleTab({ state, today, view, onView, onAdd, onEdit, onToggleDone, 
         <p className="text-xs font-mono text-zinc-400">
           오늘 {counts.today}건 · 이번 주 {counts.week}건 · 지난 마감 {counts.past}건
         </p>
-        <div className="flex gap-1.5 mt-2.5">
-          <Chip on={!cal} onClick={() => onView("list")}>목록</Chip>
-          <Chip on={cal} onClick={() => onView("calendar")}>달력</Chip>
+        {/* One export button on the chip row, so both views carry the same single entry point */}
+        <div className="flex items-center justify-between gap-2 mt-2.5">
+          <div className="flex gap-1.5">
+            <Chip on={!cal} onClick={() => onView("list")}>목록</Chip>
+            <Chip on={cal} onClick={() => onView("calendar")}>달력</Chip>
+          </div>
+          <button onClick={() => onExport()}
+            className="shrink-0 px-3 py-1.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">캘린더로 내보내기</button>
         </div>
       </section>
 
@@ -5788,6 +5984,73 @@ function EventModal({ event, initialDate, onClose, onAdd, onUpdate, onRemove }) 
           <button onClick={() => onRemove(event.id)}
             className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs">삭제</button>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Calendar export sheet — reads records, writes a file, stores nothing ── */
+/* The reminder time and the range are component state and reset every time the sheet opens: remembering them would
+   be a stored preference, a schema change for two taps (rule 12). The preview reads the same `calendarExportOf` the
+   file is built from, so the numbers shown are the entries written. The snapshot limits are stated before anything
+   is exported (rule 13), and the validation message is the sheet's only rose text. */
+function CalendarExportModal({ state, today, onClose, onExport }) {
+  const [remindAt, setRemindAt] = useState(ICS_REMIND_DEFAULT);
+  const [days, setDays] = useState(EVENT_HORIZON_DAYS);
+  const [err, setErr] = useState("");
+  const sel = useMemo(() => calendarExportOf(state, today, days), [state, today, days]);
+  const empty = sel.entries.length === 0;
+
+  const submit = () => {
+    if (!/^\d{2}:\d{2}$/.test(remindAt)) { setErr("알림 시각을 입력해 주세요."); return; }
+    onExport({ days, remindAt });
+  };
+
+  return (
+    <Modal title="휴대폰 캘린더로 내보내기" onClose={onClose}>
+      <div className="space-y-3">
+        <p className="text-sm text-zinc-300">이 앱은 알림을 보내지 않아요. 내보낸 파일을 휴대폰 캘린더 앱에서 가져오면 캘린더 앱이 알림을 울려요.</p>
+        <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <span className="w-24 shrink-0">매일 알림 시각</span>
+          <input type="time" value={remindAt} onChange={(e) => { setRemindAt(e.target.value); setErr(""); }}
+            className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm font-mono" />
+        </label>
+        <p className="text-xs text-zinc-500">마감·실행 기한·목표 기한·시간 없는 약속과 매일 실행 목록은 이 시각에 알려요. 시간이 있는 약속은 시작 1시간 전에 알려요.</p>
+        <div>
+          <div className="text-xs text-zinc-500 mb-1.5">넣을 기간</div>
+          <div className="flex gap-1.5">
+            {ICS_RANGE_DAYS.map((d) => (
+              <Chip key={d} on={days === d} onClick={() => setDays(d)}>{d === 365 ? "1년" : `${d}일`}</Chip>
+            ))}
+          </div>
+        </div>
+        {empty ? (
+          <p className="text-xs text-zinc-400">{`넣을 항목이 없어요 — ${today} ~ ${sel.end}에 일정·실행 기한·매일 실행·목표 기한이 없어요.`}</p>
+        ) : (
+          <div className="space-y-0.5">
+            <p className="text-xs font-mono text-zinc-400">{`${today} ~ ${sel.end} · 항목 ${sel.entries.length}건`}</p>
+            <p className="text-xs font-mono text-zinc-400">{`일정 ${sel.counts.event} · 실행 기한 ${sel.counts.task} · 매일 실행 ${sel.counts.daily} · 목표 기한 ${sel.counts.goal}`}</p>
+          </div>
+        )}
+        {sel.skipped.tasks + sel.skipped.goals > 0 && (
+          <p className="text-xs text-zinc-400">{`기한이 지난 실행 ${sel.skipped.tasks}건 · 목표 ${sel.skipped.goals}건은 날짜가 지나 넣지 않아요.`}</p>
+        )}
+        <p className="text-xs text-zinc-500">넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 기록과 금액, 일정의 장소·메모.</p>
+        <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-1">
+          <p className="text-xs text-zinc-300">내보낸 순간의 기록만 들어가요. 앱에서 추가·수정·완료·삭제해도 휴대폰 캘린더는 바뀌지 않아요 — 바뀐 내용은 다시 내보내야 들어가요.</p>
+          <p className="text-xs text-zinc-300">앱에서 완료해도 캘린더의 알림은 꺼지지 않아요.</p>
+          <p className="text-xs text-zinc-300">매일 알림에는 내보낼 때의 매일 실행 목록이 그대로 남아요.</p>
+          <p className="text-xs text-zinc-300">{`${sel.end} 뒤로는 알림이 없어요.`}</p>
+        </div>
+        <div className="space-y-1">
+          <p className="text-xs text-zinc-500">다시 가져올 때 같은 항목을 바꿔 넣을지 하나 더 만들지는 캘린더 앱마다 달라요.</p>
+          <p className="text-xs text-zinc-500">파일에 적힌 알림 대신 캘린더 앱의 기본 알림을 쓰는 앱도 있어요.</p>
+          <p className="text-xs text-zinc-500">구글 계정 캘린더로 가져오면 제목이 구글 서버에 저장돼요.</p>
+        </div>
+        <p className="text-xs text-zinc-500">파일은 브라우저의 다운로드로 저장돼요. 휴대폰 캘린더 앱에서 이 파일을 열어 가져와요.</p>
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} disabled={empty}
+          className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm disabled:opacity-30">파일 내보내기</button>
       </div>
     </Modal>
   );
@@ -6858,6 +7121,16 @@ export default function LifeManager() {
     });
   };
 
+  /* The one path every exported file takes: an in-memory blob URL on a temporary anchor, clicked under the user's
+     tap, revoked a second later. The browser's download manager saves it; no request leaves the device (rule 7). */
+  const downloadBlob = (blob, fileName) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   /* Backup — the save plus its evidence and portfolio photos in one file. The app has no cloud copy, so this is
      the only way back from a cleared browser. Import replaces everything and asks first. */
   const exportBackup = async () => {
@@ -6874,13 +7147,17 @@ export default function LifeManager() {
     }
     const prof = await store.get("liferpg-img-profile").catch(() => null);
     if (prof) images["liferpg-img-profile"] = prof;
-    const blob = new Blob([JSON.stringify({ app: "life-manager", exportedAt: today, state, images }, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `life-manager-backup-${today}.json`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(new Blob([JSON.stringify({ app: "life-manager", exportedAt: today, state, images }, null, 2)], { type: "application/json" }), `life-manager-backup-${today}.json`);
     showToast({ msg: `백업 파일을 내보냈어요 · 사진 ${Object.keys(images).length}장` });
+  };
+  /* Calendar export — the phone's calendar raises the alarms from this file once the user imports it. Built from the
+     records at this instant and handed to the browser: no setState, no store call, no request (rules 7, 9, 18). */
+  const exportCalendar = ({ days, remindAt }) => {
+    const out = buildIcs(state, today, { days, remindAt, now: Date.now() });
+    if (!out.entries.length) return;
+    downloadBlob(new Blob([out.text], { type: "text/calendar;charset=utf-8" }), `life-manager-calendar-${today}.ics`);
+    setModal(null);
+    showToast({ msg: `캘린더 파일을 내보냈어요 · ${out.entries.length}건 · ${out.end}까지` });
   };
   const importBackup = async (file) => {
     let data;
@@ -6989,7 +7266,8 @@ export default function LifeManager() {
             view={state.ui?.scheduleView} onView={setScheduleView}
             onAdd={(date) => setModal({ type: "event", date })}
             onEdit={(ev) => setModal({ type: "event", event: ev })}
-            onToggleDone={toggleEventDone} onSkip={skipOccurrence} />
+            onToggleDone={toggleEventDone} onSkip={skipOccurrence}
+            onExport={() => setModal({ type: "calExport" })} />
         )}
         {tab === "biz" && (
           <BizTab state={state} today={today}
@@ -7083,6 +7361,9 @@ export default function LifeManager() {
         <ProfileModal profile={state.profile} state={state} img={imgs?.profile} today={today}
           onUpload={() => askUpload("profile")} onClearImg={() => clearImg("profile")}
           onSave={saveProfile} onClose={() => setModal(null)} />
+      )}
+      {modal?.type === "calExport" && (
+        <CalendarExportModal state={state} today={today} onClose={() => setModal(null)} onExport={exportCalendar} />
       )}
 
       {overlay && <Overlay data={overlay} onClose={() => setOverlay(null)} />}

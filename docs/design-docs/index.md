@@ -9,6 +9,7 @@ Engine and structure decisions. Rules are canonical in `core-beliefs.md`; everyt
 | [job-weighting.md](job-weighting.md) | Job-fit multiplier: matrix, exceptions, intersection rule, evidence thresholds |
 | [decision-log.md](decision-log.md) | Dated product/engineering decisions |
 | [information-architecture.md](information-architecture.md) | Area → goal → KR → task hierarchy, KR–task bridge, the `실행` tab's time groups (not goal groups), screen map |
+| [calendar-export.md](calendar-export.md) | The `.ics` phone-calendar file: RFC 5545 decisions (folding, escaping, floating time, `UID`/`SEQUENCE`), the monthly-clamp expansion, alarms, privacy by construction, what is guaranteed vs app-dependent |
 | [scoring-engine.md](scoring-engine.md) | Difficulty D, points P, grade cuts, certification and exam payout mechanics |
 | [goal-engine.md](goal-engine.md) | KR progress, goal progress, pace, deadlines, KR check-in, task creation rules |
 | [evidence-and-promotion.md](evidence-and-promotion.md) | Evidence gate, study tiers, activity logs, promotion gates |

@@ -58,7 +58,7 @@ Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), p
 agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
 contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
 business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
-the displayed age (`ageText`) and the total months of practice (`careerMonths`).
+the displayed age (`ageText`) and the total months of practice (`careerMonths`), and the calendar export file (`buildIcs`).
 ```
 
 ## Fresh-state defaults (`freshState`)
@@ -207,19 +207,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1299 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 4328 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 4328 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 4328 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 5965 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 6198 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 6379 | App root |
-| `liferpg-img-${slot}` | 6419 | App root |
-| `liferpg-img-ev-${id}` | 6442 | App root |
-| `liferpg-img-ev-${q.id}` | 6620 | App root |
-| `liferpg-img-ev-${t.id}` | 6866 | App root |
-| `liferpg-img-study-${t.id}-1` | 6866 | App root |
-| `liferpg-img-study-${t.id}-2` | 6866 | App root |
-| `liferpg-img-folio-${f.id}` | 6872 | App root |
+| `liferpg-img-ev-${task.id}` | 4519 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 4519 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 4519 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 6228 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 6461 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 6642 | App root |
+| `liferpg-img-${slot}` | 6682 | App root |
+| `liferpg-img-ev-${id}` | 6705 | App root |
+| `liferpg-img-ev-${q.id}` | 6883 | App root |
+| `liferpg-img-ev-${t.id}` | 7139 | App root |
+| `liferpg-img-study-${t.id}-1` | 7139 | App root |
+| `liferpg-img-study-${t.id}-2` | 7139 | App root |
+| `liferpg-img-folio-${f.id}` | 7145 | App root |
 
 ## Demo data (`demoState`)
 

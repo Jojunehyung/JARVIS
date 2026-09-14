@@ -9,8 +9,8 @@ Data shape: [`events[]` in the generated schema](../generated/db-schema.md). Occ
 rules: [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
 ## Screen
-`ScheduleTab` props: `state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip`. Tab key `schedule`,
-label `일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-6`), before `사업`.
+`ScheduleTab` props: `state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip, onExport`. Tab key
+`schedule`, label `일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-6`), before `사업`.
 
 - Header section: `다가오는 일정` (cyan `SectionLabel`) and, in `목록` view only, the button `일정 추가` →
   `EventModal` in add mode. In `달력` view the button lives in the selected-day panel instead, so exactly one
@@ -24,7 +24,9 @@ label `일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-6`), befo
 
 ## Views — `목록` and `달력`
 Two `Chip`s under the counts line, `목록` first. `목록` answers "what is next", `달력` answers "what does this
-month look like"; both read the same expansion and the same row, so they can state nothing different.
+month look like"; both read the same expansion and the same row, so they can state nothing different. The same
+row also carries, right-aligned, the text-only button `캘린더로 내보내기` → `onExport()` → `CalendarExportModal`
+(below) — the one entry point into the calendar export, present in both views so neither reads differently.
 
 - The choice is stored in `state.ui.scheduleView` (`"list"` | `"calendar"`, schema v17) and survives a reload:
   the root's `setScheduleView` spreads it into `ui`, `ScheduleTab` reads `view === "calendar"` and treats every
@@ -208,6 +210,92 @@ tab itself: `onAdd={(date) => setModal({ type: "event", date })}` — the list's
 passes the selected day, and `<EventModal … initialDate={modal.date} />` prefills from it; and
 `setScheduleView(v)`, which spreads `v` into `ui.scheduleView`.
 
+## Calendar export (`캘린더로 내보내기`)
+The app sends no notification of its own; the button downloads a phone-calendar file (RFC 5545, `.ics`) that the
+user imports once, and it is the phone's calendar that then raises the alarms. Mechanics, file format and the
+RFC decisions: [../design-docs/calendar-export.md](../design-docs/calendar-export.md). This section covers the
+sheet and what each source contributes.
+
+### `CalendarExportModal` (`modal.type: "calExport"`)
+`CalendarExportModal({ state, today, onClose, onExport })`, opened by the header button above, in both views.
+Everything it shows is read live from `calendarExportOf(state, today, days)` (`useMemo` keyed on
+`[state, today, days]`) — the same function `buildIcs` calls to write the file, so the sheet cannot promise a
+count the export does not produce. Nothing here is stored: `remindAt` and `days` are `useState`, reset to their
+defaults every time the sheet opens ([Rule 9](../design-docs/core-beliefs.md#rule-9)) — a remembered preference
+would be a schema field for two taps on an occasional action.
+
+| Field | Control | Default |
+|---|---|---|
+| `매일 알림 시각` | `input type="time"` | `08:00` (`ICS_REMIND_DEFAULT`) |
+| `넣을 기간` | chips `30일` / `90일` / `1년` (`ICS_RANGE_DAYS`) | `90일` (`EVENT_HORIZON_DAYS`, the horizon the schedule list already uses) |
+
+Order top to bottom: intro line (states the app sends no notification itself) → the time row → a note on which
+kinds fire at that time and which fire on their own schedule → the range label and chips → a preview (below) or,
+with nothing to include, one line in its place → a skipped-items line, shown only when it would report something
+→ an excluded-fields line (always shown) → a snapshot box of four fixed sentences → three calendar-app notes →
+a how-to line → the validation error, the sheet's only `text-rose-400` element → the button `파일 내보내기`,
+`disabled` while the selection is empty.
+
+**Preview** (hidden, replaced by one line, when `sel.entries.length === 0`):
+- line 1 — `{today} ~ {end} · 항목 {n}건`
+- line 2 — `일정 {a} · 실행 기한 {b} · 매일 실행 {c} · 목표 기한 {d}` (`sel.counts`)
+
+**Skipped line**, only when `sel.skipped.tasks + sel.skipped.goals > 0`: `기한이 지난 실행 {x}건 · 목표
+{y}건은 날짜가 지나 넣지 않아요.` — the overdue items the file cannot date truthfully are counted, never silently
+dropped ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
+
+**Excluded line** (always shown): `넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 기록과 금액, 일정의
+장소·메모.`
+
+**Snapshot box**, four fixed sentences, none of them a number that could go stale: the file only holds what
+existed at export time and does not follow later edits; completing something in the app does not silence the
+calendar's alarm; the daily reminder keeps the task list exactly as it was at export; and where the alarms stop
+(`{end} 뒤로는 알림이 없어요.`).
+
+**Calendar-app notes**, three sentences on what the app cannot promise: whether re-import replaces or
+duplicates depends on the calendar app; some calendars use their own default notification instead of the
+file's `VALARM`; a Google-account calendar stores the imported titles on Google's servers.
+
+**Validation**: `if (!/^\d{2}:\d{2}$/.test(remindAt)) { setErr("알림 시각을 입력해 주세요."); return; }` — the
+only failure mode, since the range is always one of three chips.
+
+**Submit**: `onExport({ days, remindAt })` → the root's `exportCalendar` (below).
+
+### What goes into the file, per source
+`today … end` is the window, `end = shiftDay(today, span − 1)` where `span` is the chosen days clamped to
+`ICS_RANGE_DAYS` (falling back to `EVENT_HORIZON_DAYS`) — the same semantics as `upcomingEvents(state, today,
+days)`. `calendarExportOf` reads `state.events`, `state.tasks` and `state.goals` only.
+
+| Source | In the file? | Shape |
+|---|---|---|
+| `events[]`, one-off (no `repeat`) | yes, when `today ≤ date ≤ end` and the date is not in `doneDates` | one `VEVENT`, UID `event-{id}@life-manager` |
+| `events[]`, `daily`/`weekly`/`monthly` with day-of-month ≤ 28 | yes, when at least one occurrence in the window is not ticked | one `VEVENT` with `RRULE` (`DTSTART` = first included occurrence, `UNTIL` = last) and one `EXDATE` per skipped or ticked date between them |
+| `events[]`, `monthly` with day-of-month 29–31 | yes | one `VEVENT` per included occurrence, UID `event-{id}-{YYYYMMDD}@life-manager`, no `RRULE` — see "Monthly clamp" in [calendar-export.md](../design-docs/calendar-export.md) |
+| `마감` (deadline) kind | all-day; a stored time is kept as text: `마감 {HH:MM} · {title}` | |
+| `약속` with a time | timed, `DTEND` = start + 60 min (`ICS_APPT_MINUTES`), alarm 60 min before (`ICS_APPT_LEAD_MIN`) | |
+| `약속` without a time | all-day, alarm at the chosen reminder time | |
+| Open `once` tasks with `due` (milestones included) | yes, when `today ≤ due ≤ end` | all-day, UID `task-{id}@life-manager`, summary `실행 기한 · {title}` |
+| Open `once` tasks with `due < today` | no — counted in the sheet's skipped line | |
+| Daily tasks (`type: "daily"`) | one repeating digest, UID `daily-tasks@life-manager` | timed at the reminder time, `RRULE:FREQ=DAILY;UNTIL={end}`, alarm `PT0S`; summary states the count and the first title, description lists every title |
+| Goal deadlines (`status: "active"`, `today ≤ deadline ≤ end`) | yes | all-day, UID `goal-{id}@life-manager`, summary `목표 기한 · {title}`; no progress or pace number is written |
+| Goal deadlines already past | no — counted in the sheet's skipped line | |
+| Done goals, done tasks | no | |
+| Business (`deals`/`rates`/`folio`), `profile`/CV, an event's `place`/`note`, `journal`, `reviews`, achievements, grades, exams, evidence | never | see [../SECURITY.md](../SECURITY.md) |
+
+A one-off event is left out both when its date is ticked (in `doneDates`) and when its date is in `skip` —
+the export calls `occurrencesOf`, which drops a `skip`-listed date regardless of whether the event currently
+repeats. The second case is reachable: `updateEvent` keeps `skip` across an edit (`EventModal` above), so a
+weekly event with a cancelled date, edited back down to a one-off, can still carry that leftover `skip` array.
+
+### Root handler
+| Handler | Effect | Toast |
+|---|---|---|
+| `exportCalendar({ days, remindAt })` | builds `buildIcs(state, today, { days, remindAt, now: Date.now() })`; with zero entries it returns early — no download, no modal close, no toast; otherwise downloads the file through the shared `downloadBlob`, closes the modal | `캘린더 파일을 내보냈어요 · {n}건 · {end}까지` |
+
+`exportCalendar` calls no `setState` and no `store` write: the file is built from the current render's `state`
+and handed to the browser, nothing more ([Rules 7](../design-docs/core-beliefs.md#rule-7),
+[9](../design-docs/core-beliefs.md#rule-9)).
+
 ## Occurrences
 `occurrencesOf(ev, from, to)` expands the repeat rule at render time and never writes back
 ([Rule 9](../design-docs/core-beliefs.md#rule-9)): no `repeat` yields the single date when it is inside the
@@ -215,7 +303,9 @@ window, `daily` every day, `weekly` the weekday of `date`, `monthly` its day of 
 length (31 → 28/29/30). It stops at `repeat.until`, drops `skip` dates, and never iterates more than
 `MAX_OCC` = 400 steps. `eventsOn(state, date)` and `upcomingEvents(state, from, days)` build the rows from it;
 `upcomingEvents` covers `from … from + days − 1`, and the tab, the briefing and the packet all read the same
-expansion.
+expansion. `calendarExportOf` is a fourth reader — it calls `occurrencesOf` directly (once for the ticked
+occurrences, once more on the bare rule to compute `EXDATE`) rather than through `upcomingEvents`, and, like
+every other reader, only ever reads it.
 
 The month grid adds no second expansion path: `ScheduleCalendar` calls `upcomingEvents(state, monthStart,
 daysInMonth)` **once** inside a `useMemo` keyed on `[state, monthStart, daysInMonth]` and reduces the result
@@ -241,3 +331,6 @@ reaches the save.
   move a goal's progress or its pace.
 - A pasted assistant reply can never create or change one: `parseAssistantReply` reads `tasks` and nothing else.
 - `완료 표시` is a record of what happened, not a completion: it stores a date in `doneDates` and nothing more.
+- The calendar export reads events (and tasks and goals) and creates none: `calendarExportOf`/`buildIcs` call
+  no `setState` and no `store` write, so exporting a file cannot mark an occurrence done, cancel one, or move a
+  goal.

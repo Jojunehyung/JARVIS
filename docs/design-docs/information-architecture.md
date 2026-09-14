@@ -1,7 +1,7 @@
 # Information architecture
 <!-- src: SPEC-3 -->
 
-The app is a four-level hierarchy — 영역 (area) → 목표 (goal) → KR (key result) → 실행 (task) — shown through six tabs, nineteen modals, and two overlays. The fourth tab, 일정 (schedule), and the fifth, 사업 (business), both sit outside the hierarchy: an event or a business record is a dated record with no goal above it ([../product-specs/schedule.md](../product-specs/schedule.md), [../product-specs/business.md](../product-specs/business.md)). Every other spec assumes this vocabulary. Field shapes are generated in [../generated/db-schema.md](../generated/db-schema.md); per-screen behaviour lives in [../product-specs/index.md](../product-specs/index.md).
+The app is a four-level hierarchy — 영역 (area) → 목표 (goal) → KR (key result) → 실행 (task) — shown through six tabs, twenty modals, and two overlays. The fourth tab, 일정 (schedule), and the fifth, 사업 (business), both sit outside the hierarchy: an event or a business record is a dated record with no goal above it ([../product-specs/schedule.md](../product-specs/schedule.md), [../product-specs/business.md](../product-specs/business.md)). Every other spec assumes this vocabulary. Field shapes are generated in [../generated/db-schema.md](../generated/db-schema.md); per-screen behaviour lives in [../product-specs/index.md](../product-specs/index.md).
 
 ## Hierarchy: area → goal → KR → task
 ```
@@ -70,7 +70,7 @@ tab's *view* stopped mirroring it. Full behaviour: [../product-specs/tasks.md](.
 | biz | 사업 | Briefcase | `BizTab` | header (`이번 달 계약` / `남은 계약` lines) + per-view add button · the view toggle `계약` / `단가` / `포트폴리오` (stored in `ui.bizView`) · **계약**: groups `진행 중` / `예정` / `견적 대기` / `문의` / `종료` / `무산` by derived phase, payment chips, `최근 6개월` roll-up · **단가**: rate rows with margin, footer count · **포트폴리오**: one-column cards with links and a stored thumbnail |
 | growth | 성장 | TrendingUp | `GrowthTab` | `롤모델 근접도` (headline; `롤모델 설정` / `롤모델 수정`, `방향 제안`) · `실력 트랙 — 영역별 승급 관문` (one row per area, tap → `PromoteModal`) · `성취의 벽` (collapsed) · `데이터 — 백업 · 초기화` (collapsed) |
 
-- Modals, one at a time (`modal.type`, 19 values): `addQuest` (renders `AddTaskModal`; the type string keeps the legacy name) / `addGoal` / `evidence` / `promote` / `role` / `activity` / `study` / `evidenceView` / `catalog` / `roleAdvice` / `event` / `deals` / `rates` / `folio` / `briefing` / `journal` / `bridge` / `review` / `profile` (renders `ProfileModal`, opened from the home card's `프로필` button).
+- Modals, one at a time (`modal.type`, 20 values): `addQuest` (renders `AddTaskModal`; the type string keeps the legacy name) / `addGoal` / `evidence` / `promote` / `role` / `activity` / `study` / `evidenceView` / `catalog` / `roleAdvice` / `event` / `deals` / `rates` / `folio` / `briefing` / `journal` / `bridge` / `review` / `profile` (renders `ProfileModal`, opened from the home card's `프로필` button) / `calExport` (renders `CalendarExportModal`, opened from the `일정` header's `캘린더로 내보내기` button).
 - Overlays (`overlay.type`): `gradeup` / `achieve`. Toast: `ToastHost` holds one slot with no queue — a new `show` replaces the current message and restarts the 2600 ms timer.
 - Header on every tab: `LIFE MANAGER` · `{displayName(profile)}` (nickname, else name, else `사용자`) · `{status}` · `🔥 {streak}일` · `🛡 {shieldsLeft}` (보호권, streak shield).
 - Phases: `loading` (`불러오는 중...`) → `onboard` (`Onboarding`, rendered without `Shell`) → `main`.

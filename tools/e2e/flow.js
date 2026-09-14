@@ -274,6 +274,7 @@ module.exports = async (h) => {
   await require("./flow5.js")(h);
   await require("./flow7.js")(h);
   await require("./flow8.js")(h);
+  await require("./flow9.js")(h);
   await require("./flow4.js")(h);
   await require("./flow6.js")(h);
 

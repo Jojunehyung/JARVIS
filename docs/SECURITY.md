@@ -9,12 +9,35 @@ Life Manager is a local-only, single-user web app with no backend, no accounts, 
 - The single-file demo (`release/life-demo.html`) opened from `file://` has its own origin and storage; it contains no user data at build time — `demoState`'s profile is entirely synthetic (a placeholder name, a birth date computed from the build date, no e-mail or phone), so sharing a demo build cannot leak a real person's CV ([demo-data.md](design-docs/demo-data.md)).
 
 ## Data in transit
-None by the app. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static.
+None by the app. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static. The calendar export ("The calendar file", below) is the one other place item titles leave the app, through a file the user hands to their own calendar app.
 
 The assistant bridge (`AI에게 보내기`) is the one place data leaves deliberately: it renders a text packet — goals, open tasks, the last seven journal entries, the last weekly review, the streak and role-model proximity, and, since schema v21, one `## 이력` line stating degree, department/field, total months of practice and the most recent role — into a textarea and the clipboard; never photos. That CV line is built from `topEdu` / `latestCareer` and is deliberately the only place the CV is summarised for an outside reader: it never carries `profile.name`, the birth date, the e-mail, the phone number, the school name or the employer name — a school or an employer identifies a person nearly as well as a name does. Copying the packet is a user action, and pasting it into a third-party chat puts that text outside this threat model. The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score ([Rule 7](design-docs/core-beliefs.md#rule-7)).
 
 ## The backup file
 `백업 내보내기` writes the whole save — profile (including the exact name, birth date, optional e-mail/phone and every education and career record since schema v21), goals, tasks, achievements and every evidence photo — to a JSON file the user chooses where to keep. Carrying the CV here is correct and unchanged from how every other field has always been handled: the file is local, it is the only way back from a cleared browser, and the file is as sensitive as the device itself — once it is in a downloads folder, a cloud-synced directory or a chat, it is outside this threat model. Import replaces the current records and asks for confirmation naming the export date first.
+
+## The calendar file
+`캘린더로 내보내기` (일정 tab) writes `life-manager-calendar-{date}.ics`: a snapshot of dated **item titles** —
+event titles, dated-task titles, the daily-task digest, goal-deadline titles, and a task's linked goal title
+inside its own description line — and their dates, built in memory and handed to the browser exactly like the
+backup file. Mechanics: [design-docs/calendar-export.md](design-docs/calendar-export.md); the sheet:
+[product-specs/schedule.md](product-specs/schedule.md).
+
+Importing the file is the user's own action, and it carries those titles **out of the app sandbox into
+whatever calendar the user imports it into**: a calendar tied to a synced account (a Google account, for
+example) stores the imported titles on that provider's servers — outside this app's threat model the moment the
+import happens, exactly as pasting the assistant packet into a third-party chat is (above). The app makes this
+explicit in the export sheet itself before anything is exported, and it still makes no network call of its own
+to produce or send the file — the request, if any, is the calendar app's, after import, not this app's.
+
+**What it never carries**: `profile` / the CV (name, birth date, e-mail, phone, school and employer names),
+any business record or amount (`deals`, `rates`, `folio`), an event's `place` or `note`, the journal, reviews,
+evidence, grades, exam bands, or any progress or pace number. `calendarExportOf` reads only `state.events`,
+`state.tasks` and `state.goals`; `tools/harness/smoke-logic.js` proves the boundary by building from a state
+whose `profile`, `deals`, `rates`, `folio`, `journal` and `reviews` are getters that throw, and whose events
+carry throwing `place`/`note` getters too — the build must still complete. `tools/e2e/flow9.js` mirrors the
+proof end to end: it plants a real CV, business records, an event `place`/`note` and a journal entry, exports,
+and asserts none of their values appears anywhere in the file's `SUMMARY` or `DESCRIPTION` lines.
 
 ## Code execution surfaces
 - Runtime: React renders user text as text (no `dangerouslySetInnerHTML`); links entered as study artifacts are stored as strings and rendered as text.

@@ -32,6 +32,10 @@ Header `데이터 — 백업 · 초기화` with a `ChevronDown`. Open panel, unc
 
 `onReset` = `resetAll`: deletes `liferpg-img-ev-{id}` and `liferpg-img-study-{id}-1` / `-2` for every task, `liferpg-img-profile`, then `KEY` (`liferpg-state-v1`); state → `null`, in-memory images cleared, phase → `onboard`, tab → `home`. No confirmation dialog.
 
+The calendar file (`캘린더로 내보내기`) is not here: it downloads no recovery data and restores nothing, so it
+lives as its own button on the `일정` tab, next to the dates it exports — see [schedule.md](schedule.md),
+section "Calendar export".
+
 ## Role model modals
 `RoleModelModal` `롤모델 설정`: four [`ROLE_PRESETS`](../generated/onboarding-tables.md#role_presets) chips (대기업 현직 전문가 · 월 500 1인 사업가 · 프리랜서 전문가 · 창업가·대표) and an input `직접 입력 (예: 연 매출 1억 1인 사업가)`; per area `{name} — 요구 등급: {RANKS[t].name}` or `{name} — 요구 등급 (제외)` with buttons `제외` (0) and `RANKS.slice(1, 9)` (견습 … 거장 = 1–8; 정점 cannot be required); `저장` → `onSave({ name: name.trim() || "롤모델", targets })` → `state.role` + toast `롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다`. There is no control that removes a role model ([TD-11](../exec-plans/tech-debt-tracker.md)).
 

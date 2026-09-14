@@ -1,7 +1,7 @@
 // Installable app — the service worker registers and controls the page, the app still opens with the
 // network disabled, and a backup round-trips. Runs last: it toggles offline mode and reloads.
 module.exports = async (h) => {
-  const { step, clickText, clickTab, expectText, closeModal, sleep, page, errors } = h;
+  const { step, clickText, clickTab, expectText, closeModal, captureDownload, sleep, page, errors } = h;
 
   await step("service worker registers and controls the page", async () => {
     const ok = await page.evaluate(async () => {
@@ -108,19 +108,9 @@ module.exports = async (h) => {
     await clickTab("성장");
     await clickText("데이터 — 백업 · 초기화"); // backup sits behind the collapsed data line
     await expectText("백업");
-    // Capture the download without touching the filesystem: stub the anchor click and read the blob.
-    await page.evaluate(() => {
-      window.__backup = null;
-      const realCreate = URL.createObjectURL.bind(URL);
-      URL.createObjectURL = (blob) => { blob.text().then((t) => { window.__backup = t; }); return realCreate(blob); };
-      const proto = HTMLAnchorElement.prototype;
-      window.__realClick = proto.click;
-      proto.click = function () { if (!this.download) return window.__realClick.call(this); };
-    });
-    await clickText("백업 내보내기");
-    await sleep(900);
-    const dump = await page.evaluate(() => window.__backup);
-    await page.evaluate(() => { HTMLAnchorElement.prototype.click = window.__realClick; });
+    // Capture the download without touching the filesystem: the shared helper stubs the anchor click and reads the blob.
+    const dl = await captureDownload(() => clickText("백업 내보내기"));
+    const dump = dl && dl.text;
     if (!dump) throw new Error("no backup blob was produced");
     let data;
     try { data = JSON.parse(dump); } catch { throw new Error("backup is not valid JSON"); }

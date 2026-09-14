@@ -61,6 +61,15 @@ dot colours on one grid. `ui.scheduleView` comes from `freshState`, so the demo 
 manifest screenshot `public/screenshots/calendar.png` is this save with `달력` clicked
 (`tools/harness/gen-screenshots.js`).
 
+The same save, unchanged, already exercises every source the calendar export reads
+(`캘린더로 내보내기`, [../design-docs/calendar-export.md](../design-docs/calendar-export.md)): the timed
+appointment and the untimed deadline each become their own `VEVENT`, the weekly repeat carries an `RRULE`, the
+three daily tasks feed the one digest entry, and the overdue once task (`이력서 초안 작성`, `due` = today − 1) is
+exactly what the sheet's skipped line reports as `기한이 지난 실행 1건`. Of the three goal deadlines, only
+체력 기반 만들기 (today + 60) falls inside the sheet's default `90일` window (`end = today + 89`) — 서류 어학 컷
+넘기기 (today + 90) sits one day past it, and 하네스 설계 엔지니어 취업 (today + 150) further still; switching
+the sheet to `1년` brings in all three. No demo change was needed for any of this.
+
 ## Business
 
 Three rates, two portfolio entries (no stored image, so `대표 이미지 없음` shows), and four deals, chosen so every

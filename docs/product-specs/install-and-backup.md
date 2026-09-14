@@ -49,3 +49,39 @@ Both sit on the growth tab behind the collapsed `데이터 — 백업 · 초기�
 **Import** reads a file back, runs its `state` through `migrate` like any other save, and refuses anything without the app marker (`이 앱의 백업 파일이 아니에요`) or unreadable (`백업 파일을 읽지 못했어요`). It then asks for confirmation naming the export date and stating that the current records will be gone, and only then writes the photos, replaces the state and returns to the home tab. Toast: `백업을 불러왔어요 · {date} 기록`.
 
 Because the file contains the evidence photos, it is as sensitive as the app itself — see [../SECURITY.md](../SECURITY.md).
+
+## Calendar file — `캘린더로 내보내기`
+The `일정` tab's `캘린더로 내보내기` button downloads a second, unrelated file: `life-manager-calendar-{date}.ics`, a
+snapshot of dated records the phone's own calendar imports once and then raises alarms from — never a recovery
+file and not read back by the app. Mechanics and the RFC 5545 decisions:
+[../design-docs/calendar-export.md](../design-docs/calendar-export.md); the sheet and what each source
+contributes: [schedule.md](schedule.md), section "Calendar export". Data carried and never carried:
+[../SECURITY.md](../SECURITY.md).
+
+**The download, on Android.** The file goes through the same in-memory `blob:` URL as the backup file above, so
+the export makes no network request and works offline. Chrome's download manager is expected to write it to the
+device's downloads and post a download notification with an open action, in a tab or the installed app alike —
+**expected, not yet verified on a device**, exactly like the backup export (backlog item 2 is still open for
+both).
+
+**Opening and importing.** Which apps Android offers to open a local `.ics` with is itself device- and
+app-dependent: Samsung Calendar is known to import one; the Google Calendar Android app has not historically
+opened a local `.ics` file at all, requiring the file to be imported through Google Calendar on the web
+(Settings → Import & export) instead. **Import into a dedicated or device-only calendar** — one named `인생
+관리`, or a device-only calendar where the phone offers one, which also keeps titles off any synced server — so
+a later export can replace the whole set by emptying that calendar first and re-importing, rather than mixing
+with unrelated events.
+
+**What never syncs back.** The file is a snapshot: nothing completed, edited or deleted in the app afterwards
+reaches an already-imported calendar entry, and nothing in the calendar reaches back into the app — there is no
+read path from a calendar file into `state`, and re-importing the same UID replaces, skips or duplicates the
+entry depending entirely on the calendar app. A record deleted or completed in Life Manager keeps alarming in
+the calendar until the user removes it there by hand.
+
+**Manual Android check — pending.** Two things cannot be verified by automation: whether a given calendar app
+honours the file's `VALARM`s (some are reported to substitute their own default notification), and whether
+re-import replaces, skips or duplicates an entry; a further open question is whether Google Calendar on Android
+opens a local `.ics` at all rather than requiring the web import path. Puppeteer drives desktop Chrome only — no
+Android device, no calendar app, no way to observe an OS alarm firing. **Status: pending** (2026-09-14) — record
+the result here, dated, with device model, Android version and calendar app, once it runs; tracked alongside
+backlog item 2.

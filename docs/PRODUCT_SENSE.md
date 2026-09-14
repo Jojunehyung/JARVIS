@@ -37,7 +37,11 @@ Home (profile card + editable CV screen · today's focus = pace · today's tasks
 - In-app AI: generation, judgement, scoring (user decision 2026-08-29). The only AI touchpoint is the copy/paste assistant bridge approved 2026-09-09 ([Rule 7](design-docs/core-beliefs.md#rule-7)): no key, no network, proposals only.
 - Game mechanics: XP, levels, gold, random rewards, story, dating-sim elements ([Rule 7](design-docs/core-beliefs.md#rule-7)).
 - Social features, rankings, sharing.
-- Encouraging copy, streak guilt, notifications that nag.
+- Encouraging copy, streak guilt, notifications that nag. The app still sends none of its own — there is no
+  push server and no browser API that schedules a local alarm while it is closed. The only reminder path is a
+  calendar file the user exports (`캘린더로 내보내기`, [product-specs/schedule.md](product-specs/schedule.md)):
+  its alarms are raised by the phone's own calendar, at times the user chose in the export sheet, stating facts
+  only (a title and a date) — never a guilt line about a streak or a miss.
 - Automatically estimated scores — every number comes from evidence, a formula, or a check-in.
 - Cloud sync or accounts: state lives in the browser's `localStorage` under `liferpg-*` keys.
 

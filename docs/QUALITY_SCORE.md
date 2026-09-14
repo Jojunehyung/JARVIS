@@ -26,7 +26,7 @@ Verdicts against the current code, last refreshed 2026-09-08 against the Phase 4
 | 6 frozen tables | `data-guard` hook, data-curator only | verified (hook denies) |
 | 7 no game mechanics | code and copy scan (`finish-check` residue) | verified |
 | 8 no global metric store | `migrate` v19 (drops `metrics`, `act.lastCheckin`), `checkinKR` | verified — the global store and its check-in were removed 2026-09-11; objective measures live only in a goal's metric KR |
-| 9 derived progress | `krProgress`, `goalProgress`, `ageText`, `careerMonths` | verified |
+| 9 derived progress | `krProgress`, `goalProgress`, `ageText`, `careerMonths`, `calendarExportOf`/`buildIcs` (reads `events`/`tasks`/`goals`, writes nothing) | verified — the calendar export's read-only boundary is proven twice: smoke check (g) builds from a state whose `profile`/`deals`/`rates`/`folio`/`journal`/`reviews` and every event's `place`/`note` throw when read, and E2E (`tools/e2e/flow9.js`) confirms `liferpg-state-v1` and the storage key list are byte-identical after opening the sheet, changing its options, and exporting |
 | 10 evidence gate | `needsEvidence`, `tryComplete` | verified (E2E: submit disabled without photo) |
 | 11 promotion by evidence | `PromoteModal`, `promoteArea` | verified (E2E) — a CV edit through `ProfileModal` is confirmed not to be an alternate path (E2E, mutation-tested) |
 | 12 migrations | `migrate` v11–v14, `v` normalisation | verified (E2E: v10, no-`v`, v13 fixtures → v14) |

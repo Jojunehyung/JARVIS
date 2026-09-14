@@ -262,6 +262,49 @@ const typeInto = async (placeholder, value) => {
     if (!ok) throw new Error(`button not found: ${label}`);
     await sleep(350);
   };
+  // Take the file the app offers instead of letting Chrome save it. `URL.createObjectURL` is wrapped to record the
+  // blob's type and its bytes (base64, and as UTF-8 text), and the click of an anchor carrying `download` is recorded
+  // and swallowed; any other anchor click goes through. Both originals are restored in `finally`, whatever `trigger`
+  // does, so no later step runs against a stubbed page. Returns { name, type, text, b64 }, or null when no file was offered.
+  const captureDownload = async (trigger, { waitMs = 900 } = {}) => {
+    await page.evaluate(() => {
+      const rec = { name: null, type: null, text: null, b64: null, read: null };
+      window.__download = { rec, create: URL.createObjectURL, click: HTMLAnchorElement.prototype.click };
+      URL.createObjectURL = (blob) => {
+        rec.type = blob.type;
+        rec.read = blob.arrayBuffer().then((buf) => {
+          const bytes = new Uint8Array(buf);
+          let bin = "";
+          for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          rec.b64 = btoa(bin);
+          rec.text = new TextDecoder("utf-8").decode(bytes);
+        });
+        return window.__download.create.call(URL, blob);
+      };
+      HTMLAnchorElement.prototype.click = function () {
+        if (!this.download) return window.__download.click.call(this);
+        rec.name = this.download;
+      };
+    });
+    try {
+      await trigger();
+      await sleep(waitMs);
+      return await page.evaluate(async () => {
+        const rec = window.__download?.rec;
+        if (!rec || !rec.name) return null;
+        if (rec.read) await rec.read;
+        return { name: rec.name, type: rec.type, text: rec.text, b64: rec.b64 };
+      });
+    } finally {
+      await page.evaluate(() => {
+        const d = window.__download;
+        if (!d) return;
+        URL.createObjectURL = d.create;
+        HTMLAnchorElement.prototype.click = d.click;
+        delete window.__download;
+      });
+    }
+  };
   // Split coverage around reloads and accumulate (V8 coverage resets on every navigation)
   // The app opens the daily briefing on the first load of each day; dismiss it so the next click
   // reaches the screen behind. Pass { keepModal: true } in steps that assert the briefing itself.
@@ -323,7 +366,7 @@ const typeInto = async (placeholder, value) => {
     await sleep(1000); await closeModal();
     await assertDone(title);
   };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, assertDone, modalError, clickTab, reload, rows, todoRows, openAreaGate, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, rows, todoRows, openAreaGate, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);
