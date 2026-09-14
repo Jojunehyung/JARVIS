@@ -88,6 +88,25 @@ module.exports = async (h) => {
     await expectText("보유 기록");
     await expectText("여기서는 고칠 수 없어요 — 자격·시험은 목표의 핵심결과에서, 포트폴리오는 사업 탭에서 관리해요.");
     await expectText("학력·경력을 고쳐도 시작 등급은 바뀌지 않아요. 승급은 관문 증거로만 올라가요.");
+    // Typed text must be legible on the dark field. On Android the rendered colour of autofilled and date/month
+    // text comes from `-webkit-text-fill-color` and the page's colour scheme, not from `color` — both black
+    // until 2026-09-14, which left the profile fields unreadable on a phone.
+    const ink = await page.evaluate(() => {
+      const light = (c) => { const m = (c || "").match(/\d+/g); return !!m && m.slice(0, 3).every((v) => Number(v) >= 200); };
+      const fields = [...document.querySelectorAll('.fixed.inset-0 input:not([type="file"])')];
+      const bad = fields.filter((i) => !light(getComputedStyle(i).webkitTextFillColor) || !light(getComputedStyle(i).color))
+        .map((i) => `${i.type}:${i.placeholder || ""}=${getComputedStyle(i).webkitTextFillColor}`);
+      const hint = fields.find((i) => i.placeholder);
+      return {
+        scheme: getComputedStyle(document.documentElement).colorScheme,
+        count: fields.length, bad,
+        hintIsDimmer: hint ? !light(getComputedStyle(hint, "::placeholder").webkitTextFillColor) : null,
+      };
+    });
+    if (ink.scheme !== "dark") throw new Error("the page does not declare a dark colour scheme: " + ink.scheme);
+    if (!ink.count) throw new Error("no profile input to check");
+    if (ink.bad.length) throw new Error("profile inputs render dark text on the dark field: " + ink.bad.join(" | "));
+    if (ink.hintIsDimmer !== true) throw new Error("placeholder hints render as light as typed text, so an empty field looks filled");
   });
   await step("profile modal — validation", async () => {
     await setValue('.fixed.inset-0 input[placeholder="이름"]', "");

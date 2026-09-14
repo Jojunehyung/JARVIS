@@ -46,6 +46,7 @@ Numbers, D values, P, percentages, D-day, and system labels (`LIFE MANAGER`, `PR
 ## Constraints
 - Tailwind v3 core utilities only, no arbitrary values; icons from lucide only (in use: Trophy, Target, Plus, X, Lock, RotateCcw, TrendingUp, Check, Star, Flag, ClipboardList, CalendarDays, Briefcase, Camera, Paperclip, Link).
 - No game visuals ([Rule 7](design-docs/core-beliefs.md#rule-7)); grades 0–9, achievement trophies, streak 🔥 and shield 🛡 are product elements, not game elements.
+- The app is dark-only and says so to the browser: `<meta name="color-scheme" content="dark">` in `index.html` and `:root { color-scheme: dark }` in `src/index.css`, with `body` text `zinc-100`. Inputs carry no text-colour class; they inherit, and `-webkit-text-fill-color: currentColor` plus an autofill override keep typed text light, while `::placeholder` stays `zinc-500` so a blank field never looks filled. Without the declared scheme, Android drew autofilled and date/month input text in the light scheme's black — the profile fields were unreadable on a phone until 2026-09-14.
 - Text stays real text; all copy is verbatim Korean UI copy. Proposed alternatives are marked `[제안]` in design canvases.
 - Invariants for any redesign: the six-tab structure and per-screen information items; colour-role mapping; five grade colours; pace and "목표 기여 없음" always visible; evidence-first flows (no completion before attachment); the squared role-model bar whose upper segments are wider; mono numbers; dark single theme.
 

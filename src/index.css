@@ -2,7 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The app is dark-only. Without `color-scheme: dark` the browser treats the page as light, and on Android it
+   paints autofilled and autofill-previewed text (name, e-mail, phone) and the inner segments of date and month
+   inputs in the light scheme's black — through `-webkit-text-fill-color`, which outranks `color`. That is why the
+   profile fields computed a light colour yet rendered black on a phone (reported 2026-09-14). */
+:root {
+  color-scheme: dark;
+}
+
 html,
 body {
   background: #09090b;
+  color: #f4f4f5; /* zinc-100: nothing may fall back to the default black */
+}
+
+/* Typed text follows the element's own colour, and the caret stays visible on the dark field. */
+input,
+textarea,
+select {
+  -webkit-text-fill-color: currentColor;
+  caret-color: #f4f4f5;
+}
+
+/* A placeholder inherits `-webkit-text-fill-color` from its input, so the rule above would draw every hint in
+   the same light colour as typed text and a blank field would look filled. Keep hints a dimmer grey. */
+input::placeholder,
+textarea::placeholder {
+  -webkit-text-fill-color: #71717a; /* zinc-500 */
+  color: #71717a;
+  opacity: 1;
+}
+
+/* Autofill paints its own background and text colour; keep the field dark and the text light. The long
+   transition stops the browser's yellow/blue autofill background from ever being shown. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: #f4f4f5;
+  -webkit-box-shadow: 0 0 0 1000px #09090b inset;
+  caret-color: #f4f4f5;
+  transition: background-color 9999s ease-out 0s;
 }
