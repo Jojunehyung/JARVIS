@@ -74,7 +74,7 @@ const N = 5; // repeated measurements
 
   // 4) Tab switch render
   const tabs = [];
-  for (const t of ["홈", "목표", "퀘스트", "성장", "홈", "목표"]) {
+  for (const t of ["홈", "목표", "퀘스트", "홈", "목표"]) {
     const ms = await page.evaluate(async (name) => {
       const nav = document.querySelector("nav");
       const btn = [...nav.querySelectorAll("button")].find((b) => b.innerText.includes(name));

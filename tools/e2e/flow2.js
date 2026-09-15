@@ -91,8 +91,8 @@ module.exports = async (h) => {
 
   // ── Role model save
   await step("save role model settings", async () => {
-    await clickTab("성장");
-    try { await clickText("롤모델"); } catch { errors.push("롤모델 진입 실패"); }
+    await h.openSettings();
+    try { await clickInModal("롤모델"); } catch { errors.push("롤모델 진입 실패"); }
     await sleep(400);
     const inp = await page.$(".fixed.inset-0 input");
     if (inp) { await inp.click(); await inp.type("시니어 하네스 설계자", { delay: 4 }); }
@@ -114,71 +114,85 @@ module.exports = async (h) => {
     await clickInModalExact("저장");
     await sleep(800); await closeModal();
   });
-  await step("role-model proximity leads the growth tab", async () => {
-    await clickTab("성장");
+  await step("role-model proximity sits under the CV and matches roleGap", async () => {
+    await clickTab("홈");
     await sleep(300);
-    // The headline is the first block on the tab, and its number must be the one `roleGap` computes from the save.
+    // The proximity line is the last block on home, and its number must be the one `roleGap` computes from the save.
     const res = await page.evaluate(() => {
-      const head = document.querySelector("main")?.firstElementChild;
+      const line = document.querySelector("main")?.lastElementChild;
       const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
       const sq = (s.areas || [])
         .filter((p) => (s.role?.targets?.[p.id] || 0) > 0)
         .map((p) => Math.pow(Math.min(1, p.grade / s.role.targets[p.id]), 2));
       return {
-        text: (head?.innerText || "").replace(/\s+/g, " ").trim(),
+        tag: line?.tagName || "",
+        text: (line?.innerText || "").replace(/\s+/g, " ").trim(),
         match: sq.length ? Math.round((sq.reduce((a, b) => a + b, 0) / sq.length) * 100) : null,
       };
     });
-    if (!res.text.includes("근접도")) throw new Error("the growth tab does not lead with proximity: " + res.text);
-    if (!res.text.includes("시니어 하네스 설계자")) throw new Error("the headline does not name the role model: " + res.text);
+    if (!res.text.includes("근접도")) throw new Error("the line under the CV does not state proximity: " + res.text);
+    if (!res.text.includes("시니어 하네스 설계자")) throw new Error("the proximity line does not name the role model: " + res.text);
+    if (res.tag !== "BUTTON") throw new Error(`the proximity line is a ${res.tag || "missing element"}, so it cannot open direction advice`);
     if (res.match === null) throw new Error("the save carries no role-model requirement — proximity cannot be checked");
     const shown = res.text.match(/(\d+)%/);
-    if (!shown) throw new Error("the headline states no percentage: " + res.text);
-    if (Number(shown[1]) !== res.match) throw new Error(`the headline states ${shown[1]}%, roleGap computes ${res.match}% — ${res.text}`);
+    if (!shown) throw new Error("the proximity line states no percentage: " + res.text);
+    if (Number(shown[1]) !== res.match) throw new Error(`the proximity line states ${shown[1]}%, roleGap computes ${res.match}% — ${res.text}`);
   });
   await shot("rolemodel");
 
-  await step("area rows collapse to one line and open the promotion gate", async () => {
-    await clickTab("성장");
+  await step("CV grade rows are one line each and open the promotion gate", async () => {
+    await clickTab("홈");
     await sleep(300);
     const before = await page.evaluate(() => {
-      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").includes("실력 트랙"));
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
       return {
         body: document.body.innerText,
-        rows: sec ? [...sec.querySelectorAll("button")].map((b) => (b.innerText || "").replace(/\s+/g, " ").trim()) : [],
+        rows: [...document.querySelectorAll("main button")].filter((b) => /\d\/9/.test(b.innerText || "")).map((b) => (b.innerText || "").replace(/\s+/g, " ").trim()),
+        // TD-37: the main save's area list is read, never assumed
+        promotable: (s.areas || []).filter((a) => a.grade < 9).map((a) => a.name),
       };
     });
-    if (before.body.includes("관문 증명하기")) throw new Error("the tab still carries a promote button of its own");
-    if (before.body.includes("필요 증거:")) throw new Error("the tab still spells out the required evidence");
-    if (!before.rows.length) throw new Error("no area row was found in the skill track");
-    if (!before.rows.every((r) => /\d\/9/.test(r))) throw new Error("an area row drops its grade counter: " + before.rows.join(" | "));
-    if (!before.rows.some((r) => r.includes("다음 관문"))) throw new Error("no area row names its next gate: " + before.rows.join(" | "));
-    if (!(await h.openAreaGate("사업"))) throw new Error("the area row did not open the promotion gate");
+    if (before.body.includes("관문 증명하기")) throw new Error("home carries a promote button of its own");
+    if (before.body.includes("필요 증거:")) throw new Error("home spells out the required evidence");
+    if (!before.promotable.length) throw new Error("the save has no area below grade 9, so no gate can be opened");
+    if (before.rows.length !== before.promotable.length) throw new Error(`${before.rows.length} grade row button(s) for ${before.promotable.length} area(s) below grade 9: ` + before.rows.join(" | "));
+    if (!before.rows.every((r) => r.includes("다음 관문"))) throw new Error("a grade row does not name its next gate: " + before.rows.join(" | "));
+    if (!(await h.openAreaGate(before.promotable[0]))) throw new Error("the grade row did not open the promotion gate");
     await expectText("승급 심사");
     await expectText("필요 증거:"); // the line the row dropped is stated by the modal instead
     await closeModal();
   });
 
-  await step("the achievement wall states its counts while collapsed", async () => {
-    await clickTab("성장");
+  // The CV counts what the save holds — declared and earned certifications together — and the wall sheet it opens
+  // holds every item those counts stand for.
+  await step("the CV states held credentials and record counts, and the wall lists every area", async () => {
+    await clickTab("홈");
     await sleep(300);
-    // Collapsing may not remove a number from the screen: the header states all three totals while closed.
-    const read = () => page.evaluate(() => {
-      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").includes("성취의 벽"));
-      if (!sec) return null;
-      const text = (sec.innerText || "").replace(/\s+/g, " ").trim();
-      return { text, lines: (text.match(/검증된 성취/g) || []).length };
+    const res = await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      const earned = (s.tasks || []).filter((q) => q.isCert && q.status === "done").map((q) => q.title.replace(/ 취득$/, ""));
+      return {
+        held: [...new Set([...(s.profile?.certs || []), ...earned])],
+        cv: (document.querySelector("main")?.firstElementChild?.innerText || "").replace(/\s+/g, " ").trim(),
+        exams: Object.keys(s.exams?.best || {}).length,
+        trophies: (s.room?.trophies || []).length,
+        achievements: (s.areas || []).reduce((n, a) => n + (a.achievements || []).length, 0),
+        areas: (s.areas || []).map((a) => a.name),
+      };
     });
-    const closed = await read();
-    if (!closed) throw new Error("the achievement wall section was not found");
-    if (!/트로피 \d+개 · 시험 \d+개 · 검증된 성취 \d+건/.test(closed.text)) throw new Error("the collapsed header hides its counts: " + closed.text);
-    if (closed.lines !== 1) throw new Error(`${closed.lines} achievement lines while closed — the per-area lists are not folded away`);
-    await clickText("성취의 벽");
-    const open = await read();
-    const areas = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).areas.map((p) => p.name));
-    if (open.lines !== areas.length + 1) throw new Error(`${open.lines} achievement lines when open, expected ${areas.length + 1}`);
-    for (const n of areas) if (!open.text.includes(n)) throw new Error("the opened wall omits an area: " + n);
-    await clickText("성취의 벽"); // leave the section as the tab opens it
+    if (res.held.length < 2) throw new Error("fewer than two certifications are held, so the declared-plus-earned union is not exercised: " + JSON.stringify(res.held));
+    const want = [`자격 ${res.held.length}건`, ...res.held, `시험 ${res.exams}건`, `트로피 ${res.trophies}개 · 검증된 성취 ${res.achievements}건`];
+    for (const t of want) if (!res.cv.includes(t)) throw new Error(`the CV does not state "${t}": ` + res.cv);
+    const cvLines = (res.cv.match(/검증된 성취/g) || []).length;
+    if (cvLines !== 1) throw new Error(`the CV states the verified-achievement count ${cvLines} times, expected once`);
+    await clickText("검증된 성취");
+    const wall = await h.overlayText();
+    if (!wall.includes("성취의 벽")) throw new Error("the achievement row did not open the wall sheet: " + wall.slice(0, 200));
+    if (!/트로피 \d+개 · 시험 \d+개 · 검증된 성취 \d+건/.test(wall)) throw new Error("the wall sheet does not state its three counts: " + wall.slice(0, 200));
+    const wallLines = (wall.match(/검증된 성취/g) || []).length;
+    if (wallLines !== res.areas.length + 1) throw new Error(`${wallLines} verified-achievement lines on the wall, expected ${res.areas.length + 1}`);
+    for (const n of res.areas) if (!wall.includes(n)) throw new Error("the wall sheet omits an area: " + n);
+    await closeModal();
   });
 
   // ── Catalogue exam mode

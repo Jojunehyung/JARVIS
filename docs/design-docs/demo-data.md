@@ -19,6 +19,8 @@
 
 `edu: "ba"` is carried over from the pre-v21 shape, fixing the invalid `"univ4"` key it used to hold — never a real `EDU_OPTS` key ([TD-28](../exec-plans/tech-debt-tracker.md), resolved 2026-09-13). There is still no `career`, `lead`, `biz`, `output`, `certs` or `examsOwned` key, exactly as before v21: the demo's area grades are authored directly on `p1`–`p4` below, never run through `computeGrades`, so a key that computation would consume is simply absent rather than faked. The legacy `age` and `majorField` fields are dropped outright (not carried as dead weight) because a v21 onboarding never writes either.
 
+No `profile.certs` and no done `isCert` task means the home CV's `자격` row (`heldCertsOf(state)`, [home.md](../product-specs/home.md)) reads `자격 0건` on this save — a true fact about it, deliberately left that way: adding a declared name to `profile.certs` would need a matching `certBest` prefill for a stage-group certification to stay honest ([Rule 3](core-beliefs.md#rule-3)), and the tasks table below already exercises the earned half of `heldCertsOf` through 전기기사 (once it completes).
+
 ## Goals
 
 | Goal | area | deadline | createdAt | note | KRs |
@@ -98,7 +100,8 @@ n`, never an absolute one:
 - `남은 계약 1,200만원` — the still-unbilled remainder of the △△테크 contract (3,000,000 × 4 months).
 - `견적 대기 300만원` — the □□랩스 quote total (1,500,000 × 2).
 - `입금 미확인 1건` — the ○○물산 contract's third billed month (`month − 2`) was deliberately left out of
-  `paidMonths`, so the severity-3 briefing line, the rose home-card count, and the packet's `미수` line all render.
+  `paidMonths`, so the severity-3 briefing line, the rose unpaid count on the `실행` header's business button
+  ([tasks.md](../product-specs/tasks.md)), and the packet's `미수` line all render.
 
 The □□랩스 quote was created 9 days before `today`, one day past `QUOTE_STALE_DAYS` (7), so the briefing's
 stale-quote line fires as well; with the unpaid line, that is two `biz` alerts, well under the `CAP − 1` the

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useId, forwardRef, useImperativeHandle } from "react";
 import {
-  Trophy, Target, Plus, X, Lock, RotateCcw, TrendingUp, Check, Star, ChevronDown,
+  Trophy, Target, Plus, X, Lock, RotateCcw, Check, Star, Settings,
   Flag, ClipboardList, CalendarDays, Briefcase, Camera, Paperclip, Link as LinkIcon,
 } from "lucide-react";
 
@@ -1285,6 +1285,38 @@ const latestCareer = (careers) => {
   return list.length ? list.reduce((a, b) => ((b.from || "") > (a.from || "") ? b : a)) : null;
 };
 const displayName = (p) => p?.nick?.trim() || p?.name?.trim() || "사용자";
+/* The CV at degree and role level, shared by the home CV and the assistant packet so the two can never state a
+   different degree or role. `any` says there is an education or a career entry to speak for. It reads neither
+   `edus[].school` nor `careers[].company` (the packet comment in `buildAssistantPacket` says why). */
+const cvSummaryOf = (profile, today) => {
+  const te = topEdu(profile?.edus);
+  const lc = latestCareer(profile?.careers);
+  const degree = te ? [EDU_LEVELS.find((l) => l.k === te.degree)?.t, EDU_STATUS.find((s) => s.k === te.status)?.t].filter(Boolean).join(" ") : "";
+  return {
+    any: !!(te || lc),
+    edu: te ? `${degree || "학력"} · ${te.major || te.field || "전공 미기재"}` : "학력 미입력",
+    career: lc ? `실무 ${careerText(careerMonths(profile?.careers, today))} · 최근 ${lc.role}` : "경력 없음",
+  };
+};
+/* Every certification the account holds, one entry per name: the names declared at onboarding (`profile.certs`,
+   D from the table) and every certification proven in the app with a certificate photo — a done `isCert` task,
+   named through `certByTitle` (longest name first, rule 15) with the D stored on the task. `profile.certs` is
+   written only at onboarding, so without the second half the CV would omit exactly the certification that carries
+   evidence. Highest D first, unknown D last, then by name. The home CV and `ProfileModal`'s `보유 기록` both read
+   this, so the two cannot disagree. Like the helpers above it runs from render only, so the forward references to
+   `certOf` / `certByTitle` are resolved by then. */
+const heldCertsOf = (state) => {
+  const byName = new Map();
+  const put = (n, d) => { if (n && byName.get(n) == null) byName.set(n, d ?? null); };
+  for (const n of state?.profile?.certs || []) put(n, certOf(n)?.d);
+  for (const q of state?.tasks || []) {
+    if (!q?.isCert || q.status !== "done") continue;
+    const c = certByTitle(q.title);
+    put(c?.n || q.title, q.certD ?? c?.d);
+  }
+  return [...byName].map(([n, d]) => ({ n, d }))
+    .sort((a, b) => (b.d ?? -1) - (a.d ?? -1) || String(a.n).localeCompare(String(b.n)));
+};
 
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
 const dstr = (d = new Date()) => {
@@ -1917,8 +1949,6 @@ const DIFF_PT_TEXT = { E: "text-zinc-300", D: "text-emerald-300", C: "text-sky-3
 // Whole days from `a` to `b`, both "YYYY-MM-DD". Noon-anchored like shiftDay so DST cannot shift the count.
 const daysBetween = (a, b) => Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000);
 const mondayOf = (date) => { const d = new Date(date + "T12:00:00"); return shiftDay(date, -((d.getDay() + 6) % 7)); };
-const doneTodayCount = (state, today) => (state.tasks || []).reduce(
-  (n, q) => n + (q.type === "daily" ? (q.doneDates?.includes(today) ? 1 : 0) : q.doneAt === today ? 1 : 0), 0);
 
 const ddayStr = (deadline) => {
   if (!deadline) return "";
@@ -2265,8 +2295,8 @@ const revenueByMonth = (state, fromMonth, n) => {
   });
 };
 
-// The one object the tab header, the briefing, the home card and the packet all read, so no two surfaces
-// can state a different figure.
+// The one object the `사업` header, the `실행` header and list, the briefing and the packet all read, so no two
+// surfaces can state a different figure.
 const bizSummary = (state, today) => {
   const month = String(today).slice(0, 7);
   const counts = { lead: 0, quote: 0, won: 0, lost: 0, active: 0, upcoming: 0, ended: 0, unpaid: 0 };
@@ -2337,7 +2367,7 @@ const agendaOf = (state, today) => {
 // it pays nothing, moves no metric and passes no evidence gate (rules 1, 8, 10), so nothing here touches the task path.
 const EVENT_KIND_LABEL = { appt: "약속", due: "마감" };
 const REPEAT_LABEL = { daily: "매일", weekly: "매주", monthly: "매월" };
-const EVENT_SOON_DAYS = 3;     // a deadline this close is named in the briefing and on the home card
+const EVENT_SOON_DAYS = 3;     // a deadline this close is named in the briefing
 const EVENT_HORIZON_DAYS = 90; // how far ahead repeats are expanded for the tab and the packet
 const EVENT_PAST_DAYS = 30;    // how far back a missed deadline stays listed
 const MAX_OCC = 400;           // hard iteration stop, so a distant `until` or a wide window cannot spin
@@ -2421,7 +2451,7 @@ const todoOf = (state, today) => {
   };
   const rows = [];
 
-  // Tasks — `agendaOf` owns the definition of "open", so the tab, the home card and the briefing cannot disagree.
+  // Tasks — `agendaOf` owns the definition of "open", so the tab and the briefing cannot disagree.
   for (const q of agendaOf(state, today).all) {
     rows.push({ key: `t:${q.id}`, kind: "task", date: q.due || null, time: "", title: q.title, task: q });
   }
@@ -2497,8 +2527,9 @@ const KIND_LABEL = { book: "📚 독서", fit: "💪 운동" };
 const AREA_STALE_DAYS = 30;
 const ACTIVITY_GAP_DAYS = 7;
 const CAP = 5;
-// Briefing actions that are a tab rather than a modal — a line whose type is missing here opens nothing.
-const TAB_ACTIONS = ["goals", "growth", "schedule", "biz"];
+// Briefing actions that switch the tab. `closeBriefing` handles `task` before this list and opens any other type as
+// the modal of that name, which the root must render: `bridge`, `journal`, `review`, `roleAdvice` and `role`.
+const TAB_ACTIONS = ["home", "goals", "schedule", "biz"];
 
 // The daily briefing: what the saved state says about today. Pure — computed at render, never stored (rule 9).
 // Every line states a fact with a number and never softens it (rule 13).
@@ -2600,7 +2631,8 @@ const buildBriefing = (state, today) => {
     })
     .filter((x) => x.days == null || x.days >= AREA_STALE_DAYS)
     .slice(0, 3)
-    .map((x) => ({ kind: "area", severity: 2, text: `${x.p.name} — 최근 ${AREA_STALE_DAYS}일 성취 기록 0건 (마지막 ${x.last || "없음"})`, action: { type: "growth" } }));
+    // Lands on home, where the area's grade row and its promotion gate live
+    .map((x) => ({ kind: "area", severity: 2, text: `${x.p.name} — 최근 ${AREA_STALE_DAYS}일 성취 기록 0건 (마지막 ${x.last || "없음"})`, action: { type: "home" } }));
   const drops = [];
   for (const g of active) {
     const kinds = new Set((state.tasks || []).filter((q) => q.goalId === g.id && q.kind).map((q) => q.kind));
@@ -2618,7 +2650,8 @@ const buildBriefing = (state, today) => {
   /* Next step — the same recommendation the direction advice screen shows */
   const { rg, gaps } = roleRecommendations(state);
   let nextItem;
-  if (!rg) nextItem = { kind: "next", severity: 2, text: "롤모델 미설정 — 근접도 계산 대상 없음", action: { type: "growth" } };
+  // Without a role model the line opens the role model form itself: on home the same fact is an inert line
+  if (!rg) nextItem = { kind: "next", severity: 2, text: "롤모델 미설정 — 근접도 계산 대상 없음", action: { type: "role" } };
   else if (!gaps.length) nextItem = { kind: "next", severity: 1, text: `모든 요구 영역 충족 · 근접도 ${rg.match}%`, action: { type: "roleAdvice" } };
   else {
     const g0 = gaps[0];
@@ -2645,15 +2678,7 @@ const buildBriefing = (state, today) => {
     text: `${je && je.text.trim() ? `오늘 일지 ${je.text.trim().length}자` : "오늘 일지 없음"}${je?.ai ? ` · AI 답변 ${je.aiDate}` : ""}`,
   }]);
 
-  return {
-    counts: {
-      overdue: ag.overdue.length, dueToday: ag.dueToday.length, dailyOpen: ag.daily.length,
-      behind: goalItems.filter((g) => g.severity === 3).length,
-      events: todayOcc.length, dueSoon: soonDue.length, // today's occurrences, and the deadlines inside EVENT_SOON_DAYS (today included)
-      bizMonth: biz.thisMonth, bizUnpaid: biz.unpaid.length,
-    },
-    sections,
-  };
+  return { sections };
 };
 
 /* ── Assistant bridge — the app writes a text packet, the user talks to an external chat, the reply comes back as text.
@@ -2684,17 +2709,10 @@ const buildAssistantPacket = (state, today) => {
      role. It deliberately carries none of `profile.name`, `profile.birth`, `profile.email`, `profile.phone`,
      `profile.edus[].school` or `profile.careers[].company` — a school or an employer names a person nearly as
      well as a name does, and this packet is the one place data leaves the device (SECURITY.md). One line at
-     most; `sec` prints `- 없음` when there is nothing to state. */
-  const prof = state.profile || {};
-  const te = topEdu(prof.edus);
-  const lc = latestCareer(prof.careers);
-  const cvLines = [];
-  if (te || lc) {
-    const degree = te ? [EDU_LEVELS.find((l) => l.k === te.degree)?.t, EDU_STATUS.find((s) => s.k === te.status)?.t].filter(Boolean).join(" ") : "";
-    const eduPart = te ? `${degree || "학력"} · ${te.major || te.field || "전공 미기재"}` : "학력 미입력";
-    const carPart = lc ? `실무 ${careerText(careerMonths(prof.careers, today))} · 최근 ${lc.role}` : "경력 없음";
-    cvLines.push(`- ${eduPart} / ${carPart}`);
-  }
+     most; `sec` prints `- 없음` when there is nothing to state. The strings come from `cvSummaryOf`, which the
+     home CV reads too. */
+  const cv = cvSummaryOf(state.profile, today);
+  const cvLines = cv.any ? [`- ${cv.edu} / ${cv.career}`] : [];
   const goalLines = active.map((g) => {
     const pc = paceOf(g, state);
     const krs = (g.krs || []).slice(0, 4).map((kr) => `${kr.title} ${krRemainText(kr, g, state)}`).join(" · ");
@@ -3767,131 +3785,128 @@ function Onboarding({ onStart, onDemo }) {
   );
 }
 
-/* ───────────────────────── Home — today's focus ───────────────────────── */
-function HomeTab({ state, today, imgs, onProfile, onComplete, onGoGoals, onGoQuests, onGoSchedule, onGoBiz, onBriefing, onJournal, onReview }) {
-  const a = state.act;
-  const brief = buildBriefing(state, today);
-  const firstAlert = brief.sections.flatMap((s) => s.items).find((it) => it.severity === 3);
-  const active = (state.goals || []).filter((g) => g.status === "active");
-  const focus = [...active].sort((x, y) => (x.deadline || "9999").localeCompare(y.deadline || "9999")).slice(0, 3);
-  // The card reads the same expansion the `실행` tab reads, so the two can never disagree about what "today"
-  // means: overdue plus today, tasks only. This week and later belong to the tab, and today's schedule and
-  // business facts already have their own lines above.
-  const td = todoOf(state, today);
-  const byKey = (k) => td.groups.find((g) => g.key === k)?.rows || [];
-  const todayQuests = [...byKey("overdue"), ...byKey("today")].filter((r) => r.kind === "task").map((r) => r.task);
-  const doneToday = doneTodayCount(state, today);
+/* ───────────────────────── Home — the CV ───────────────────────── */
+/* Home is one CV that evaluates the account in numbers and grades, with the role-model proximity line under it
+   (2026-09-15). A row is admitted when its value is a number, a grade or an ordinal credential level; a name
+   appears only as the label of such a value. Everything is derived at render and stored nowhere (rule 9), and a
+   zero is stated, never hidden (rule 13). Today's cards left home: the briefing opens from the `실행` header, goal
+   progress and pace live in `목표`, today's tasks are the `실행` list. */
+
+// One CV record row: a fixed-width label and a one-line value. A button only when the row opens something.
+function CvFact({ label, children, onClick }) {
+  const cls = "flex items-baseline gap-2 text-xs w-full text-left";
+  const body = (
+    <>
+      <span className="w-16 shrink-0 text-zinc-500">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-zinc-300">{children}</span>
+    </>
+  );
+  return onClick
+    ? <button onClick={onClick} className={`${cls} active:opacity-70`}>{body}</button>
+    : <div className={cls}>{body}</div>;
+}
+
+/* One area as one row, moved from the growth tab: grade box, name, rank and next gate, `{grade}/9`. The row's only
+   behaviour is opening `PromoteModal` — nothing else on home promotes, so submitting gate evidence stays the single
+   path up (rules 10, 11). */
+function AreaGradeRow({ area: p, onPromote }) {
+  const cur = RANKS[p.grade];
+  const next = RANKS[p.grade + 1];
+  const body = (
+    <>
+      <span className="w-7 h-7 shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 flex items-center justify-center font-mono font-bold text-xs text-cyan-300">{p.grade}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold truncate">{p.name}</div>
+        <div className="text-xs text-zinc-500 truncate">{next ? `등급 ${cur.name} · 다음 관문 ${next.name}` : "정점 도달"}</div>
+      </div>
+      <span className="text-xs font-mono text-zinc-600 shrink-0">{p.grade}/9</span>
+    </>
+  );
+  // Grade 9: `PromoteModal` returns null, so the row is not a button and nothing can be tapped.
+  if (!next) return (
+    <div className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5">
+      {body}<Trophy size={13} className="text-amber-300 shrink-0" />
+    </div>
+  );
+  return (
+    <button onClick={() => onPromote(p)}
+      className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 active:opacity-70">
+      {body}<Lock size={13} className="text-zinc-500 shrink-0" /><span className="text-zinc-600 shrink-0">›</span>
+    </button>
+  );
+}
+
+function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleAdvice, onWall }) {
+  const cv = cvSummaryOf(state.profile, today);
+  const held = heldCertsOf(state);
+  const bests = Object.entries(state.exams?.best || {})
+    .sort(([ia, a], [ib, b]) => (b?.d ?? -1) - (a?.d ?? -1) || ia.localeCompare(ib));
+  const trophies = (state.room?.trophies || []).length;
+  const achTotal = (state.areas || []).reduce((n, p) => n + (p.achievements || []).length, 0);
+  const rg = roleGap(state);
   return (
     <>
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <div className="flex items-center gap-4">
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
+        <div className="flex items-start gap-3">
           <div className="rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-700 shrink-0">
-            <Portrait img={imgs?.profile} look={state.profile.look} gender={state.profile.gender} size={72} />
+            <Portrait img={imgs?.profile} look={state.profile.look} gender={state.profile.gender} size={64} />
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-black text-base truncate">{displayName(state.profile)}</div>
-            <div className="text-xs text-zinc-500 mt-0.5 truncate">{state.areas.map((p) => `${p.name} ${RANKS[Math.min(p.grade, RANKS.length - 1)].name}`).join(" · ")}</div>
-            <div className="flex items-center gap-2 mt-2">
-              {/* The one profile control on this screen. The photo, the personal facts and the CV are all edited
-                  in the screen this opens, so the card only states facts and points at the screen that owns them. */}
-              <button onClick={onProfile}
-                className="bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium">프로필</button>
-              <span className="text-xs text-zinc-500">오늘 {doneToday}건 완료</span>
-            </div>
+            <div className="text-xs text-zinc-500 mt-0.5 truncate">{ageText(state.profile, today)}</div>
+            {/* The one edit control on the CV. The photo, the personal facts and the records are all edited in the
+                screen this opens, so the card only states facts and points at the screen that owns them. */}
+            <button onClick={onProfile}
+              className="bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium mt-2">프로필</button>
           </div>
+          {/* Role model, backup and reset — set rarely, so they sit behind one icon in the corner of the card */}
+          <button onClick={onSettings} aria-label="설정" title="설정"
+            className="shrink-0 p-1.5 rounded-lg border border-zinc-700 text-zinc-400 active:opacity-70">
+            <Settings size={15} />
+          </button>
         </div>
-      </section>
 
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <SectionLabel tone="text-amber-300">오늘 브리핑</SectionLabel>
-        <div className="text-xs font-mono text-zinc-400 mt-1.5">
-          기한 지남 {brief.counts.overdue} · 오늘 기한 {brief.counts.dueToday} · 매일 남음 {brief.counts.dailyOpen} · 뒤처짐 {brief.counts.behind}
+        {/* A truncated row is never the only place a name lives: `ProfileModal` lists every held certification and
+            exam best in full, and the wall sheet lists every earned item. */}
+        <div className="space-y-1">
+          <CvFact label="학력">{cv.edu}</CvFact>
+          <CvFact label="경력">{cv.career}</CvFact>
+          <CvFact label="자격">
+            <span className="font-mono">{held.length}건</span>
+            {held.map((c) => <span key={c.n}> · {c.n}{c.d != null && <> <span className="font-mono">D{c.d}</span></>}</span>)}
+          </CvFact>
+          <CvFact label="시험">
+            <span className="font-mono">{bests.length}건</span>
+            {bests.map(([id, b]) => (
+              <span key={id}> · {examOf(id)?.n || id} {b?.label}{b?.d != null && <> <span className="font-mono">D{b.d}</span></>}</span>
+            ))}
+          </CvFact>
+          <CvFact label="포트폴리오"><span className="font-mono">{(state.folio || []).length}건</span></CvFact>
+          <CvFact label="성취" onClick={onWall}>
+            트로피 <span className="font-mono">{trophies}개</span> · 검증된 성취 <span className="font-mono">{achTotal}건</span> ›
+          </CvFact>
         </div>
-        {/* Today's date facts belong beside the other today numbers, so the schedule gets a line here, not a sixth card */}
-        <button onClick={onGoSchedule} className="block text-left text-xs font-mono text-zinc-400 mt-1 active:opacity-70">
-          오늘 일정 {brief.counts.events}건 · {EVENT_SOON_DAYS}일 내 마감 {brief.counts.dueSoon}건 ›
-        </button>
-        {/* The same `buildBriefing` call the schedule line above reads — this month's money belongs beside the
-            other today numbers, and a fifth card would push `오늘의 초점` below the fold */}
-        <button onClick={onGoBiz} className="block text-left text-xs font-mono text-zinc-400 mt-1 active:opacity-70">
-          이번 달 계약 {wonText(brief.counts.bizMonth)} · <span className={brief.counts.bizUnpaid > 0 ? "text-rose-400" : ""}>입금 미확인 {brief.counts.bizUnpaid}건</span> ›
-        </button>
-        {firstAlert && <div className="text-xs text-rose-400 mt-1 truncate">{firstAlert.text}</div>}
-        <div className="flex gap-1.5 mt-2.5">
-          <button onClick={onBriefing} className="flex-1 py-2 rounded-xl bg-amber-400 text-zinc-950 font-black text-xs">브리핑 열기 ›</button>
-          <button onClick={onJournal} className="flex-1 py-2 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">일지 쓰기</button>
-          <button onClick={onReview} className="flex-1 py-2 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">주간 리뷰</button>
-        </div>
-      </section>
 
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <div className="flex items-center justify-between">
-          <SectionLabel tone="text-cyan-400">오늘의 초점</SectionLabel>
-          <button onClick={onGoGoals} className="text-xs text-zinc-500">전체 보기 ›</button>
-        </div>
-        {focus.length === 0 ? (
-          <div className="text-center py-4">
-            <EmptyGoalSvg />
-            <p className="text-sm text-zinc-500">목표 없음 — 진행률을 계산할 대상이 없습니다.</p>
-            <button onClick={onGoGoals} className="mt-2 text-xs font-bold text-cyan-300 border border-cyan-700 rounded-lg px-3 py-1.5">
-              첫 목표 세우기
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {focus.map((g) => {
-              const pc = paceOf(g, state);
-              return (
-                <button key={g.id} onClick={onGoGoals} className="w-full text-left bg-zinc-950 rounded-xl p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-bold truncate">{g.title}</span>
-                    <span className="text-xs font-mono font-bold text-zinc-400 shrink-0">{ddayStr(g.deadline)}</span>
-                  </div>
-                  <div className="mt-2"><Bar ratio={pc.p} color="bg-cyan-400" /></div>
-                  <div className="text-xs font-mono text-zinc-500 mt-1.5">
-                    진행 {Math.round(pc.p * 100)}%{pc.el != null && <> · 시간 경과 {Math.round(pc.el * 100)}%</>} · <span className={`font-bold ${pc.cls}`}>{pc.label}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <div className="flex items-center justify-between">
-          <SectionLabel tone="text-zinc-400">오늘 할 일</SectionLabel>
-          <button onClick={onGoQuests} className="text-xs text-zinc-500">관리 ›</button>
-        </div>
-        {todayQuests.length === 0 ? (
-          <p className="text-sm text-zinc-500 text-center py-3">오늘 기한인 실행이 없어요 — 이번 주 이후는 실행 탭에 있어요.</p>
-        ) : (
+        <div>
+          <SectionLabel tone="text-cyan-400">영역 등급</SectionLabel>
           <div className="space-y-1.5">
-            {todayQuests.slice(0, 5).map((q) => {
-              const area = state.areas.find((x) => x.id === q.areaId);
-              const goal = q.goalId ? state.goals.find((g) => g.id === q.goalId) : null;
-              return (
-                <div key={q.id} className="flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5">
-                  <button onClick={() => onComplete(q)}
-                    className="w-5 h-5 rounded-md border border-zinc-700 flex items-center justify-center shrink-0 active:scale-90 transition-transform">
-                    <Check size={13} className="text-transparent" />
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold truncate">{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : ""}{q.title}</div>
-                    <div className="text-xs text-zinc-500 truncate">
-                      {area?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{!goal && <span className="text-zinc-600"> · 목표 연결 없음</span>}
-                    </div>
-                  </div>
-                  <DueChip due={q.due} today={today} />
-                  {q.isExam && <span className={`text-xs font-mono font-bold border bg-zinc-900 rounded-lg px-1.5 py-1 shrink-0 ${GRADE_TEXT[achGrade(q.band?.d ?? 0)]} ${GRADE_BORDER[achGrade(q.band?.d ?? 0)]}`}>시험 D{q.band?.d}</span>}
-                  {q.isCert && <span className={`text-xs font-mono font-bold border bg-zinc-900 rounded-lg px-1.5 py-1 shrink-0 ${GRADE_TEXT[achGrade(q.certD ?? 0)]} ${GRADE_BORDER[achGrade(q.certD ?? 0)]}`}>자격 D{q.certD}</span>}
-                  {!q.isExam && !q.isCert && <DiffBadge d={q.diff} />}
-                </div>
-              );
-            })}
+            {state.areas.map((p) => <AreaGradeRow key={p.id} area={p} onPromote={onPromote} />)}
           </div>
-        )}
+        </div>
       </section>
+
+      {/* Proximity is computed from the verified grades above (rule 14). Without a role model it is an inert fact:
+          the role model is set in settings, and direction advice has nothing to explain. */}
+      {rg ? (
+        <button onClick={onRoleAdvice} className="w-full text-left flex items-center gap-1.5 px-1 text-xs active:opacity-70">
+          <span className="text-zinc-500 shrink-0">롤모델 근접도</span>
+          <span className="font-mono font-bold text-cyan-300 shrink-0">{rg.match}%</span>
+          <span className="text-zinc-500 truncate">· {rg.name}</span>
+          <span className="text-zinc-600 shrink-0">›</span>
+        </button>
+      ) : (
+        <p className="px-1 text-xs text-zinc-500">롤모델 미설정 — 근접도 계산 대상 없음</p>
+      )}
     </>
   );
 }
@@ -3918,7 +3933,8 @@ function ProfileModal({ profile, state, img, today, onUpload, onClearImg, onSave
   const [careers, setCareers] = useState(profile.careers || []);
   const [err, setErr] = useState("");
 
-  const certs = profile.certs || [];
+  // Declared and earned certifications together — the same list the home CV counts, so the two cannot disagree
+  const certs = heldCertsOf(state).map((c) => c.n);
   const bests = Object.entries(state.exams?.best || {});
   const field = "w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-500";
 
@@ -4638,14 +4654,37 @@ function CatalogModal({ state, initialCat, onClose }) {
 /* ── Role-model direction advice ── */
 function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
   const { rg, gaps } = roleRecommendations(state);
-  // The one surface that explains the proximity bars, one tap from the headline that draws them (rule 14).
+  // The one surface that draws and explains the proximity bars, one tap from the home line that states the number (rule 14).
   const legend = <p className="text-xs text-zinc-600">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.</p>;
   return (
     <Modal title={`방향 제안 — ${rg?.name || "롤모델"}`} onClose={onClose}>
+      {/* Per-area requirement lines and segmented bars, moved from the growth headline, with the legend once under them */}
+      <div className="space-y-2 mb-3">
+        {(rg?.items || []).map((i) => (
+          <div key={i.area.id}>
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-zinc-100 font-medium truncate">{i.area.name}</span>
+              <span className={`font-mono text-right shrink-0 ${i.gap === 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                {RANKS[i.have].name} / 요구 {RANKS[i.need].name}{i.gap > 0 ? ` · ${i.gap}단계 부족` : " · 충족"}
+              </span>
+            </div>
+            {/* Cell widths are the squared curve itself — the same formula as `roleGap` (rule 14) */}
+            <div className="flex h-2 gap-0.5 mt-1">
+              {Array.from({ length: i.need }, (_, k) => {
+                const w = (Math.pow((k + 1) / i.need, 2) - Math.pow(k / i.need, 2)) * 100;
+                return (
+                  <div key={k} style={{ width: `${w}%` }}
+                    className={`rounded border ${k < Math.min(i.have, i.need) ? "bg-cyan-400 border-cyan-300" : "bg-zinc-900 border-zinc-800"}`} />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {legend}
+      </div>
       {gaps.length === 0 ? (
         <div className="space-y-2">
           <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다. 근접도 {rg?.match}%.</p>
-          {legend}
         </div>
       ) : (
         <div className="space-y-3">
@@ -4702,7 +4741,6 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
               </div>
             );
           })}
-          {legend}
           <p className="text-xs text-zinc-600">추천은 직무 분야 매칭과 직무 가중 기준입니다.</p>
         </div>
       )}
@@ -4733,7 +4771,7 @@ const TODO_DONE_MAX = 40; // rows the `완료` archive keeps, newest first — t
    decides what a row of each kind looks like. `onComplete` is passed to task rows and to nothing else — an event
    row keeps the schedule tab's own buttons (they pay nothing and move no goal) and a business row has no control
    at all (rules 1, 10, 16, 17). New tasks are created in `목표` only (rules 18, 19). */
-function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onViewEvidence, onEditEvent, onToggleEventDone, onSkipEvent, onGoBiz }) {
+function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onViewEvidence, onEditEvent, onToggleEventDone, onSkipEvent, onGoBiz, onBriefing }) {
   const [view, setView] = useState("todo"); // open list or completed archive — a view preference, never stored (rule 9)
   const td = useMemo(() => todoOf(state, today), [state, today]);
   const biz = useMemo(() => bizSummary(state, today), [state, today]);
@@ -4824,9 +4862,15 @@ function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onV
             사업 <span className={biz.counts.unpaid > 0 ? "text-rose-400" : ""}>입금 미확인 {biz.counts.unpaid}건</span> · 견적 대기 {biz.counts.quote}건 ›
           </button>
         )}
-        <div className="flex gap-1.5 mt-2.5">
-          <Chip on={view === "todo"} onClick={() => setView("todo")}>할 일</Chip>
-          <Chip on={view === "done"} onClick={() => setView("done")}>완료</Chip>
+        {/* The manual way back into the briefing once its daily auto-open is dismissed — and through it the journal,
+            the weekly review and the assistant bridge. It sits on this tab because the briefing opens with today's tasks. */}
+        <div className="flex items-center justify-between gap-2 mt-2.5">
+          <div className="flex gap-1.5">
+            <Chip on={view === "todo"} onClick={() => setView("todo")}>할 일</Chip>
+            <Chip on={view === "done"} onClick={() => setView("done")}>완료</Chip>
+          </div>
+          <button onClick={onBriefing}
+            className="shrink-0 px-3 py-1.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">브리핑 열기 ›</button>
         </div>
       </section>
 
@@ -5334,198 +5378,106 @@ function StudyVerifyModal({ task, onClose, onDone }) {
   );
 }
 
-/* ───────────────────────── Growth tab ───────────────────────── */
-/* Four blocks in reading order: how close the verified grades are to the role model, the areas as one row each,
-   the record of what has been verified, and the data controls. Simplified 2026-09-13 — the tab was 1,963 px of
-   four identical cards, each shouting its own cyan promote button, so none of them read as the next thing to do.
-   An area row's only behaviour is opening `PromoteModal`: the tab has no promote control of its own, so submitting
-   evidence stays the single path up (rules 10, 11). The record and data sections collapse; `openWall` / `openData`
-   are component state and never reach the save (rule 9), and a closed section still states its numbers (rule 13). */
+/* ───────────────────────── Settings and the achievement wall ───────────────────────── */
+/* Two sheets opened from the home CV, each assembled from blocks of the growth tab removed on 2026-09-15.
+   `SettingsModal` holds what is set rarely: the role model button and its note from the growth headline, and the
+   backup and reset panel moved verbatim. Its import button drives the file input mounted on `Shell`, so the sheet
+   declares none of its own. `AchievementWallModal` is the opened wall of the growth tab moved verbatim and read-only:
+   the CV states the counts and this sheet holds every earned item, so nothing earned becomes unreachable (rule 13).
+   Both live in the one `modal` slot and write nothing to the save (rule 9). */
 
-function GrowthTab({ state, onPromote, onRoleModel, onRoleAdvice, onReset, onExport, onImport }) {
-  const rg = roleGap(state);
-  const [openWall, setOpenWall] = useState(false);
-  const [openData, setOpenData] = useState(false);
+function SettingsModal({ state, onClose, onRoleModel, onExport, onImport, onReset }) {
+  return (
+    <Modal title="설정" onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <SectionLabel tone="text-cyan-400">롤모델</SectionLabel>
+          <button onClick={onRoleModel} className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">
+            {state.role ? "롤모델 수정" : "롤모델 설정"}
+          </button>
+          <p className="text-xs text-zinc-500 mt-1.5">목표 인물상의 영역별 요구 등급을 정하면, 검증된 등급으로만 근접도를 계산합니다.</p>
+        </div>
+        <div>
+          <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
+          <p className="text-xs text-zinc-500">기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.</p>
+          <div className="flex gap-1.5 mt-2.5">
+            <button onClick={onExport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
+            <button onClick={onImport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 불러오기</button>
+          </div>
+          <button onClick={onReset} className="w-full mt-2.5 py-2.5 text-xs text-rose-400 border border-rose-400/30 rounded-xl flex items-center justify-center gap-1.5">
+            <RotateCcw size={12} /> 데이터 초기화
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AchievementWallModal({ state, onClose }) {
   const bests = Object.entries(state.exams?.best || {});
   const achTotal = state.areas.reduce((n, p) => n + p.achievements.length, 0);
   return (
-    <>
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <SectionLabel tone="text-cyan-400">롤모델 근접도</SectionLabel>
-        {rg ? (
-          <>
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-zinc-100 truncate">「{state.role.name}」</div>
-                <div className="text-xs text-zinc-500">검증 기준 근접도</div>
-              </div>
-              <div className="font-mono font-black text-4xl text-cyan-300 shrink-0">{rg.match}%</div>
-            </div>
-            <div className="space-y-2 mt-3">
-              {rg.items.map((i) => (
-                <div key={i.area.id}>
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-zinc-100 font-medium truncate">{i.area.name}</span>
-                    <span className={`font-mono text-right shrink-0 ${i.gap === 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      {RANKS[i.have].name} / 요구 {RANKS[i.need].name}{i.gap > 0 ? ` · ${i.gap}단계 부족` : " · 충족"}
-                    </span>
-                  </div>
-                  {/* Cell widths are the squared curve itself — the same formula as `roleGap` (rule 14) */}
-                  <div className="flex h-2 gap-0.5 mt-1">
-                    {Array.from({ length: i.need }, (_, k) => {
-                      const w = (Math.pow((k + 1) / i.need, 2) - Math.pow(k / i.need, 2)) * 100;
-                      return (
-                        <div key={k} style={{ width: `${w}%` }}
-                          className={`rounded border ${k < Math.min(i.have, i.need) ? "bg-cyan-400 border-cyan-300" : "bg-zinc-900 border-zinc-800"}`} />
-                      );
-                    })}
-                  </div>
+    <Modal title="성취의 벽" onClose={onClose}>
+      <div className="text-xs font-mono text-zinc-500">트로피 {state.room.trophies.length}개 · 시험 {bests.length}개 · 검증된 성취 {achTotal}건</div>
+      <div className="mt-3 space-y-3">
+        {state.room.trophies.length === 0 && bests.length === 0 && (
+          <div className="text-center py-3">
+            <EmptyWallSvg />
+            <p className="text-xs text-zinc-600 mt-2">아직 검증된 성취가 없습니다 — 완료는 증거로만 기록됩니다.</p>
+          </div>
+        )}
+        {state.room.trophies.length > 0 && (
+          <div className="relative bg-zinc-950 rounded-xl overflow-hidden px-2.5 pt-3 pb-2">
+            <WallFrame />
+            <div className="relative flex flex-wrap gap-2 justify-center items-end">
+              {state.room.trophies.slice(-10).map((t) => (
+                <div key={t.id} title={t.label} className="flex flex-col items-center w-12">
+                  <TrophySvg kind={t.kind} tier={t.tier} size={26} />
+                  <div className="text-xs text-zinc-600 truncate w-full text-center">{t.label}</div>
                 </div>
               ))}
             </div>
-          </>
-        ) : (
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm text-zinc-300">롤모델 미설정 — 근접도 계산 대상 없음</div>
-              <p className="text-xs text-zinc-500 mt-1">목표 인물상의 영역별 요구 등급을 정하면, 검증된 등급으로만 근접도를 계산합니다.</p>
-            </div>
-            <div className="font-mono font-black text-4xl text-zinc-600 shrink-0">—</div>
           </div>
         )}
-        <div className="flex gap-2 mt-3">
-          <button onClick={onRoleModel} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">
-            {state.role ? "롤모델 수정" : "롤모델 설정"}
-          </button>
-          {state.role && rg && (
-            <button onClick={onRoleAdvice} className="flex-1 py-2.5 rounded-xl border border-cyan-700 text-cyan-300 text-xs font-bold">
-              방향 제안
-            </button>
-          )}
-        </div>
-      </section>
-
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <SectionLabel tone="text-cyan-400">실력 트랙 — 영역별 승급 관문</SectionLabel>
-        <div className="space-y-1.5">
-          {state.areas.map((p) => {
-            const cur = RANKS[p.grade];
-            const next = RANKS[p.grade + 1];
-            const body = (
-              <>
-                <span className="w-7 h-7 shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 flex items-center justify-center font-mono font-bold text-xs text-cyan-300">{p.grade}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold truncate">{p.name}</div>
-                  <div className="text-xs text-zinc-500 truncate">{next ? `등급 ${cur.name} · 다음 관문 ${next.name}` : "정점 도달"}</div>
+        {Object.entries(state.exams?.spec || {}).filter(([, v]) => v).map(([l]) => (
+          <div key={l} className="text-xs text-amber-300 font-bold">🎖 {LANG_KO[l] || l} 전문화 — 고난도 감쇠 하한 70%</div>
+        ))}
+        {bests.length > 0 && (
+          <div className="space-y-1.5">
+            {bests.map(([id, b]) => {
+              const fam = examOf(id);
+              return (
+                <div key={id} className="flex justify-between text-xs bg-zinc-950 rounded-lg px-3 py-2">
+                  <span className="text-zinc-300">{fam?.n} <b className="text-cyan-300">{b.label}</b></span>
+                  <span className="font-mono text-zinc-500">D{b.d} · 누적 {b.p.toLocaleString()}P</span>
                 </div>
-                <span className="text-xs font-mono text-zinc-600 shrink-0">{p.grade}/9</span>
-              </>
-            );
-            // Grade 9: `PromoteModal` returns null, so the row is not a button and nothing can be tapped.
-            if (!next) return (
-              <div key={p.id} className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5">
-                {body}<Trophy size={13} className="text-amber-300 shrink-0" />
-              </div>
-            );
-            return (
-              <button key={p.id} onClick={() => onPromote(p)}
-                className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 active:opacity-70">
-                {body}<Lock size={13} className="text-zinc-500 shrink-0" /><span className="text-zinc-600 shrink-0">›</span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <button onClick={() => setOpenWall((v) => !v)} className="w-full text-left flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <SectionLabel tone="text-amber-400">성취의 벽</SectionLabel>
-            <div className="text-xs font-mono text-zinc-500">트로피 {state.room.trophies.length}개 · 시험 {bests.length}개 · 검증된 성취 {achTotal}건</div>
+              );
+            })}
           </div>
-          <ChevronDown size={14} className={openWall ? "text-zinc-500 rotate-180" : "text-zinc-500"} />
-        </button>
-        {openWall && (
-          <div className="mt-3 space-y-3">
-            {state.room.trophies.length === 0 && bests.length === 0 && (
-              <div className="text-center py-3">
-                <EmptyWallSvg />
-                <p className="text-xs text-zinc-600 mt-2">아직 검증된 성취가 없습니다 — 완료는 증거로만 기록됩니다.</p>
-              </div>
-            )}
-            {state.room.trophies.length > 0 && (
-              <div className="relative bg-zinc-950 rounded-xl overflow-hidden px-2.5 pt-3 pb-2">
-                <WallFrame />
-                <div className="relative flex flex-wrap gap-2 justify-center items-end">
-                  {state.room.trophies.slice(-10).map((t) => (
-                    <div key={t.id} title={t.label} className="flex flex-col items-center w-12">
-                      <TrophySvg kind={t.kind} tier={t.tier} size={26} />
-                      <div className="text-xs text-zinc-600 truncate w-full text-center">{t.label}</div>
+        )}
+        {state.areas.map((p) => (
+          <div key={p.id}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-zinc-400 truncate">{p.name}</span>
+              <span className="text-xs font-mono text-zinc-600 shrink-0">검증된 성취 {p.achievements.length}건</span>
+            </div>
+            {p.achievements.length > 0 && (
+              <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1 mt-1.5">
+                {p.achievements.slice(-30).reverse().map((ac) => (
+                  <div key={ac.id} className="text-xs bg-zinc-950 rounded-lg px-2.5 py-2 flex gap-2">
+                    <Star size={11} className="text-cyan-500 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <div className="text-zinc-300 break-words">{ac.text}</div>
+                      <div className="text-zinc-600 font-mono">{ac.date} · {RANKS[ac.grade].name} 인정</div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {Object.entries(state.exams?.spec || {}).filter(([, v]) => v).map(([l]) => (
-              <div key={l} className="text-xs text-amber-300 font-bold">🎖 {LANG_KO[l] || l} 전문화 — 고난도 감쇠 하한 70%</div>
-            ))}
-            {bests.length > 0 && (
-              <div className="space-y-1.5">
-                {bests.map(([id, b]) => {
-                  const fam = examOf(id);
-                  return (
-                    <div key={id} className="flex justify-between text-xs bg-zinc-950 rounded-lg px-3 py-2">
-                      <span className="text-zinc-300">{fam?.n} <b className="text-cyan-300">{b.label}</b></span>
-                      <span className="font-mono text-zinc-500">D{b.d} · 누적 {b.p.toLocaleString()}P</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {state.areas.map((p) => (
-              <div key={p.id}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-zinc-400 truncate">{p.name}</span>
-                  <span className="text-xs font-mono text-zinc-600 shrink-0">검증된 성취 {p.achievements.length}건</span>
-                </div>
-                {p.achievements.length > 0 && (
-                  <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1 mt-1.5">
-                    {p.achievements.slice(-30).reverse().map((ac) => (
-                      <div key={ac.id} className="text-xs bg-zinc-950 rounded-lg px-2.5 py-2 flex gap-2">
-                        <Star size={11} className="text-cyan-500 shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                          <div className="text-zinc-300 break-words">{ac.text}</div>
-                          <div className="text-zinc-600 font-mono">{ac.date} · {RANKS[ac.grade].name} 인정</div>
-                        </div>
-                      </div>
-                    ))}
                   </div>
-                )}
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
-      </section>
-
-      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <button onClick={() => setOpenData((v) => !v)} className="w-full text-left flex items-center justify-between gap-2">
-          <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
-          <ChevronDown size={14} className={openData ? "text-zinc-500 rotate-180" : "text-zinc-500"} />
-        </button>
-        {openData && (
-          <>
-            <p className="text-xs text-zinc-500">기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.</p>
-            <div className="flex gap-1.5 mt-2.5">
-              <button onClick={onExport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
-              <button onClick={onImport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 불러오기</button>
-            </div>
-            <button onClick={onReset} className="w-full mt-2.5 py-2.5 text-xs text-rose-400 border border-rose-400/30 rounded-xl flex items-center justify-center gap-1.5">
-              <RotateCcw size={12} /> 데이터 초기화
-            </button>
-          </>
-        )}
-      </section>
-    </>
+        ))}
+      </div>
+    </Modal>
   );
 }
 
@@ -7209,7 +7161,6 @@ export default function LifeManager() {
     ["tasks", "실행", ClipboardList],
     ["schedule", "일정", CalendarDays],
     ["biz", "사업", Briefcase],
-    ["growth", "성장", TrendingUp],
   ];
 
   return (
@@ -7232,10 +7183,10 @@ export default function LifeManager() {
       <main className="px-4 pb-24 space-y-4">
         {tab === "home" && (
           <HomeTab state={state} today={today} imgs={imgs} onProfile={() => setModal({ type: "profile" })}
-            onComplete={tryComplete} onGoGoals={() => setTab("goals")} onGoQuests={() => setTab("tasks")}
-            onGoSchedule={() => setTab("schedule")} onGoBiz={() => setTab("biz")}
-            onBriefing={() => setModal({ type: "briefing" })} onJournal={() => setModal({ type: "journal" })}
-            onReview={() => setModal({ type: "review" })} />
+            onSettings={() => setModal({ type: "settings" })}
+            onPromote={(area) => setModal({ type: "promote", area })}
+            onRoleAdvice={() => setModal({ type: "roleAdvice" })}
+            onWall={() => setModal({ type: "wall" })} />
         )}
         {tab === "goals" && (
           <GoalsTab state={state}
@@ -7251,15 +7202,8 @@ export default function LifeManager() {
             onGoGoals={() => setTab("goals")}
             onEditEvent={(ev) => setModal({ type: "event", event: ev })}
             onToggleEventDone={toggleEventDone} onSkipEvent={skipOccurrence}
-            onGoBiz={() => { setBizView("deals"); setTab("biz"); }} />
-        )}
-        {tab === "growth" && (
-          <GrowthTab state={state}
-            onPromote={(area) => setModal({ type: "promote", area })}
-            onRoleModel={() => setModal({ type: "role" })}
-            onRoleAdvice={() => setModal({ type: "roleAdvice" })}
-            onReset={resetAll}
-            onExport={exportBackup} onImport={askImport} />
+            onGoBiz={() => { setBizView("deals"); setTab("biz"); }}
+            onBriefing={() => setModal({ type: "briefing" })} />
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}
@@ -7278,7 +7222,7 @@ export default function LifeManager() {
         )}
       </main>
 
-      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-6 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
+      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-5 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
         {NAV.map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
@@ -7364,6 +7308,17 @@ export default function LifeManager() {
       )}
       {modal?.type === "calExport" && (
         <CalendarExportModal state={state} today={today} onClose={() => setModal(null)} onExport={exportCalendar} />
+      )}
+      {/* `resetAll` never clears `modal`, so the sheet is closed first — otherwise it would reappear over the app
+          after the next onboarding or demo entry. The reset itself still asks nothing (TD-26). */}
+      {modal?.type === "settings" && (
+        <SettingsModal state={state} onClose={() => setModal(null)}
+          onRoleModel={() => setModal({ type: "role" })}
+          onExport={exportBackup} onImport={askImport}
+          onReset={() => { setModal(null); resetAll(); }} />
+      )}
+      {modal?.type === "wall" && (
+        <AchievementWallModal state={state} onClose={() => setModal(null)} />
       )}
 
       {overlay && <Overlay data={overlay} onClose={() => setOverlay(null)} />}

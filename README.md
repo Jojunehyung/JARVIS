@@ -15,7 +15,7 @@ A local-only web app that turns life goals into OKRs, day-sized tasks, and evide
 npm install
 npm run dev             # http://localhost:5173
 npm run build           # dist/ — the deployable app
-npm run verify          # build + 135-step end-to-end run in a real browser
+npm run verify          # build + 157-step end-to-end run in a real browser
 npm run finish          # dead code, duplicates, language policy
 npm run docs:check      # documentation integrity
 ```
@@ -29,4 +29,4 @@ The end-to-end harness drives the installed Chrome through `tools/e2e` and needs
 | `tools/harness/` | build, verification and documentation scripts |
 | `tools/e2e/` | the end-to-end scenario |
 
-Data note: records live in `localStorage` under `liferpg-*` keys and never leave the device. Clearing the browser's site data erases them, so the growth tab has `백업 내보내기` — write a backup file now and then.
+Data note: records live in `localStorage` under `liferpg-*` keys and never leave the device. Clearing the browser's site data erases them, so the `설정` button in the corner of home's CV card has `백업 내보내기` — write a backup file now and then.

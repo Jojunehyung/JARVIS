@@ -69,7 +69,7 @@ module.exports = async (h) => {
 
   // ── Promotion (evidence chip selection → actual promotion)
   await step("promotion — submit after selecting evidence chips", async () => {
-    await clickTab("성장");
+    await clickTab("홈");
     if (!(await h.openAreaGate())) errors.push("no area row to open the promotion gate");
     await sleep(500);
     await page.evaluate(() => {
@@ -83,10 +83,37 @@ module.exports = async (h) => {
     await sleep(1200); await closeModal();
   });
 
-  // ── Direction advice (RoleAdviceModal) → catalogue link
-  await step("open direction advice", async () => {
-    await clickTab("성장");
-    try { await clickText("방향 제안"); await sleep(600); } catch { errors.push("방향 제안 버튼 없음(롤모델 미설정?)"); }
+  // ── Direction advice (RoleAdviceModal) → catalogue link. The sheet opens from the proximity line and leads with the
+  // per-area bars, whose cell widths are the squared curve `roleGap` averages (rule 14): read off the first bar and
+  // compared with the formula and with the save's grade and requirement for that area.
+  await step("the proximity line opens direction advice with the squared bars", async () => {
+    await clickTab("홈");
+    await clickText("롤모델 근접도"); await sleep(600);
+    const sheet = await h.overlayText();
+    for (const t of ["방향 제안 —", "/ 요구", "칸 하나 = 등급 한 단계"]) {
+      if (!sheet.includes(t)) throw new Error(`direction advice does not state "${t}": ` + sheet.slice(0, 200));
+    }
+    const bar = await page.evaluate(() => {
+      const row = document.querySelector(".fixed.inset-0 div.flex.h-2");
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      const area = (s.areas || []).find((a) => (s.role?.targets?.[a.id] || 0) > 0);
+      if (!row || !area) return { row: !!row, area: !!area };
+      const cells = [...row.children];
+      return {
+        row: true, area: true, have: area.grade, target: s.role.targets[area.id],
+        widths: cells.map((c) => parseFloat(c.style.width)),
+        cyan: cells.filter((c) => /bg-cyan-400/.test(c.className)).length,
+      };
+    });
+    if (!bar.row) throw new Error("direction advice draws no proximity bar");
+    if (!bar.area) throw new Error("the save carries no area with a role-model requirement");
+    const need = bar.widths.length;
+    if (need !== bar.target) throw new Error(`the first bar has ${need} cells, the save requires grade ${bar.target}`);
+    bar.widths.forEach((w, k) => {
+      const want = (Math.pow((k + 1) / need, 2) - Math.pow(k / need, 2)) * 100;
+      if (!(Math.abs(w - want) <= 0.05)) throw new Error(`cell ${k} is ${w}% wide, the squared curve gives ${want.toFixed(2)}% — widths ${bar.widths.join(", ")}`);
+    });
+    if (bar.cyan !== Math.min(bar.have, need)) throw new Error(`${bar.cyan} filled cell(s), expected min(grade ${bar.have}, requirement ${need})`);
     try { await clickText("도감에서 더 보기"); await sleep(600); } catch {}
     await closeModal(); await closeModal();
   });

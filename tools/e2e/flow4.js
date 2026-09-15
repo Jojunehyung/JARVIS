@@ -7,7 +7,7 @@ module.exports = async (h) => {
     await page.evaluate((s) => localStorage.setItem("liferpg-state-v1", JSON.stringify(s)), save);
     await h.reload();
     await sleep(900);
-    await clickTab("성장"); await sleep(400);
+    await clickTab("홈"); await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
     if (st.v !== 21) throw new Error("schema version " + st.v + " (expected 21)");
@@ -143,8 +143,8 @@ module.exports = async (h) => {
     });
     await h.reload();
     await sleep(900);
-    // trigger one state change to force a save, then check the schema
-    await clickTab("성장");
+    // the save is written at boot; render home (every fixture now shows the CV there), then check the schema
+    await clickTab("홈");
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");

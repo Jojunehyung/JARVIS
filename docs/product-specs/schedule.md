@@ -10,7 +10,8 @@ rules: [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
 ## Screen
 `ScheduleTab` props: `state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip, onExport`. Tab key
-`schedule`, label `일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-6`), before `사업`.
+`schedule`, label `일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-5`), before `사업` — the fifth and
+last, since the sixth tab, `성장`, was removed 2026-09-15 ([growth.md](growth.md)).
 
 - Header section: `다가오는 일정` (cyan `SectionLabel`) and, in `목록` view only, the button `일정 추가` →
   `EventModal` in add mode. In `달력` view the button lives in the selected-day panel instead, so exactly one
@@ -314,12 +315,13 @@ re-implement the loop `upcomingEvents` already runs and let the grid and the pan
 recomputed per month and never memoised across months, and neither it, the month index nor the selected day
 reaches the save.
 
-## The other three surfaces
-- **Home briefing card**: a second mono line under the counts, `오늘 일정 {n}건 · 3일 내 마감 {n}건 ›`, which
-  switches to this tab. The 3 is `EVENT_SOON_DAYS`; the deadline count includes today.
+## The other two surfaces
 - **Daily briefing**: section `오늘 일정` between `오늘 할 일` and `연속 기록`; every line routes back here.
-- **Assistant packet**: `## 다가오는 일정 (14일)`, at most 8 lines. Both are specified in
-  [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
+- **Assistant packet**: `## 다가오는 일정 (14일)`, at most 8 lines.
+
+Both are specified in [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md). There is no
+home-card line for this any more (2026-09-15) — home is a CV with no date-scoped facts; the `일정` header's own
+counts line (above) is the one on-screen summary outside this tab and the briefing.
 
 ## What an event never does
 - No `goalId`, no difficulty, no points, no trophy, no achievement record, no metric change, no streak effect.
@@ -327,8 +329,8 @@ reaches the save.
   or `certByTitle`: a certification name inside an event title stays plain text and creates no milestone
   ([Rules 1](../design-docs/core-beliefs.md#rule-1), [10](../design-docs/core-beliefs.md#rule-10),
   [18](../design-docs/core-beliefs.md#rule-18), [19](../design-docs/core-beliefs.md#rule-19)).
-- It is excluded from `agendaOf`, `doneTodayCount`, `krProgress`, `goalProgress` and `paceOf`, so no event can
-  move a goal's progress or its pace.
+- It is excluded from `agendaOf`, `krProgress`, `goalProgress` and `paceOf`, so no event can move a goal's
+  progress or its pace.
 - A pasted assistant reply can never create or change one: `parseAssistantReply` reads `tasks` and nothing else.
 - `완료 표시` is a record of what happened, not a completion: it stores a date in `doneDates` and nothing more.
 - The calendar export reads events (and tasks and goals) and creates none: `calendarExportOf`/`buildIcs` call

@@ -15,14 +15,15 @@ home-card and packet rules: [../design-docs/assistant-bridge.md](../design-docs/
 
 ## Screen
 `BizTab` props: `state, today, view, onView, onAdd, onEdit, onTogglePaid`. Tab key `biz`, label `사업`, icon
-`Briefcase`, fifth entry of `NAV` (`grid-cols-6`), placed before `성장`.
+`Briefcase`, fifth and last entry of `NAV` (`grid-cols-5`, since the sixth tab, `성장`, was removed 2026-09-15 —
+[growth.md](growth.md)).
 
 - Header section, in this order: a `SectionLabel` reading `사업` (cyan) with the per-view add button on the same
   row (`계약 추가` / `단가 추가` / `포트폴리오 추가`), then two full-width `font-mono text-xs` lines — never beside
   the button, because a summary line sharing the header row was measured to wrap mid-word at 390 px — then the
   three view `Chip`s.
-- Both header lines read one `bizSummary(state, today)` call, so the tab header, the briefing, the home card and
-  the packet can never disagree:
+- Both header lines read one `bizSummary(state, today)` call, so the tab header, the briefing, the `실행` header's
+  business button and the packet can never disagree:
   ```
   이번 달 계약 {won} · 입금 확인 {won}
   남은 계약 {won} · 견적 대기 {won} · 입금 미확인 {n}건
@@ -209,15 +210,16 @@ card renders `대표 이미지 없음` — a bad photo never blocks the record.
 The same `persisted` check runs after every `state` write; a save that does not reach `localStorage` toasts
 `저장에 실패했어요 — 저장 공간이 가득 찼어요. 백업을 내보낸 뒤 사진을 지워요.`
 
-## The other three surfaces
+## The other two surfaces
 - **Daily briefing**: section `사업`, inserted after `목표 페이스` and before `영역·활동`; every line routes back
   to this tab (`action: { type: "biz" }`, part of `TAB_ACTIONS`).
-- **Home briefing card**: a third mono line under the schedule line, `이번 달 계약 {won} · 입금 미확인 {n}건 ›`
-  (rose when `n > 0`), which switches to this tab.
 - **Assistant packet**: `## 사업 (계약·매출)`, at most `PACKET_BIZ_LINES` (6) lines. `parseAssistantReply` reads
   only `tasks`, so a pasted reply can never create a deal, a rate or a portfolio entry.
 
-All three are specified in [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
+There is no home-card line for this any more (2026-09-15) — home is a CV with no date-scoped facts; the unpaid
+count and the quote count instead render as a button on the `실행` header ([tasks.md](tasks.md)) whenever either
+is above zero. Both remaining surfaces are specified in
+[../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
 ## The `실행` tab
 Two of the facts above also render as rows in the unified to-do list ([tasks.md](tasks.md)),
@@ -237,8 +239,8 @@ reachable from `실행` beyond that.
 - It never runs through `completeTask`, `tryComplete`, `needsEvidence`, `detectKind`, `certByTitle`,
   `jobWeightForCert` or `calcExamPayout`: a certification name inside a deal or portfolio title stays plain text
   ([Rule 10](../design-docs/core-beliefs.md#rule-10), [Rule 19](../design-docs/core-beliefs.md#rule-19)).
-- It is excluded from `agendaOf`, `doneTodayCount`, `krProgress`, `goalProgress` and `paceOf`, so no business
-  record can move a goal's progress, its pace, or the day's completion count.
+- It is excluded from `agendaOf`, `krProgress`, `goalProgress` and `paceOf`, so no business record can move a
+  goal's progress or its pace.
 - A pasted assistant reply can never create or change one: `parseAssistantReply` reads `tasks` and nothing else.
 - A payment chip is a record of what happened, not a completion: it stores a month in `paidMonths` and nothing
   more, exactly as `완료 표시` stores a date in `doneDates`.

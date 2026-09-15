@@ -42,7 +42,10 @@ module.exports = async (h) => {
     await typeInto("자격증 검색", "정보처리기사");
     await sleep(250);
     await expectText("정보처리기사");
-    await clickText("정보처리기사");
+    // Scoped to buttons: the search input's own value carries the same text, and an unscoped click landed on the
+    // input, so until 2026-09-15 no certification was ever declared in this save.
+    await clickText("정보처리기사", "button");
+    await expectText("(1개 선택)");
     await clickText("다음"); await expectText("5 / 6");
   });
   await step("step 5 — career entry", async () => {
@@ -61,7 +64,7 @@ module.exports = async (h) => {
   });
   await step("step 6 — computed result → start", async () => {
     await expectText("학력 학사 졸 · 경력 실무 1~3년"); // the two derived keys, in the frozen tables' own labels
-    await clickText("이 설정으로 시작"); await sleep(600); await expectText("오늘");
+    await clickText("이 설정으로 시작"); await sleep(600); await expectText("영역 등급");
   });
   await shot("home");
   await step("fresh state schema version and CV records", async () => {
@@ -73,6 +76,7 @@ module.exports = async (h) => {
     if (e0.school !== "E2E대학교" || e0.major !== "기계공학" || e0.degree !== "ba" || e0.status !== "grad" || e0.from !== "2017-03" || e0.to !== "2023-02") throw new Error("education record not stored: " + JSON.stringify(p.edus));
     const c0 = (p.careers || [])[0] || {};
     if (c0.company !== "E2E전장" || c0.role !== "설계 엔지니어" || c0.emp !== "full" || c0.from !== "2022-01" || c0.to !== "2024-02") throw new Error("career record not stored: " + JSON.stringify(p.careers));
+    if (JSON.stringify(p.certs) !== JSON.stringify(["정보처리기사"])) throw new Error("the certification declared in step 4 was not stored: " + JSON.stringify(p.certs));
     // The keys the frozen tables are read with — derived once here, never again (rules 4, 11).
     if (p.edu !== "ba" || p.career !== "y13") throw new Error("starting-grade keys: " + JSON.stringify({ edu: p.edu, career: p.career }));
   });
@@ -232,29 +236,66 @@ module.exports = async (h) => {
   await shot("catalog");
   await step("close catalogue", async () => { await page.keyboard.press("Escape"); await sleep(200); await h.closeModal(); });
 
-  // ── Growth tab — achievement wall, promotion gate, role model
-  await step("go to growth tab", async () => { await clickTab("성장"); await expectText("성취의 벽"); });
+  // ── Home CV — the records, the grade rows and the promotion gate, the settings sheet
+  // Home is exactly two blocks: the CV and the proximity line. Every count is compared with the save it states.
+  await step("home is one CV with the proximity line under it", async () => {
+    await clickTab("홈");
+    const res = await page.evaluate(() => {
+      const norm = (t) => (t || "").replace(/\s+/g, " ").trim();
+      const main = document.querySelector("main");
+      const kids = main ? [...main.children] : [];
+      const last = kids[kids.length - 1];
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      return {
+        count: kids.length, cv: norm(kids[0]?.innerText), lastTag: last?.tagName || "", last: norm(last?.innerText), all: norm(main?.innerText),
+        settings: !!document.querySelector('main button[aria-label="설정"]'),
+        areas: (s.areas || []).map((a) => a.name), folio: (s.folio || []).length, trophies: (s.room?.trophies || []).length,
+        achievements: (s.areas || []).reduce((n, a) => n + (a.achievements || []).length, 0),
+      };
+    });
+    if (res.count !== 2) throw new Error(`home has ${res.count} top-level blocks, expected the CV and the proximity line: ` + res.all.slice(0, 200));
+    const want = ["영역 등급", "학력", "경력", "자격", "시험", "포트폴리오", "성취", "프로필", ...res.areas,
+      `포트폴리오 ${res.folio}건`, `트로피 ${res.trophies}개 · 검증된 성취 ${res.achievements}건`];
+    for (const t of want) if (!res.cv.includes(t)) throw new Error(`the CV does not state "${t}": ` + res.cv);
+    if (!res.settings) throw new Error("the CV carries no settings button");
+    if (res.lastTag !== "P" || res.last !== "롤모델 미설정 — 근접도 계산 대상 없음") throw new Error(`the block under the CV is a ${res.lastTag} reading: ${res.last}`);
+    for (const t of ["오늘 브리핑", "오늘의 초점", "오늘 할 일", "브리핑 열기", "일지 쓰기", "주간 리뷰", "건 완료"]) {
+      if (res.all.includes(t)) throw new Error(`home still carries a removed today surface ("${t}"): ` + res.all.slice(0, 200));
+    }
+  });
   await step("open promotion gate modal", async () => {
-    // The area row is the control: nothing on the tab promotes, so the gate modal is the only way up.
+    await clickTab("홈");
+    // The CV grade row is the control: nothing else on home promotes, so the gate modal is the only way up.
     if (!(await h.openAreaGate())) errors.push("no area row to open the promotion gate");
     await expectText("승급 심사");
     await h.closeModal();
   });
-  await step("open role model modal", async () => {
-    try { await clickText("롤모델"); } catch { errors.push("롤모델 버튼 없음"); }
-    await sleep(350);
-    try { await clickText("✕"); } catch {}
+  await step("the settings button holds role model, backup and reset", async () => {
+    await h.openSettings();
+    const sheet = await h.overlayText();
+    for (const t of ["롤모델 설정", "백업 내보내기", "백업 불러오기", "데이터 초기화", "기록은 이 기기에만 있어요."]) {
+      if (!sheet.includes(t)) throw new Error(`the settings sheet does not offer "${t}": ` + sheet.slice(0, 200));
+    }
+    // The import button drives the input mounted on the app shell, so the sheet must not declare one of its own.
+    if (await page.$('.fixed.inset-0 input[type="file"]')) throw new Error("the settings sheet declared a file input of its own");
+    await clickInModal("롤모델");
+    if (!(await h.overlayText()).includes("요구 등급")) throw new Error("the role model button did not open the role model form");
+    await closeModal();
   });
-  await shot("growth");
+  await shot("home-cv");
 
   // ── Tab sweep + persistence
-  for (const tab of ["홈", "실행", "목표", "성장"]) {
+  for (const tab of ["홈", "실행", "목표"]) {
     await step(`switch tab: ${tab}`, async () => { await clickTab(tab); });
   }
-  await step("bottom nav order (home, goals, tasks, schedule, business, growth)", async () => {
-    const labels = await page.evaluate(() => [...document.querySelectorAll("nav button")].map((b) => (b.innerText || "").trim()));
-    const want = ["홈", "목표", "실행", "일정", "사업", "성장"];
-    if (labels.join("·") !== want.join("·")) throw new Error("nav order: " + labels.join("·"));
+  await step("bottom nav order (home, goals, tasks, schedule, business)", async () => {
+    const nav = await page.evaluate(() => ({
+      labels: [...document.querySelectorAll("nav button")].map((b) => (b.innerText || "").trim()),
+      cls: document.querySelector("nav")?.className || "",
+    }));
+    const want = ["홈", "목표", "실행", "일정", "사업"];
+    if (nav.labels.join("·") !== want.join("·")) throw new Error("nav order: " + nav.labels.join("·"));
+    if (!nav.cls.includes("grid-cols-5")) throw new Error("the nav bar is not a five-column grid: " + nav.cls);
   });
   await step("state persists after reload", async () => {
     const before = await page.evaluate(() => localStorage.length);
@@ -263,9 +304,21 @@ module.exports = async (h) => {
     const after = await page.evaluate(() => localStorage.length);
     if (!before || after !== before) throw new Error(`localStorage key ${before} → ${after}`);
     if (await hasText("시작하기")) throw new Error("온보딩으로 되돌아감(상태 유실)");
+    // Home no longer lists goal titles; the goal card is where a reloaded goal shows up.
+    await clickTab("목표");
     await expectText("하네스 설계 엔지니어 취업");
   });
   await shot("after-reload");
+  // Without a role model, home states the fact as an inert line; the briefing's next-step line is the one that
+  // acts on it, so it must open the role model form rather than land on that line.
+  await step("the no-role briefing line opens the role model form", async () => {
+    await clickTab("실행");
+    await clickText("브리핑 열기");
+    await sleep(400);
+    await clickInModal("롤모델 미설정");
+    if (!(await h.overlayText()).includes("요구 등급")) throw new Error("the no-role next-step line did not open the role model form");
+    await closeModal();
+  });
 
   // ── Deep flows (evidence, study, activities, promotion, role model, migration)
   await require("./flow2.js")(h);
@@ -285,26 +338,41 @@ module.exports = async (h) => {
     await sleep(500);
     await clickText("데모 데이터로 둘러보기");
     await sleep(700);
-    await expectText("오늘");
+    await expectText("영역 등급");
+  });
+  // A stagnant-area line lands on home, where the area's grade row and its gate live. The demo's `건강` area has no
+  // achievement at all, so its line exists whatever the date.
+  await step("a briefing area line lands on the home CV", async () => {
+    await clickTab("실행");
+    await clickText("브리핑 열기");
+    await sleep(400);
+    await clickInModal("최근 30일 성취 기록 0건");
+    const res = await page.evaluate(() => ({
+      open: document.querySelectorAll(".fixed.inset-0").length,
+      tab: [...document.querySelectorAll("nav button")].filter((b) => /text-cyan-300/.test(b.className)).map((b) => (b.innerText || "").trim()).join("·"),
+      grades: (document.querySelector("main")?.innerText || "").includes("영역 등급"),
+    }));
+    if (res.open) throw new Error(`${res.open} overlay(s) still open after the area line was tapped`);
+    if (res.tab !== "홈") throw new Error("the area line left the app on the tab: " + (res.tab || "none"));
+    if (!res.grades) throw new Error("home does not show the grade rows after the area line was tapped");
   });
   await step("demo — sweep every tab", async () => {
-    for (const tab of ["실행", "목표", "성장", "일정", "사업", "홈"]) { await clickTab(tab); }
+    for (const tab of ["실행", "목표", "일정", "사업", "홈"]) { await clickTab(tab); }
   });
   await shot("demo");
 
   // ── Data reset — state and evidence photo keys must be cleared together (runs last)
-  await step("data reset — clears evidence photo keys too", async () => {
+  await step("data reset from settings — clears the photo keys and leaves no modal behind", async () => {
     // plant image keys as reset targets (same key convention the app uses)
     await page.evaluate(() => {
       localStorage.setItem("liferpg-img-ev-zzz", "data:image/png;base64,AAAA");
       localStorage.setItem("liferpg-img-profile", "data:image/png;base64,AAAA");
     });
-    await clickTab("성장");
-    await sleep(300);
-    // The reset button lives behind the collapsed data line; the header itself never carries its text.
-    await clickText("데이터 — 백업 · 초기화");
+    await h.openSettings();
+    // Scoped to the open sheet: the reset button exists nowhere else.
     const clicked = await page.evaluate(() => {
-      const b = [...document.querySelectorAll("button")].find((x) => x.innerText.includes("데이터 초기화"));
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = ov && [...ov.querySelectorAll("button")].find((x) => x.innerText.includes("데이터 초기화"));
       if (!b) return false; b.scrollIntoView({ block: "center" }); b.click(); return true;
     });
     if (!clicked) throw new Error("data reset button not found");
@@ -316,6 +384,12 @@ module.exports = async (h) => {
     }));
     if (left.state) throw new Error("state key remains after reset");
     if (left.profileImg) throw new Error("profile photo key remains after reset");
+    // `resetAll` never clears the modal slot: without closing the sheet first it would reappear over the app on
+    // the next onboarding or demo entry.
+    await clickText("데모 데이터로 둘러보기");
+    await sleep(700);
+    const open = await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length);
+    if (open) throw new Error("a modal survived the reset");
   });
   await shot("reset");
 };

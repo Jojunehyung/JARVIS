@@ -8,8 +8,8 @@ The assistant is a pure function of the saved state. `agendaOf` buckets open 실
 daysBetween(a, b) = whole days from a to b, both "YYYY-MM-DD", anchored at noon (no DST drift)
 mondayOf(date)    = the Monday of that date's week
 lastDoneDate(q)   = daily → last of doneDates · once → doneAt · otherwise null
-doneTodayCount(state, today)
 ```
+`doneTodayCount` was deleted 2026-09-15 with its only call site, the home profile card's `오늘 {n}건 완료` line — home is a CV now and states no date-scoped fact ([home.md](../product-specs/home.md)); today's completions are still visible in the `실행` tab's `오늘 완료` group and the briefing's `연속 기록` line.
 
 ## `agendaOf(state, today)`
 Open tasks are `daily` tasks not completed today plus `once` tasks that are not done. They fall into five disjoint buckets, and `all` is their concatenation in this order:
@@ -33,7 +33,7 @@ Events are not tasks and are not in these buckets. They are expanded by three pu
 Windows are named constants: `EVENT_SOON_DAYS` 3 (an imminent deadline), `EVENT_HORIZON_DAYS` 90 (how far repeats are expanded), `EVENT_PAST_DAYS` 30 (how long a missed deadline stays listed).
 
 ## `buildBriefing(state, today)`
-Returns `{ counts, sections }`. `counts` is `{ overdue, dueToday, dailyOpen, behind, events, dueSoon, bizMonth, bizUnpaid }` for the home card — `events` is today's occurrence count, `dueSoon` the `마감` occurrences inside `EVENT_SOON_DAYS` (today included), and `bizMonth` / `bizUnpaid` are `bizSummary(state, today).thisMonth` / `.unpaid.length`. Each section is `{ key, title, items }` and each item `{ kind, severity 3 | 2 | 1, text, action? }`, capped at five items (`CAP`).
+Returns `{ sections }` (2026-09-15; the `counts` field it used to return — `{ overdue, dueToday, dailyOpen, behind, events, dueSoon, bizMonth, bizUnpaid }` — was dropped along with the home briefing card, its only reader; every count it held is still on screen elsewhere: `실행`'s and `일정`'s own counts lines, and the sections below). Each section is `{ key, title, items }` and each item `{ kind, severity 3 | 2 | 1, text, action? }`, capped at five items (`CAP`).
 
 | Section | Rule | Severity |
 |---|---|---|
@@ -42,14 +42,16 @@ Returns `{ counts, sections }`. `counts` is `{ overdue, dueToday, dailyOpen, beh
 | `streak` | `lastActive === today` → recorded; `=== today − 1` → the streak breaks unless something is completed today; `=== today − 2` with a shield left → completing today spends one 보호권 (streak shield); otherwise the next completion resets the streak to 1. Mirrors what `completeTask` actually does | 1 / 3 / 3 / 2 |
 | `goals` | every active goal, nearest deadline first: `{title} — {D-day} · 진행 {n}% · {pace}`. Severity 3 when `paceOf.gap <= −5`, when the deadline is within 7 days and progress is below 100 %, or when it has passed; those cases append the unmet KRs via `krRemainText` (at most two) | 3 / 1 |
 | `biz` | records, never tasks: at most `BIZ_ALERT_MAX` (3) unpaid billed months (`{client} {title} — {month} 입금 미확인 {won}`) — the same constant and the same months the `실행` tab's to-do list names ([../product-specs/tasks.md](../product-specs/tasks.md)); a `won` deal ending within `DEAL_END_SOON` months (`{client} {title} — {month} 종료 · 남은 계약 {won}`); a `quote` older than `QUOTE_STALE_DAYS` days (`{client} {title} — 견적 {n}일 경과 · {won}`); then always the closing line `이번 달 계약 매출 {won} · 입금 확인 {won} · 남은 계약 {won}`. The closing line is the reason the section exists, so it is built last from at most `CAP − 1` alerts rather than a plain sixth item — three unpaid months plus two ending contracts would otherwise fill `CAP` and push it out. Every line carries `action: { type: "biz" }`, which `closeBriefing` routes to the 사업 tab ([business.md](../product-specs/business.md)) | 3 / 2 / 2 / 1 |
-| `areas` | 영역 (areas) with no achievement in 30 days (role-model targets first, at most 3); goals whose activity kind has no completion in 7 days (at most 3) | 2 |
+| `areas` | 영역 (areas) with no achievement in 30 days (role-model targets first, at most 3), `action: { type: "home" }` — the area's grade row and its promotion gate live on the CV; goals whose activity kind has no completion in 7 days (at most 3), `action: { type: "goals" }` | 2 |
 | `next` | no role model → say so; no gaps → `모든 요구 영역 충족 · 근접도 {n}%`; otherwise the first gap and its top recommendation from `roleRecommendations` | 2 / 1 / 2 |
 | `review` | no review whose `weekOf` is this Monday → `이번 주 리뷰 없음 (마지막 {date})` | 2 / 1 |
 | `journal` | today's entry length, and the date of a stored assistant reply | 1 |
 
-A tab-switch action is only ever taken when its `type` is in the module-level whitelist `TAB_ACTIONS = ["goals",
-"growth", "schedule", "biz"]`, checked by `closeBriefing` — a line whose action type is missing from it opens
-nothing.
+A tab-switch action is only ever taken when its `type` is in the module-level whitelist `TAB_ACTIONS = ["home",
+"goals", "schedule", "biz"]` (2026-09-15: `"growth"` replaced by `"home"` when the growth tab was removed —
+[home.md](../product-specs/home.md)), checked by `closeBriefing`. An action type outside this list is not a
+no-op: `closeBriefing` handles `task` separately, before the list, and opens every other type as the `modal.type`
+of the same name that the root renders directly — `bridge`, `journal`, `review`, `roleAdvice` and `role`.
 
 Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CAP` 5, `QUOTE_STALE_DAYS` 7,
 `DEAL_END_SOON` 2 months.
@@ -63,7 +65,7 @@ A text packet the user copies into an external chat. It opens with the role and 
 | Section | Content | Cap |
 |---|---|---|
 | `## 오늘 브리핑` | briefing lines of severity 2 and above | 12 |
-| `## 이력` | one line built from `topEdu(profile.edus)` / `latestCareer(profile.careers)`: degree + status label (`박사 졸업`, not a bare `박사` — `topEdu` falls back to the most recent entry when nothing is completed, and a bare degree would imply one the user does not hold) + major/field (or `전공 미기재`), then total practice months (`careerMonths`) + the latest role; `학력 미입력` when there is no education entry at all. Deliberately excludes `profile.name`, `birth`, `email`, `phone`, the school name and the employer name — a school or an employer identifies a person nearly as well as a name does, and this is the one place data leaves the device by design (see `docs/SECURITY.md`) | 1 |
+| `## 이력` | one line built from `cvSummaryOf(profile, today)` — the same helper the home CV's `학력` / `경력` rows read ([home.md](../product-specs/home.md)), lifted out of this function 2026-09-15 so the two surfaces cannot state a different degree or role: degree + status label (`박사 졸업`, not a bare `박사` — `topEdu` falls back to the most recent entry when nothing is completed, and a bare degree would imply one the user does not hold) + major/field (or `전공 미기재`), then total practice months (`careerMonths`) + the latest role; `학력 미입력` when there is no education entry at all, `경력 없음` when there is no career entry, and `- 없음` for the whole line only when both are absent (`cvSummaryOf(...).any` false). Deliberately excludes `profile.name`, `birth`, `email`, `phone`, the school name and the employer name — a school or an employer identifies a person nearly as well as a name does, and this is the one place data leaves the device by design (see `docs/SECURITY.md`) | 1 |
 | `## 목표` | active goals: deadline, D-day, progress, pace, KR remainders | 5 goals × 4 KRs |
 | `## 열린 실행` | the agenda in order: goal, title, difficulty, cadence, due | 12 |
 | `## 다가오는 일정 (14일)` | `- {date} {HH:MM\|시간 미정} · {약속\|마감} · {title}{ · 반복 {매일\|매주\|매월}}`, date-ascending from `upcomingEvents(state, today, PACKET_EVENT_DAYS)`; the heading and the window read the same constant | 8 |

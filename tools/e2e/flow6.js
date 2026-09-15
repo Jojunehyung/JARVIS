@@ -1,7 +1,7 @@
 // Installable app — the service worker registers and controls the page, the app still opens with the
 // network disabled, and a backup round-trips. Runs last: it toggles offline mode and reloads.
 module.exports = async (h) => {
-  const { step, clickText, clickTab, expectText, closeModal, captureDownload, sleep, page, errors } = h;
+  const { step, expectText, closeModal, captureDownload, sleep, page, errors } = h;
 
   await step("service worker registers and controls the page", async () => {
     const ok = await page.evaluate(async () => {
@@ -105,11 +105,10 @@ module.exports = async (h) => {
   });
 
   await step("backup export writes the state to a file", async () => {
-    await clickTab("성장");
-    await clickText("데이터 — 백업 · 초기화"); // backup sits behind the collapsed data line
+    await h.openSettings(); // backup sits in the settings sheet behind the corner button of the home CV
     await expectText("백업");
     // Capture the download without touching the filesystem: the shared helper stubs the anchor click and reads the blob.
-    const dl = await captureDownload(() => clickText("백업 내보내기"));
+    const dl = await captureDownload(() => h.clickInModal("백업 내보내기"));
     const dump = dl && dl.text;
     if (!dump) throw new Error("no backup blob was produced");
     let data;
@@ -119,6 +118,7 @@ module.exports = async (h) => {
     if (!Array.isArray(data.state?.tasks) || !data.state.tasks.length) throw new Error("backup carries no tasks");
     if (typeof data.images !== "object") throw new Error("backup carries no image map");
     await page.evaluate((d) => { window.__savedBackup = d; }, dump);
+    await closeModal();
   });
 
   await step("backup import restores the saved state", async () => {

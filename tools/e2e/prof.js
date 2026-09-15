@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await client.send("Profiler.start");
 
   const clickTab = async (n) => { await page.evaluate((t) => { const nav = document.querySelector("nav"); [...nav.querySelectorAll("button")].find((b) => b.innerText.includes(t))?.click(); }, n); await sleep(500); };
-  for (const t of ["목표", "퀘스트", "성장", "홈", "목표", "퀘스트"]) await clickTab(t);
+  for (const t of ["목표", "퀘스트", "홈", "목표", "퀘스트"]) await clickTab(t);
   // catalogue search
   await clickTab("퀘스트");
   await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감")?.click());

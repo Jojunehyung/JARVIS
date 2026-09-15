@@ -3,7 +3,7 @@
 // the tasks, the goals, the streak or the trophies. They also prove the portfolio image path: a landscape
 // source keeps its aspect in the stored thumbnail and its key disappears with the record.
 module.exports = async (h) => {
-  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, todoRows, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
+  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, todoRows, overlayText, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
 
   // A 24 × 8 RGB PNG: wider than it is tall and far under the 640 px long edge, so the stored thumbnail
   // proves both that the aspect survives and that a small source is never upscaled.
@@ -47,19 +47,15 @@ module.exports = async (h) => {
   }), `liferpg-img-folio-${id}`);
   const imgKeyExists = (id) => page.evaluate((k) => localStorage.getItem(k) != null, `liferpg-img-folio-${id}`);
   // The briefing is a stack of section cards inside the topmost overlay; a line is a button whose severity
-  // is carried by its colour class, so the text and the class are read separately.
-  const briefText = () => page.evaluate(() => {
-    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
-    return ov ? ov.innerText.replace(/\s+/g, " ").trim() : "";
-  });
+  // is carried by its colour class, so the text (the shared `overlayText`) and the class are read separately.
   const briefLineClass = (text) => page.evaluate((t) => {
     const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
     const btn = ov && [...ov.querySelectorAll("button")].find((b) => (b.innerText || "").includes(t));
     return btn ? btn.className : "";
   }, text);
-  // The packet, reached the way the app reaches it: home card → briefing → `AI에게 보내기` → its textarea.
+  // The packet, reached the way the app reaches it: `실행` header → briefing → `AI에게 보내기` → its textarea.
   const packetText = async () => {
-    await clickTab("홈"); await clickText("브리핑 열기"); await sleep(600);
+    await clickTab("실행"); await clickText("브리핑 열기"); await sleep(600);
     await clickInModal("AI에게 보내기"); await sleep(500);
     return page.evaluate(() => document.querySelector(".fixed.inset-0 textarea")?.value || "");
   };
@@ -318,16 +314,16 @@ module.exports = async (h) => {
     if (after.ui?.scheduleView !== "list") throw new Error("the business view overwrote the schedule preference: " + JSON.stringify(after.ui));
   });
 
-  /* ── The assistant surfaces: the briefing, the home card and the packet all read one `bizSummary`, so the
-     figures below are the ones the tab header stated above. Two contracts are billed this month, 1,200,000
+  /* ── The assistant surfaces: the briefing, the `실행` header and list, and the packet all read one `bizSummary`, so
+     the figures below are the ones the tab header stated above. Two contracts are billed this month, 1,200,000
      and 2,000,000 won, and neither month is stamped paid, so two unpaid months are outstanding. ── */
 
   await step("the briefing states the business section after the goal pace", async () => {
     const month = await monthIn(0);
-    await clickTab("홈");
+    await clickTab("실행");
     await clickText("브리핑 열기");
     await sleep(600);
-    const brief = await briefText();
+    const brief = await overlayText();
     const pos = ["목표 페이스", "사업", "영역·활동"].map((t) => brief.indexOf(t));
     if (pos.some((i) => i < 0)) throw new Error("the briefing has no business section: " + brief.slice(0, 300));
     if (!(pos[0] < pos[1] && pos[1] < pos[2])) throw new Error("the business section is not between the goal pace and the areas: " + pos.join(","));
@@ -349,26 +345,18 @@ module.exports = async (h) => {
     if (lines.length !== 2 || !lines[1].startsWith("남은 계약 ")) throw new Error("the business line did not land on the tab: " + JSON.stringify(lines));
   });
 
-  await step("the home card line states the month and the unpaid count and opens the tab", async () => {
-    await clickTab("홈");
-    const line = await page.evaluate(() => {
-      const b = [...document.querySelectorAll("button")].find((x) => (x.innerText || "").startsWith("이번 달 계약"));
-      return b ? { text: b.innerText.replace(/\s+/g, " ").trim(), rose: /text-rose-400/.test(b.querySelector("span")?.className || "") } : null;
-    });
-    if (!line) throw new Error("the home briefing card has no business line");
-    if (line.text !== "이번 달 계약 320만원 · 입금 미확인 2건 ›") throw new Error("home briefing card business line: " + line.text);
-    if (!line.rose) throw new Error("the unpaid count is not rose while payments are outstanding");
-    await clickText("이번 달 계약 320만원");
-    await sleep(500);
-    const lines = await headerLines();
-    if (lines.length !== 2 || !lines[0].startsWith("이번 달 계약 320만원")) throw new Error("the home line did not open the business tab: " + JSON.stringify(lines));
-  });
-
   /* The `실행` list names the same unpaid months, capped at BIZ_ALERT_MAX, and the header line states the full
      counts beside the cap. A business row is a link into this tab: it completes nothing and pays nothing. */
   await step("the tasks tab lists the unpaid month as a business row that completes nothing", async () => {
     await clickTab("실행");
     await expectText("사업 입금 미확인 2건");
+    // The unpaid count is rose while payments are outstanding — the severity the removed home line carried.
+    const rose = await page.evaluate(() => {
+      const line = [...document.querySelectorAll("main button")].find((b) => (b.innerText || "").startsWith("사업 "));
+      const count = line && [...line.querySelectorAll("span")].find((s) => (s.innerText || "").trim().startsWith("입금 미확인"));
+      return count ? /text-rose-400/.test(count.className) : null;
+    });
+    if (rose !== true) throw new Error(`the header's unpaid count is not rose while payments are outstanding (${rose})`);
     const all = (await todoRows()) || [];
     const biz = all.find((r) => r.title.includes("재고 관리 자동화 도구") && r.text.includes("입금 미확인"));
     if (!biz) throw new Error("the unpaid month is not listed: " + all.map((r) => `${r.group}/${r.title}`).join(" | "));
@@ -483,10 +471,10 @@ module.exports = async (h) => {
     // The planted deals are restored in `finally`, so a failure here cannot cascade into the steps that follow.
     try {
       await h.reload();
-      await clickTab("홈");
+      await clickTab("실행");
       await clickText("브리핑 열기");
       await sleep(600);
-      const txt = await briefText();
+      const txt = await overlayText();
       const iBiz = txt.indexOf("사업");
       if (iBiz < 0) throw new Error("the briefing has no business section");
       const unpaidLines = txt.split("입금 미확인").length - 1;

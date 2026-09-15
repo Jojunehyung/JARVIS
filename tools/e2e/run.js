@@ -235,8 +235,8 @@ const typeInto = async (placeholder, value) => {
     }
     return out;
   }, label, tap);
-  // The `성장` tab's area rows: one button per area, each stating its `{grade}/9` counter. Tapping a row is the
-  // only route into the promotion gate modal — the tab carries no promote button of its own — so every promotion
+  // The home CV's grade rows: one button per area below grade 9, each stating its `{grade}/9` counter. Tapping a row
+  // is the only route into the promotion gate modal — home carries no promote button of its own — so every promotion
   // step goes through here. `name` picks the row of that area; omitted, the first row is taken. Returns false
   // when no row matched, so a caller can report it instead of silently passing.
   const openAreaGate = async (name = null) => {
@@ -250,6 +250,26 @@ const typeInto = async (placeholder, value) => {
     }, name);
     if (ok) await sleep(450);
     return ok;
+  };
+  // The text of the topmost overlay, whitespace-normalised; "" when nothing is open.
+  const overlayText = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    return ov ? ov.innerText.replace(/\s+/g, " ").trim() : "";
+  });
+  // The settings sheet behind the icon-only button in the corner of the home CV: role model, backup and reset.
+  // Throws when the button is missing or the sheet did not open, so no step runs against the wrong screen.
+  const openSettings = async () => {
+    await clickTab("홈");
+    const found = await page.evaluate(() => {
+      const b = document.querySelector('main button[aria-label="설정"]');
+      if (!b) return false;
+      b.scrollIntoView({ block: "center" });
+      b.click();
+      return true;
+    });
+    if (!found) throw new Error("settings button not found on home");
+    await sleep(400);
+    if (!(await overlayText()).includes("데이터 — 백업 · 초기화")) throw new Error("the settings modal did not open");
   };
   // Click a page button by its exact label — calendar controls and view chips sit outside any modal, and a
   // partial match would hit `계약 추가` instead of the `계약` chip.
@@ -366,7 +386,7 @@ const typeInto = async (placeholder, value) => {
     await sleep(1000); await closeModal();
     await assertDone(title);
   };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, rows, todoRows, openAreaGate, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, rows, todoRows, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

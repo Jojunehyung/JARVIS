@@ -1,7 +1,7 @@
 // Schedule tab — appointments and deadlines. An event is a record, never a task: these steps assert that
 // registering, ticking and cancelling one changes `events` only, and never the tasks, streak or trophies.
 module.exports = async (h) => {
-  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, todoRows, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
+  const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, todoRows, overlayText, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
 
   // Dates are computed in the page with the app's own local-date logic (never toISOString).
   const dstrIn = (delta) => page.evaluate((d) => {
@@ -10,10 +10,6 @@ module.exports = async (h) => {
     return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
   }, delta);
   const readState = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
-  const overlayText = () => page.evaluate(() => {
-    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
-    return ov ? ov.innerText.replace(/\s+/g, " ").trim() : "";
-  });
   // Occurrence rows come from the shared `rows` reader in run.js: for a repeat, `texts` carries the
   // occurrence date next to the title so one occurrence is addressed rather than the whole event.
   const openEventModal = async () => { await clickText("일정 추가"); await sleep(400); };
@@ -147,7 +143,7 @@ module.exports = async (h) => {
   await step("briefing states the schedule between the tasks and the streak", async () => {
     await clickTab("일정");
     await addEvent("서류 제출 마감", 0, { kind: "마감" });
-    await clickTab("홈");
+    await clickTab("실행");
     await clickText("브리핑 열기");
     await sleep(500);
     const brief = await overlayText();
@@ -191,20 +187,20 @@ module.exports = async (h) => {
     if (!back.some((r) => r.title === "서류 제출 마감")) throw new Error("un-ticking did not return the deadline to the today group: " + back.map((r) => r.title).join(" | "));
   });
 
-  await step("the home card line states the counts and opens the tab", async () => {
-    await clickTab("홈");
+  /* Today's figure where it now lives: the removed home line counted `서류 제출 마감` twice (today's occurrence and a
+     deadline inside three days). The tab's own counts line states today's occurrence and no missed deadline; the
+     briefing's `— 오늘 마감` line and the `실행` today-group step above still assert the deadline itself. */
+  await step("the schedule tab counts line states today's deadline", async () => {
+    await clickTab("일정");
     const line = await page.evaluate(() => {
-      const b = [...document.querySelectorAll("button")].find((x) => (x.innerText || "").startsWith("오늘 일정"));
-      return b ? b.innerText.replace(/\s+/g, " ").trim() : "";
+      const p = [...document.querySelectorAll("main p")].find((x) => /^오늘 \d+건 · 이번 주 \d+건 · 지난 마감 \d+건$/.test((x.innerText || "").replace(/\s+/g, " ").trim()));
+      return p ? p.innerText.replace(/\s+/g, " ").trim() : "";
     });
-    if (!line.includes("오늘 일정 1건 · 3일 내 마감 1건")) throw new Error("home briefing card schedule line: " + line);
-    await clickText("오늘 일정 1건");
-    await sleep(400);
-    await expectText("다가오는 일정");
+    if (!line.startsWith("오늘 1건 · ") || !line.endsWith("지난 마감 0건")) throw new Error("schedule tab counts line: " + JSON.stringify(line));
   });
 
   await step("the assistant packet lists the upcoming schedule", async () => {
-    await clickTab("홈");
+    await clickTab("실행");
     await clickText("브리핑 열기");
     await sleep(500);
     await clickInModal("AI에게 보내기");

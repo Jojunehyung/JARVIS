@@ -3,6 +3,8 @@
 
 `GoalsTab` lists goals as OKR cards — title, 영역 (area), deadline, note, and key results (KR) of four types — and is numbers-only: no task row, no per-task control, nothing derived from a task beyond the KR progress figures below. It is also, since the `실행` tab dropped `＋ 이 목표에 실행` ([tasks.md](tasks.md)), the **only** place a 실행 (task) can be created from ([Rule 18](../design-docs/core-beliefs.md#rule-18)) — every goal→task listing in the app now lives here, as numbers, never as a row list. Progress and 페이스 (pace) are computed at render by `goalProgress`, `krProgress`, and `paceOf` ([Rule 9](../design-docs/core-beliefs.md#rule-9)); the formulas are in `goal-engine.md` under `../design-docs/`. Props: `state, onAddGoal (opens modal "addGoal"), onCheckin (checkinKR), onGoalStatus (goalStatus), onRemoveGoal (removeGoal), onAddQuestFor (opens modal "addQuest" with the goal id)`.
 
+Since home became a quantitative CV with no date-scoped facts (2026-09-15, [home.md](home.md)), `목표` is also the **only** screen that shows goal progress with its pace — the user's own decision (`목표별 진행률은 목표탭에서만`). The daily briefing still carries its own `목표 페이스` lines ([daily-briefing.md](daily-briefing.md)), unchanged.
+
 ## Layout
 - Header section: `목표 (OKR)` / `목표를 세우고, 핵심결과 수치로 진행을 측정해요.` / cyan button `새 목표`.
 - Groups in order: `active` → `진행 중` (label zinc-400, bar cyan) and `done` → `달성` (label emerald-400, bar emerald, card at `opacity-75`). An empty group is not rendered; with no goals at all: `EmptyGoalSvg` + `목표가 없습니다. 모든 진행 측정은 목표에서 시작됩니다.`

@@ -19,7 +19,7 @@
     { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
   ],
   "screenshots": [
-    { "src": "./screenshots/home.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "오늘 브리핑과 목표 페이스" },
+    { "src": "./screenshots/home.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "영역 등급·자격·시험 이력과 롤모델 근접도" },
     { "src": "./screenshots/tasks.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "목표별 실행과 마일스톤" },
     { "src": "./screenshots/goals.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "목표와 핵심결과" },
     { "src": "./screenshots/calendar.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "달력으로 보는 약속과 마감" }
