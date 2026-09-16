@@ -81,3 +81,6 @@ A standing user instruction says the suite runs only when the user asks. These s
 - `flow4.js` (new): `v23 save → v24 meeting task links`; `SCHEMA_V` 23 → 24.
 - `flow.js` fresh-save and `flow6.js` backup version assertions 23 → 24.
 - Step count as written: 170 → 176.
+
+## Follow-up (same day)
+The user's screenshot of `새 회의록` did not show the picker: it rendered after `후속 조치`, below the fold on a phone. The `할 일 연결` block now sits directly under the date, above the title and text fields. The completed-task window was widened from the last 30 days to every completed task, newest first (`MEETING_TASK_PAST_DAYS` removed); the 30-row cap and `할 일 검색` keep the list usable. No schema change, no new Korean string. Gates: build, finish, lang:check, docs:gen + docs:check. E2E not executed.

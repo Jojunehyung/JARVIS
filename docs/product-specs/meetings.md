@@ -41,7 +41,7 @@ calendar file ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
 ## Caps and the storage arithmetic
 `MEETING_LIMITS = { title: 40, attendees: 80, summary: 800, decisions: 200, actions: 200 }`,
 `PROJECT_LIMITS = { name: 40, note: 200 }`. 800 Hangul characters is a page of key points, not a transcript.
-`MEETING_LIMITS.tasks = 10` caps the task links; `MEETING_TASK_PAST_DAYS = 30` and `MEETING_TASK_ROWS = 30` shape
+`MEETING_LIMITS.tasks = 10` caps the task links; `MEETING_TASK_ROWS = 30` shapes
 the picker (below).
 
 - Unit: `storageUsedBytes` counts string length, so the budget is `STORAGE_BUDGET` = 3.5 × 1,048,576 = 3,672,064
@@ -114,12 +114,12 @@ on one line (each nav `<span>` is `whitespace-nowrap`).
   으로 적어요` (`rows=8`), `결정 사항 (선택)`, `후속 조치 (선택)` (`rows=3` each); `일정 연결 (선택)` chips from
   `eventsOn(state, date)`: `연결 안 함` plus `{time || "시간 미정"} {title}` per occurrence that day, or the line
   `이 날짜에는 일정이 없어요.`; changing the date clears a link whose event no longer has an occurrence on the new
-  date. `할 일 연결` (v24): a header with the `{n} / 10` count, a text filter input `할 일 검색`, and one
+  date. `할 일 연결` (v24), placed directly under the date and above the text fields so it is in view on a phone without scrolling (moved 2026-09-16): a header with the `{n} / 10` count, a text filter input `할 일 검색`, and one
   `role="checkbox"` row per candidate from `meetingTaskCandidates(state, today)` — open tasks first in the `할 일`
-  list's own `todoOf` order, then tasks completed in the last 30 days, newest first. Each row shows a tick box, the
+  list's own `todoOf` order, then every completed task, newest first (no age cut-off since 2026-09-16 — minutes often concern work finished long ago; the row cap and the search keep a long history usable). Each row shows a tick box, the
   to-do row's lead chip (`todoLeadOf`; an archived-style `MM-DD` chip for a completed task; an overdue chip is
   rose-300 here because rose-400 is reserved for the form's validation line) and the title, struck through and
-  dimmed when completed. A linked task that is no longer a candidate (completed more than 30 days ago) stays listed
+  dimmed when completed. A linked task that is not a candidate (a finished task with no completion date on record) stays listed
   so it can be unticked, and linked rows stay visible whatever the filter. At most 30 rows render; beyond that
   `할 일 {n}건 더 있음 — 검색어로 좁혀요`. No match: `검색 결과가 없어요.`; no task at all: `연결할 할 일이 없어요.`
   At 10 links every unticked row is disabled and the line `할 일은 10개까지 연결돼요.` shows. A caption states

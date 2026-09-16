@@ -6672,7 +6672,6 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 1,642. `meetingFits` measures the
    serialised record, `taskIds` included, so the same guard covers it. */
 const MEETING_LIMITS = { title: 40, attendees: 80, summary: 800, decisions: 200, actions: 200, tasks: 10 };
-const MEETING_TASK_PAST_DAYS = 30; // completed tasks this recent stay offered as link candidates
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
@@ -6689,17 +6688,17 @@ const meetingEventText = (state, m) => {
 // Whether a task is closed today: a daily task ticked today, or a finished once task.
 const taskClosedOn = (q, today) => (q.type === "daily" ? (q.doneDates || []).includes(today) : q.status === "done");
 
-// Link candidates for the meeting form: open tasks in the to-do list's own order, then tasks completed in the last
-// `MEETING_TASK_PAST_DAYS` days, newest first. Each row carries the lead chip of its to-do row. Derived, never stored.
+// Link candidates for the meeting form: open tasks in the to-do list's own order, then every completed task, newest
+// first — minutes often concern work finished long ago, so no age cut-off (2026-09-16). Each row carries the lead chip
+// of its to-do row. The picker's row cap and search keep a long history usable. Derived, never stored.
 const meetingTaskCandidates = (state, today) => {
   const open = todoOf(state, today).groups
     .flatMap((g) => g.rows)
     .filter((r) => r.kind === "task" && !r.done && !taskClosedOn(r.task, today))
     .map((r) => ({ q: r.task, lead: todoLeadOf(r, today), done: false }));
   const seen = new Set(open.map((c) => c.q.id));
-  const since = shiftDay(today, -MEETING_TASK_PAST_DAYS);
   const done = (state.tasks || [])
-    .filter((q) => !seen.has(q.id) && (lastDoneDate(q) || "") >= since)
+    .filter((q) => !seen.has(q.id) && lastDoneDate(q))
     .sort((a, b) => (lastDoneDate(b) || "").localeCompare(lastDoneDate(a) || "") || a.title.localeCompare(b.title))
     .map((q) => ({ q, lead: todoLeadOf({ kind: "task", task: q, date: q.due || null }, today, true), done: true }));
   return [...open, ...done];
@@ -6856,8 +6855,8 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   const [err, setErr] = useState("");
   const dayEvents = date ? eventsOn(state, date) : [];
   const candidates = useMemo(() => meetingTaskCandidates(state, today), [state, today]);
-  // Rows offered: the filtered candidates, plus any linked task that is no longer a candidate (completed more than
-  // `MEETING_TASK_PAST_DAYS` days ago), so a selected link always stays in view and can be unticked.
+  // Rows offered: the filtered candidates, plus any linked task that is not a candidate (a finished task with no
+  // completion date on record), so a selected link always stays in view and can be unticked.
   const taskRows = useMemo(() => {
     const qy = taskQuery.trim().toLowerCase();
     const hit = (q) => !qy || q.title.toLowerCase().includes(qy);
@@ -6919,24 +6918,8 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
           <input type="date" value={date} onChange={(e) => pickDate(e.target.value)}
             className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
         </div>
-        <BizField value={title} onChange={setTitle} placeholder="회의 이름 — 예: 2차 요구사항 회의" />
-        <BizField value={attendees} onChange={setAttendees} placeholder="참석자 (선택) — 예: 김OO, 박OO" />
-        <MeetingText value={summary} onChange={setSummary} placeholder="회의 요약 — 논의한 내용을 요점으로 적어요" rows={8} cap={MEETING_LIMITS.summary} />
-        <MeetingText value={decisions} onChange={setDecisions} placeholder="결정 사항 (선택)" rows={3} cap={MEETING_LIMITS.decisions} />
-        <MeetingText value={actions} onChange={setActions} placeholder="후속 조치 (선택)" rows={3} cap={MEETING_LIMITS.actions} />
-        <div>
-          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">일정 연결 (선택)</div>
-          {dayEvents.length === 0 ? (
-            <p className="text-xs text-zinc-500">이 날짜에는 일정이 없어요.</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              <Chip on={!eventId} onClick={() => setEventId(null)}>연결 안 함</Chip>
-              {dayEvents.map((o) => (
-                <Chip key={o.ev.id} on={eventId === o.ev.id} onClick={() => setEventId(o.ev.id)}>{o.ev.time || "시간 미정"} {o.ev.title}</Chip>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Directly under the date, above the long text fields: the link picker is the part of the form the user
+            reaches for first, and at the bottom it sat below the fold on a phone (reported 2026-09-16). */}
         <div>
           <div className="flex items-baseline justify-between gap-2 mb-1.5">
             <div className="text-xs font-bold tracking-widest text-zinc-500">할 일 연결</div>
@@ -6971,6 +6954,24 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
             </>
           )}
           <p className="text-xs text-zinc-600 mt-1.5">연결은 기록이에요 — 할 일의 상태·점수·목표는 바뀌지 않아요.</p>
+        </div>
+        <BizField value={title} onChange={setTitle} placeholder="회의 이름 — 예: 2차 요구사항 회의" />
+        <BizField value={attendees} onChange={setAttendees} placeholder="참석자 (선택) — 예: 김OO, 박OO" />
+        <MeetingText value={summary} onChange={setSummary} placeholder="회의 요약 — 논의한 내용을 요점으로 적어요" rows={8} cap={MEETING_LIMITS.summary} />
+        <MeetingText value={decisions} onChange={setDecisions} placeholder="결정 사항 (선택)" rows={3} cap={MEETING_LIMITS.decisions} />
+        <MeetingText value={actions} onChange={setActions} placeholder="후속 조치 (선택)" rows={3} cap={MEETING_LIMITS.actions} />
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">일정 연결 (선택)</div>
+          {dayEvents.length === 0 ? (
+            <p className="text-xs text-zinc-500">이 날짜에는 일정이 없어요.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              <Chip on={!eventId} onClick={() => setEventId(null)}>연결 안 함</Chip>
+              {dayEvents.map((o) => (
+                <Chip key={o.ev.id} on={eventId === o.ev.id} onClick={() => setEventId(o.ev.id)}>{o.ev.time || "시간 미정"} {o.ev.title}</Chip>
+              ))}
+            </div>
+          )}
         </div>
         <p className="text-xs text-zinc-500">전체 녹취가 아니라 요약만 저장해요.</p>
         {err && <p className="text-xs text-rose-400">{err}</p>}
