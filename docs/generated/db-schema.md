@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 21 |
+| State schema version (`freshState.v`) | 23 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v21 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v23 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 21,
+  v: 23,
   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -27,7 +27,8 @@
   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
             isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?,
-            kind?("book"|"fit"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only) }],
+            kind?("book"|"fit"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only),
+            score?(string — exam milestones completed from v22 on, as entered, display only) }],
   goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
             krs: [{ id, type:"metric", title, start, target, current, unit }
                 | { id, type:"count",  title, need }
@@ -43,28 +44,34 @@
   deals: [{ id, client, title, status("lead"|"quote"|"won"|"lost"),           // a period contract is a billing rule plus the user's own
             monthly?, costMonthly?, months?, startMonth?("YYYY-MM"),          // payment stamps; months, totals, margin and the
             paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
+  meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
+  meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?,       // trophy, goal or streak (rules 1, 18). A meeting's time lives
+              summary, decisions?, actions?, eventId?, createdAt }],       // only in events; eventId (+ date) points at one occurrence and
+                                                                          // nothing is copied from it. Order and storage use are derived.
   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
          briefingSeen?, lastReview? },                      // dates only — facts, never verdicts
-  exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
+  exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
-  ui: { scheduleView("list"|"calendar"), bizView("deals"|"rates"|"folio") },   // which view a tab opens on — a preference, never derived data
+  ui: { bizView("deals"|"rates"|"folio") },   // which view the business tab opens on — a preference, never derived data
+                                              // (scheduleView was retired 2026-09-16 and dropped at v22)
   lastTick, dModel
 }
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
 agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
 contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
 business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
-the displayed age (`ageText`) and the total months of practice (`careerMonths`), and the calendar export file (`buildIcs`).
+the displayed age (`ageText`) and the total months of practice (`careerMonths`), the calendar export file (`buildIcs`),
+and the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`).
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 21,
+  v: 23,
   profile: null,
   areas,
   tasks: [],
@@ -73,6 +80,8 @@ the displayed age (`ageText`) and the total months of practice (`careerMonths`),
   folio: [],
   rates: [],
   deals: [],
+  meetingProjects: [],
+  meetings: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
@@ -80,7 +89,7 @@ the displayed age (`ageText`) and the total months of practice (`careerMonths`),
   certBest: {},
   room: { trophies: [] },
   role: null,
-  ui: { scheduleView: "list", bizView: "deals" },
+  ui: { bizView: "deals" },
   lastTick: dstr(),
   dModel: DIFF_RAW_VERSION,
 });
@@ -167,6 +176,19 @@ const demoState = () => {
     { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9) },
     { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3) },
   ];
+  // Synthetic minutes: made-up companies, no personal names (SECURITY.md), no event link.
+  const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20) };
+  const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6) };
+  s.meetingProjects = [mp2, mp1];
+  s.meetings = [
+    { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
+      summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
+      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1) },
+    { id: uid(), projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
+      summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3) },
+    { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
+      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9) },
+  ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
     text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
@@ -177,7 +199,7 @@ const demoState = () => {
     wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
   }];
   s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: shiftDay(today, -7) };
-  s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60) } };
+  s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
   s.role = { name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 } };
@@ -201,25 +223,27 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v19 → v19 | v19: life metrics are gone (user decision 2026-09-11). A global self-assessed triple that also grew from unrelated achievements measured nothing; objective measures belong to a goal's metric KR (rule 8). The stored numbers and the check-in stamp are dropped; every other act stamp, record and payout is kept untouched. |
 | < v20 → v20 | v20: business records — folio[] portfolio entries, rates[] unit prices, deals[] period contracts. A contract is a billing rule (startMonth, months, monthly) plus the user's own paidMonths stamps; every month, total and margin stays derived at render. Records, never tasks: nothing here pays P, creates a trophy, moves a goal or touches the streak. ui.bizView is a preference, exactly like ui.scheduleView. |
 | < v21 → v21 | v21: the CV — exact personal facts replace the vague chips. name, birth, email, phone and the two record arrays profile.edus / profile.careers are added empty; nothing is removed. age, edu, career, majorField and majorName stay exactly as the old save wrote them: edu and career are the frozen inputs of the one-time |
+| < v22 → v22 | v22: exam scores are recorded exactly as the score report states them — tasks[].score and exams.best[famId].score, both optional display strings; payout, grade and D stay band-based (rules 1, 2, 6). Nothing is backfilled: a save from before v22 simply has no score and shows its band label. The retired |
+| < v23 → v23 | v23: meeting minutes — meetingProjects[] and meetings[], hand-written records grouped by project. A record, never a task: no payout, no trophy, no goal, no streak (rules 1, 18). The time of a meeting stays a schedule event; a meeting stores only its date and an optional eventId. Nothing existing is changed. |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 4536 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 4536 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 4536 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 6181 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 6414 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 6595 | App root |
-| `liferpg-img-${slot}` | 6635 | App root |
-| `liferpg-img-ev-${id}` | 6658 | App root |
-| `liferpg-img-ev-${q.id}` | 6836 | App root |
-| `liferpg-img-ev-${t.id}` | 7095 | App root |
-| `liferpg-img-study-${t.id}-1` | 7095 | App root |
-| `liferpg-img-study-${t.id}-2` | 7095 | App root |
-| `liferpg-img-folio-${f.id}` | 7101 | App root |
+| `liferpg-img-ev-${task.id}` | 4602 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 4602 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 4602 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 6282 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 6515 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 6968 | App root |
+| `liferpg-img-${slot}` | 7008 | App root |
+| `liferpg-img-ev-${id}` | 7031 | App root |
+| `liferpg-img-ev-${q.id}` | 7210 | App root |
+| `liferpg-img-ev-${t.id}` | 7544 | App root |
+| `liferpg-img-study-${t.id}-1` | 7544 | App root |
+| `liferpg-img-study-${t.id}-2` | 7544 | App root |
+| `liferpg-img-folio-${f.id}` | 7550 | App root |
 
 ## Demo data (`demoState`)
 

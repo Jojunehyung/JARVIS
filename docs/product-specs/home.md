@@ -14,7 +14,7 @@ Excluded on the same rule: school and employer names, e-mail, phone, gender, `�
 One `<section>`, three blocks top to bottom — identity, records, grades — so the grade rows sit last, next to the proximity line computed from them.
 
 ### Identity row
-`Portrait` at size 64 in the existing frame; `{displayName(state.profile)}`; `{ageText(state.profile, today)}`; the `프로필` button (unchanged, opens `ProfileModal`) — the only edit control on the CV, since `ProfileModal` owns the photo, the personal facts and the records. Last, in the top-right corner of the card, an icon-only settings button (`aria-label`/`title` `설정`, lucide `Settings`) → `onSettings`. It sits on the card, not the shared header, because the header is common to all five tabs and its right edge already carries the streak/shield pill.
+`Portrait` at size 64 in the existing frame; `{displayName(state.profile)}`; `{ageText(state.profile, today)}`; the `프로필 편집` button (renamed 2026-09-16 from `프로필` — a bare `프로필` button inside a tab now named `프로필` was ambiguous, and it would collide with an E2E `clickText("프로필")` against the nav; opens `ProfileModal`) — the only edit control on the CV, since `ProfileModal` owns the photo, the personal facts and the records. Last, in the top-right corner of the card, an icon-only settings button (`aria-label`/`title` `설정`, lucide `Settings`) → `onSettings`. It sits on the card, not the shared header, because the header is common to all six tabs and its right edge already carries the streak/shield pill.
 
 ### Records
 One `CvFact({ label, children, onClick })` row each — a button when `onClick` is given, else a plain row. Zeros are stated (`0건`, `트로피 0개 · 검증된 성취 0건` — [Rule 13](../design-docs/core-beliefs.md#rule-13)); every read is guarded (`?.`, `|| []`) so a v10 or unversioned save still renders the card instead of printing `undefined` (`tools/e2e/flow4.js`).
@@ -23,8 +23,8 @@ One `CvFact({ label, children, onClick })` row each — a button when `onClick` 
 |---|---|---|
 | `학력` | `cv.edu` | `cvSummaryOf(profile, today)` |
 | `경력` | `cv.career` | `cvSummaryOf(profile, today)` |
-| `자격` | `{n}건`, then ` · {name} D{d}` per held certification, highest D first (unknown D last) | `heldCertsOf(state)` |
-| `시험` | `{n}건`, then ` · {exam name} {band} D{d}` per `exams.best` row, highest D first | `state.exams?.best`, name from `examOf(id)?.n` falling back to the id |
+| `자격` | `{n}건`, then ` · {name}` per held certification, highest D first (unknown D last) — the D figure itself stopped printing 2026-09-16 (the user asked for it gone; the sort still carries the ranking without the number) | `heldCertsOf(state)` |
+| `시험` | `{n}건`, then ` · {examBestText(id, b)}` per `exams.best` row, highest D first | `state.exams?.best`, name from `examOf(id)?.n` falling back to the id |
 | `포트폴리오` | `{n}건` | `(state.folio || []).length` |
 | `성취` | `트로피 {t}개 · 검증된 성취 {a}건 ›` (button → `onWall`) | trophy count from `state.room?.trophies`, achievement total summed over `state.areas[].achievements` |
 
@@ -32,6 +32,7 @@ A truncated row is never the only place a name lives: every held certification a
 
 - **`cvSummaryOf(profile, today)`** → `{ any, edu, career }`. Shared with the assistant packet ([assistant-bridge.md](../design-docs/assistant-bridge.md)) so the two can never state a different degree or role: `edu` = `{degree} {status} · {major || field || "전공 미기재"}` (degree fallback `학력`), or `학력 미입력` without an education entry; `career` = `실무 {careerText(careerMonths(careers, today))} · 최근 {role}`, or `경력 없음` without one; `any` says there is an education or a career entry at all. It reads neither `edus[].school` nor `careers[].company` — see the packet's own privacy note.
 - **`heldCertsOf(state)`** → `[{ n, d }]`, one entry per name, highest D first (unknown last), then name — every name in `profile.certs` (declared at onboarding, D from `certOf`) merged with every done `isCert` task (proven with a certificate photo, name from `certByTitle` — longest name first, [Rule 15](../design-docs/core-beliefs.md#rule-15) — D from `task.certD`). `profile.certs` is written only at onboarding, so before this helper existed a certification proven inside the app was never counted as held; `heldCertsOf` closes that gap. `ProfileModal`'s `보유 기록` `자격 {n}건` line reads the same helper, so the CV and the profile screen cannot disagree ([TD-42](../exec-plans/tech-debt-tracker.md): the merged list carries no marker telling a declared name apart from a proven one). `demoState` deliberately carries no `profile.certs` and no done `isCert` task, so the demo CV's `자격 0건` is a true fact about that save, not an oversight — adding one would need a matching `certBest` prefill for a stage-group certification ([Rule 3](../design-docs/core-beliefs.md#rule-3)).
+- **`examBestText(id, b)`** (2026-09-16, schema v22) → `{examOf(id)?.n || id} {b.score}` when the best band carries a score, else `{name} {b.label} 구간`. It is the only reader, alongside `ProfileModal`'s `시험 성적` line, of `exams.best[famId].score` — a display string entered at completion time ([evidence-modals.md](evidence-modals.md)); payout, grade and D stay band-based (`b.p`, `b.label`, `b.d` — [Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 2](../design-docs/core-beliefs.md#rule-2)). The wall (below) still prints `D{b.d}` next to the score, since that sheet is the payout ledger where D explains P; the CV row does not.
 
 ### Grades
 `SectionLabel` `영역 등급`, then one `AreaGradeRow({ area, onPromote })` per `state.areas` entry — the growth tab's former row, moved verbatim: grade box, `{name}`, `등급 {cur.name} · 다음 관문 {next.name}` (or `정점 도달` at grade 9), `{grade}/9`. With a next rank the **row is the button** (`Lock`, `›`) → `onPromote(area)` opens `PromoteModal`; at grade 9 the row is a plain `div` with `Trophy` and no press state (`PromoteModal` returns `null` there). This is the only control on home that promotes — nothing else does ([Rule 11](../design-docs/core-beliefs.md#rule-11)). `PromoteModal`, `promoteArea`, `EvidencePicker` and `composeEvidence` are unchanged; mechanics: [evidence-and-promotion.md](../design-docs/evidence-and-promotion.md).
@@ -47,7 +48,7 @@ Opened by the CV's corner button. Title `설정`, a bottom sheet like every othe
 Backup and reset mechanics (file shape, validation, toasts): [install-and-backup.md](install-and-backup.md).
 
 ## `AchievementWallModal` (`modal.type: "wall"`)
-Opened by the CV's `성취` row. Title `성취의 벽`, read-only — the former growth tab's wall, moved verbatim. First line: `트로피 {t}개 · 시험 {e}개 · 검증된 성취 {a}건`. Then, in order: the empty state when there is neither a trophy nor an exam best; the last 10 trophies (`slice(-10)`) inside `WallFrame`; a line per language specialisation (`🎖 {lang} 전문화 — 고난도 감쇠 하한 70%`, [Rule 2](../design-docs/core-beliefs.md#rule-2)); every `exams.best` row with its D and cumulative P; one block per area, newest 30 achievements first. The CV states the counts and this sheet holds every earned item — nothing earned becomes unreachable ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
+Opened by the CV's `성취` row. Title `성취의 벽`, read-only — the former growth tab's wall, moved verbatim. First line: `트로피 {t}개 · 시험 {e}개 · 검증된 성취 {a}건`. Then, in order: the empty state when there is neither a trophy nor an exam best; the last 10 trophies (`slice(-10)`) inside `WallFrame`; a line per language specialisation (`🎖 {lang} 전문화 — 고난도 감쇠 하한 70%`, [Rule 2](../design-docs/core-beliefs.md#rule-2)); every `exams.best` row with its D and cumulative P, plus ` · 점수 {b.score}` when a score was recorded (2026-09-16, display only — [scoring-engine.md](../design-docs/scoring-engine.md)); one block per area, newest 30 achievements first. The CV states the counts and this sheet holds every earned item — nothing earned becomes unreachable ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
 
 ## Where everything went, and why
 | Today (before 2026-09-15) | After |
@@ -59,11 +60,11 @@ Opened by the CV's `성취` row. Title `성취의 벽`, read-only — the former
 | `onExport` / `onImport`, growth data section | `SettingsModal` |
 | `onReset` → `resetAll`, growth data section | `SettingsModal`, with `setModal(null)` fired first |
 | trophy strip, specialisation lines, exam bests, per-area achievement lists, growth `성취의 벽` | `AchievementWallModal` from the CV's `성취` row; the CV states only the counts |
-| `브리핑 열기 ›`, home's `오늘 브리핑` card | `실행` tab header chip row ([tasks.md](tasks.md), [daily-briefing.md](daily-briefing.md)) |
+| `브리핑 열기 ›`, home's `오늘 브리핑` card | `할 일` tab header chip row (named `실행` at the time; renamed 2026-09-16 — [tasks.md](tasks.md), [daily-briefing.md](daily-briefing.md)) |
 | `일지 쓰기` / `주간 리뷰`, home card buttons | inside `BriefingModal` (unchanged) |
-| `오늘 할 일` rows and their completion control | `실행` tab rows and the briefing's `오늘 할 일` lines, both through `tryComplete` |
+| `오늘 할 일` rows and their completion control | `할 일` tab rows (compact since 2026-09-16, completion inside `TaskDetailModal`) and the briefing's `오늘 할 일` lines, both through `tryComplete` |
 | goal progress and pace, `오늘의 초점` | `목표` cards, and the briefing's `목표 페이스` (user decision) |
-| today's schedule and business counts, home card | `일정` header, `사업` header, `실행` header, briefing sections |
+| today's schedule and business counts, home card | `일정` header, `사업` header, `할 일` header, briefing sections |
 | held certifications and exam bests, full list | still `ProfileModal`'s `보유 기록` — now also counting certifications earned in-app, not just declared at onboarding |
 
 The former `성장` tab itself is retired; its content map is also kept, briefly, at [growth.md](growth.md) for anything still linking there.

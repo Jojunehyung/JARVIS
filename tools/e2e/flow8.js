@@ -53,23 +53,15 @@ module.exports = async (h) => {
     const btn = ov && [...ov.querySelectorAll("button")].find((b) => (b.innerText || "").includes(t));
     return btn ? btn.className : "";
   }, text);
-  // The packet, reached the way the app reaches it: `실행` header → briefing → `AI에게 보내기` → its textarea.
+  // The packet, reached the way the app reaches it: `할 일` header → briefing → `AI에게 보내기` → its textarea.
   const packetText = async () => {
-    await clickTab("실행"); await clickText("브리핑 열기"); await sleep(600);
+    await clickTab("할 일"); await clickText("브리핑 열기"); await sleep(600);
     await clickInModal("AI에게 보내기"); await sleep(500);
     return page.evaluate(() => document.querySelector(".fixed.inset-0 textarea")?.value || "");
   };
 
   // Everything a business record must never touch (rules 1, 18).
-  const boundary = (st) => ({
-    trophies: (st.room?.trophies || []).length,
-    achievements: (st.areas || []).map((a) => (a.achievements || []).length).join("/"),
-    streak: st.act?.streak,
-    shields: st.act?.shieldsLeft,
-    lastActive: st.act?.lastActive,
-    tasks: (st.tasks || []).length,
-    goals: JSON.stringify(st.goals || []),
-  });
+  const boundary = h.recordBoundary;
   const assertOnlyDeals = (before, after, what) => {
     const b = boundary(before), a = boundary(after);
     for (const k of Object.keys(b)) {
@@ -311,16 +303,16 @@ module.exports = async (h) => {
     if (await hasText("최근 6개월")) throw new Error("the tab reopened on the contract view after a reload");
     const after = await readState();
     if (after.ui?.bizView !== "folio") throw new Error("the stored view after a reload: " + after.ui?.bizView);
-    if (after.ui?.scheduleView !== "list") throw new Error("the business view overwrote the schedule preference: " + JSON.stringify(after.ui));
+    if ("scheduleView" in (after.ui || {})) throw new Error("the retired schedule view came back: " + JSON.stringify(after.ui));
   });
 
-  /* ── The assistant surfaces: the briefing, the `실행` header and list, and the packet all read one `bizSummary`, so
+  /* ── The assistant surfaces: the briefing, the `할 일` header and list, and the packet all read one `bizSummary`, so
      the figures below are the ones the tab header stated above. Two contracts are billed this month, 1,200,000
      and 2,000,000 won, and neither month is stamped paid, so two unpaid months are outstanding. ── */
 
   await step("the briefing states the business section after the goal pace", async () => {
     const month = await monthIn(0);
-    await clickTab("실행");
+    await clickTab("할 일");
     await clickText("브리핑 열기");
     await sleep(600);
     const brief = await overlayText();
@@ -345,10 +337,11 @@ module.exports = async (h) => {
     if (lines.length !== 2 || !lines[1].startsWith("남은 계약 ")) throw new Error("the business line did not land on the tab: " + JSON.stringify(lines));
   });
 
-  /* The `실행` list names the same unpaid months, capped at BIZ_ALERT_MAX, and the header line states the full
-     counts beside the cap. A business row is a link into this tab: it completes nothing and pays nothing. */
+  /* The `할 일` list names the same unpaid months, capped at BIZ_ALERT_MAX, and the header line states the full
+     counts beside the cap. A business row opens a sheet whose only action is a link into this tab: it completes
+     nothing and pays nothing. */
   await step("the tasks tab lists the unpaid month as a business row that completes nothing", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await expectText("사업 입금 미확인 2건");
     // The unpaid count is rose while payments are outstanding — the severity the removed home line carried.
     const rose = await page.evaluate(() => {
@@ -358,14 +351,25 @@ module.exports = async (h) => {
     });
     if (rose !== true) throw new Error(`the header's unpaid count is not rose while payments are outstanding (${rose})`);
     const all = (await todoRows()) || [];
-    const biz = all.find((r) => r.title.includes("재고 관리 자동화 도구") && r.text.includes("입금 미확인"));
+    // The row no longer prints its business text; the same contract also has a later `계약 종료` row, and rows are
+    // date-ordered, so the first row of that title is this month's unpaid one (its sheet below confirms it).
+    const biz = all.find((r) => r.title.includes("재고 관리 자동화 도구"));
     if (!biz) throw new Error("the unpaid month is not listed: " + all.map((r) => `${r.group}/${r.title}`).join(" | "));
-    if (!biz.text.includes("사업") || !biz.text.includes("목표 기여 없음")) {
-      throw new Error("the business row does not state its kind and that it moves no goal: " + biz.text);
+    if (!(biz.text.includes("기한 지남") || biz.text.includes("D-")) || !biz.text.includes("목표 기여 없음")) {
+      throw new Error("the business row does not lead with its month-end chip and state that it moves no goal: " + biz.text);
     }
     // The rule boundary: no checkbox, no lock, no action row — tapping the row is its only behaviour (rules 1, 18).
     if (biz.controls) throw new Error(`the business row carries ${biz.controls} control(s): ` + JSON.stringify(biz.buttons));
     await todoRows(null, { title: biz.title });
+    await sleep(500);
+    const sheet = await overlayText();
+    if (!sheet.includes("사업 — ") || !sheet.includes("입금 미확인")) throw new Error("the business row did not open its sheet: " + sheet.slice(0, 300));
+    const doneButtons = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      return ov ? [...ov.querySelectorAll("button")].map((b) => (b.innerText || "").trim()).filter((t) => t.includes("완료")) : [];
+    });
+    if (doneButtons.length) throw new Error("the business sheet offers a completion control: " + JSON.stringify(doneButtons));
+    await clickInModalExact("사업 탭에서 보기 ›");
     await sleep(600);
     const lines = await headerLines();
     if (lines.length !== 2 || !lines[0].startsWith("이번 달 계약 320만원")) throw new Error("the business row did not open the business tab: " + JSON.stringify(lines));
@@ -473,7 +477,7 @@ module.exports = async (h) => {
     // The planted deals are restored in `finally`, so a failure here cannot cascade into the steps that follow.
     try {
       await h.reload();
-      await clickTab("실행");
+      await clickTab("할 일");
       await clickText("브리핑 열기");
       await sleep(600);
       const txt = await overlayText();

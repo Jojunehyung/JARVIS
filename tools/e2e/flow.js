@@ -69,7 +69,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version and CV records", async () => {
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
-    if (st?.v !== 21) throw new Error("fresh save schema v" + st?.v + " (expected 21)");
+    if (st?.v !== 23) throw new Error("fresh save schema v" + st?.v + " (expected 23)");
     const p = st.profile || {};
     if (p.name !== "E2E테스터" || p.nick !== "E2E닉" || p.birth !== "1998-05-14") throw new Error("personal facts not stored: " + JSON.stringify({ name: p.name, nick: p.nick, birth: p.birth }));
     const e0 = (p.edus || [])[0] || {};
@@ -82,10 +82,10 @@ module.exports = async (h) => {
   });
 
   // ── Profile screen — the only way to see or change the CV after onboarding
-  await step("profile modal — opens from the home card and lists the CV", async () => {
-    await clickTab("홈");
+  await step("profile modal — opens from the profile tab and lists the CV", async () => {
+    await clickTab("프로필");
     if (await hasText("업로드")) throw new Error("the home card still carries its own photo button");
-    await clickText("프로필"); await sleep(400);
+    await clickText("프로필 편집"); await sleep(400);
     // Everything typed at onboarding comes back, in both record sections
     for (const t of ["E2E대학교", "기계공학", "E2E전장", "설계 엔지니어"]) await expectText(t);
     await expectText("합산 실무 2년 2개월");
@@ -214,7 +214,7 @@ module.exports = async (h) => {
   await shot("quest-added");
 
   // ── Tasks tab — completion and catalogue
-  await step("go to tasks tab", async () => { await clickTab("실행"); await expectText("실행 — 시간순 할 일"); });
+  await step("go to tasks tab", async () => { await clickTab("할 일"); await expectText("할 일 — 시간순"); });
   await step("complete daily task (goal progress delta)", async () => {
     const before = await page.evaluate(() => document.body.innerText);
     await completeQuest("설계 실습 1시간");
@@ -239,7 +239,7 @@ module.exports = async (h) => {
   // ── Home CV — the records, the grade rows and the promotion gate, the settings sheet
   // Home is exactly two blocks: the CV and the proximity line. Every count is compared with the save it states.
   await step("home is one CV with the proximity line under it", async () => {
-    await clickTab("홈");
+    await clickTab("프로필");
     const res = await page.evaluate(() => {
       const norm = (t) => (t || "").replace(/\s+/g, " ").trim();
       const main = document.querySelector("main");
@@ -264,7 +264,7 @@ module.exports = async (h) => {
     }
   });
   await step("open promotion gate modal", async () => {
-    await clickTab("홈");
+    await clickTab("프로필");
     // The CV grade row is the control: nothing else on home promotes, so the gate modal is the only way up.
     if (!(await h.openAreaGate())) errors.push("no area row to open the promotion gate");
     await expectText("승급 심사");
@@ -285,17 +285,25 @@ module.exports = async (h) => {
   await shot("home-cv");
 
   // ── Tab sweep + persistence
-  for (const tab of ["홈", "실행", "목표"]) {
+  for (const tab of ["프로필", "할 일", "목표"]) {
     await step(`switch tab: ${tab}`, async () => { await clickTab(tab); });
   }
-  await step("bottom nav order (home, goals, tasks, schedule, business)", async () => {
+  await step("bottom nav order and one-line labels (profile, goals, to-do, schedule, meetings, business)", async () => {
     const nav = await page.evaluate(() => ({
       labels: [...document.querySelectorAll("nav button")].map((b) => (b.innerText || "").trim()),
       cls: document.querySelector("nav")?.className || "",
+      spans: [...document.querySelectorAll("nav button span")].map((e) => ({
+        text: (e.innerText || "").trim(), height: e.getBoundingClientRect().height, sw: e.scrollWidth, cw: e.clientWidth,
+      })),
     }));
-    const want = ["홈", "목표", "실행", "일정", "사업"];
+    const want = ["프로필", "목표", "할 일", "일정", "미팅", "사업"];
     if (nav.labels.join("·") !== want.join("·")) throw new Error("nav order: " + nav.labels.join("·"));
-    if (!nav.cls.includes("grid-cols-5")) throw new Error("the nav bar is not a five-column grid: " + nav.cls);
+    if (!nav.cls.includes("grid-cols-6")) throw new Error("the nav bar is not a six-column grid: " + nav.cls);
+    if (nav.spans.length !== want.length) throw new Error(`${nav.spans.length} nav label spans, expected ${want.length}`);
+    for (const sp of nav.spans) {
+      if (sp.height > 18) throw new Error(`the nav label "${sp.text}" wraps: ${sp.height}px tall`);
+      if (sp.sw > sp.cw) throw new Error(`the nav label "${sp.text}" is clipped: ${sp.sw} > ${sp.cw}`);
+    }
   });
   await step("state persists after reload", async () => {
     const before = await page.evaluate(() => localStorage.length);
@@ -312,7 +320,7 @@ module.exports = async (h) => {
   // Without a role model, home states the fact as an inert line; the briefing's next-step line is the one that
   // acts on it, so it must open the role model form rather than land on that line.
   await step("the no-role briefing line opens the role model form", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await clickText("브리핑 열기");
     await sleep(400);
     await clickInModal("롤모델 미설정");
@@ -328,6 +336,7 @@ module.exports = async (h) => {
   await require("./flow7.js")(h);
   await require("./flow8.js")(h);
   await require("./flow9.js")(h);
+  await require("./flow10.js")(h); // before flow4, which replaces the save
   await require("./flow4.js")(h);
   await require("./flow6.js")(h);
 
@@ -343,7 +352,7 @@ module.exports = async (h) => {
   // A stagnant-area line lands on home, where the area's grade row and its gate live. The demo's `건강` area has no
   // achievement at all, so its line exists whatever the date.
   await step("a briefing area line lands on the home CV", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await clickText("브리핑 열기");
     await sleep(400);
     await clickInModal("최근 30일 성취 기록 0건");
@@ -353,11 +362,16 @@ module.exports = async (h) => {
       grades: (document.querySelector("main")?.innerText || "").includes("영역 등급"),
     }));
     if (res.open) throw new Error(`${res.open} overlay(s) still open after the area line was tapped`);
-    if (res.tab !== "홈") throw new Error("the area line left the app on the tab: " + (res.tab || "none"));
+    if (res.tab !== "프로필") throw new Error("the area line left the app on the tab: " + (res.tab || "none"));
     if (!res.grades) throw new Error("home does not show the grade rows after the area line was tapped");
   });
   await step("demo — sweep every tab", async () => {
-    for (const tab of ["실행", "목표", "일정", "사업", "홈"]) { await clickTab(tab); }
+    for (const tab of ["할 일", "목표", "일정", "미팅", "사업", "프로필"]) {
+      await clickTab(tab);
+      // The demo reproduces the two 2026-09-16 features: synthetic minutes, and an exact exam score on the CV.
+      if (tab === "미팅") await expectText("프로젝트 2개 · 회의록 3건");
+      if (tab === "프로필") await expectText("TOEIC L&R 735");
+    }
   });
   await shot("demo");
 

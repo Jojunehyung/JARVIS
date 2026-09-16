@@ -11,13 +11,14 @@ const WIDTH = 430, HEIGHT = 932;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Each shot: the bottom-tab label to open and, optionally, one control to click inside that tab —
-// the schedule tab opens on its list, so the calendar shot has to switch the view first.
+// Each shot: the bottom-tab label to open and, optionally, one control to click inside that tab. The schedule tab
+// is calendar-only since 2026-09-16, so every shot is a plain tab switch.
 const SHOTS = [
-  { file: "home.png", tab: "홈" },
-  { file: "tasks.png", tab: "실행" },
+  { file: "home.png", tab: "프로필" },
+  { file: "tasks.png", tab: "할 일" },
   { file: "goals.png", tab: "목표" },
-  { file: "calendar.png", tab: "일정", then: "달력" },
+  { file: "calendar.png", tab: "일정" },
+  { file: "meetings.png", tab: "미팅" },
 ];
 
 (async () => {

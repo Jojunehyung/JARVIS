@@ -1,7 +1,7 @@
 # Information architecture
 <!-- src: SPEC-3 -->
 
-The app is a four-level hierarchy — 영역 (area) → 목표 (goal) → KR (key result) → 실행 (task) — shown through five tabs, twenty-two modals, and two overlays. The fourth tab, 일정 (schedule), and the fifth, 사업 (business), both sit outside the hierarchy: an event or a business record is a dated record with no goal above it ([../product-specs/schedule.md](../product-specs/schedule.md), [../product-specs/business.md](../product-specs/business.md)). Every other spec assumes this vocabulary. Field shapes are generated in [../generated/db-schema.md](../generated/db-schema.md); per-screen behaviour lives in [../product-specs/index.md](../product-specs/index.md).
+The app is a four-level hierarchy — 영역 (area) → 목표 (goal) → KR (key result) → 실행 (task) — shown through six tabs, twenty-eight modals, and two overlays (six tabs and 22 → 28 modals since 2026-09-16, [decision log](decision-log.md)). The fourth tab, 일정 (schedule), the fifth, 미팅 (meetings), and the sixth, 사업 (business), all sit outside the hierarchy: an event, a meeting or a business record is a dated record with no goal above it ([../product-specs/schedule.md](../product-specs/schedule.md), [../product-specs/meetings.md](../product-specs/meetings.md), [../product-specs/business.md](../product-specs/business.md)). Every other spec assumes this vocabulary. Field shapes are generated in [../generated/db-schema.md](../generated/db-schema.md); per-screen behaviour lives in [../product-specs/index.md](../product-specs/index.md).
 
 The sixth tab, 성장 (growth), was removed 2026-09-15: home became one CV card — identity, education/career/certification/exam/portfolio/achievement records, and the area-grade rows that open `PromoteModal` — plus a role-model proximity line under it. Nothing the tab held became unreachable; the map is in [../product-specs/home.md](../product-specs/home.md) and, briefly, [../product-specs/growth.md](../product-specs/growth.md) (retired).
 
@@ -35,17 +35,20 @@ The modal opens from a goal (`modal.type === "addQuest"`, `goalId`) and shows `�
 - `tier` comes from `jobWeightForCert` for the goal's area and `gain = Math.round(certGainOf({ certBest }, c) * (jw?.mult ?? 1) / 10) * 10` ([Rule 15](core-beliefs.md#rule-15), [Rule 3](core-beliefs.md#rule-3)). Rows in the 달성 / 등록됨 / 취득 state are disabled.
 - The root `addQuest` handler refuses a second `isCert` task with the same title: toast `{title} — 이미 등록된 자격입니다. 자격 지급은 영역과 무관하게 1회입니다.`
 
-## Time groups, not goal groups (`TaskTab`, rewritten 2026-09-13)
-`실행` no longer mirrors the hierarchy above: it is one time-ordered list — tasks, schedule occurrences and two
-dated business facts — built by the pure helper `todoOf(state, today)`, and `목표` is the only surface left that
-groups by goal (as numbers, never as a task-row list). The four-level hierarchy itself is unchanged; only this
-tab's *view* stopped mirroring it. Full behaviour: [../product-specs/tasks.md](../product-specs/tasks.md).
+## Time groups, not goal groups (`TaskTab`, rewritten 2026-09-13; rows made compact 2026-09-16)
+`할 일` (renamed from `실행` 2026-09-16) no longer mirrors the hierarchy above: it is one time-ordered list —
+tasks, schedule occurrences and two dated business facts — built by the pure helper `todoOf(state, today)`, and
+`목표` is the only surface left that groups by goal (as numbers, never as a task-row list). The four-level
+hierarchy itself is unchanged; only this tab's *view* stopped mirroring it. Since 2026-09-16 each row is also a
+single compact line — a lead chip, the title and at most one marker — with completion reachable only by tapping
+into a detail sheet. Full behaviour: [../product-specs/tasks.md](../product-specs/tasks.md).
 
 - **Milestone** — `isMile = isCert || isExam || isStudy` still names the one-day exception
-  ([Rule 18](core-beliefs.md#rule-18)) and still shows a `Lock` icon instead of a checkbox until completed, but a
-  milestone is now just a `task`-kind row like any other: it sits wherever its `due` (or, undated, `이후`) places
-  it, with no divider and no per-goal section around it. Every row — milestone or not — states its own goal on
-  itself (`🎯 {goal.title}` or `목표 기여 없음`), which is what makes a goal-scoped section unnecessary.
+  ([Rule 18](core-beliefs.md#rule-18)) and still shows a `Lock` marker instead of a checkbox until completed, but
+  a milestone is just a `task`-kind row like any other: it sits wherever its `due` (or, undated, `이후`) places
+  it, with no divider and no per-goal section around it. Every row — milestone or not — carries the
+  `목표 기여 없음` marker when its goal is gone; the goal name itself now lives only in the row's detail sheet,
+  not on the row.
 - **Daily task** — everything else. Still capped at difficulty C (`DIFFS.C.pts` 60 < `EVIDENCE_MIN` 150); the
   modal still offers only E / D / C and says `하루분량 상한 C`.
 - **Orphan tasks** — no `goalId`, or a `goalId` that resolves to no goal (including the completed tasks kept when
@@ -56,24 +59,25 @@ tab's *view* stopped mirroring it. Full behaviour: [../product-specs/tasks.md](.
   active) and the orphan section didn't apply either (the goal still resolves) — this dropped its tasks from
   every section. The rewrite filters on task state only, never goal state, so those tasks render like any other
   ([TD-02](../exec-plans/tech-debt-tracker.md), resolved 2026-09-13).
-- Tab header: `실행 — 시간순 할 일` / `실행·일정·사업을 시간순으로 모아서 보여줘요. 새 실행은 목표 탭에서 만들어요.`
-  plus the `도감` (catalogue) button → `CatalogModal` and a `할 일` / `완료` view toggle (component state, never
-  `state.ui`). Empty state (no open row, no active goal): `실행은 목표의 실행 단위입니다 — 목표가 먼저예요.` →
-  `목표 먼저 세우기 ›`. `＋ 이 목표에 실행` is gone with the per-goal sections it lived in — task creation now
-  starts only from `목표`'s `＋ 실행 연결` / KR rows ([Rule 19](core-beliefs.md#rule-19)).
+- Tab header: `할 일 — 시간순` / `실행·일정·사업을 시간순으로 모아요. 항목을 누르면 상세가 열려요. 새 실행은 목표
+  탭에서 만들어요.` plus the `도감` (catalogue) button → `CatalogModal` and a `할 일` / `완료` view toggle
+  (component state, never `state.ui`). Empty state (no open row, no active goal): `실행은 목표의 실행 단위입니다
+  — 목표가 먼저예요.` → `목표 먼저 세우기 ›`. `＋ 이 목표에 실행` is gone with the per-goal sections it lived in
+  — task creation now starts only from `목표`'s `＋ 실행 연결` / KR rows ([Rule 19](core-beliefs.md#rule-19)).
 
-## Screen map (`NAV`, five tabs)
+## Screen map (`NAV`, six tabs since 2026-09-16)
 | Tab key | Label | Icon | Component | Composition |
 |---|---|---|---|---|
-| home | 홈 | Flag | `HomeTab` | one CV card (identity + `프로필` button + `설정` button, records `학력`/`경력`/`자격`/`시험`/`포트폴리오`/`성취`, area-grade rows → `PromoteModal`) · a role-model proximity line under it → `RoleAdviceModal`; no date-scoped fact of any kind (2026-09-15, [../product-specs/home.md](../product-specs/home.md)) |
+| home | 프로필 | IdCard | `HomeTab` | one CV card (identity + `프로필 편집` button + `설정` button, records `학력`/`경력`/`자격`/`시험`/`포트폴리오`/`성취`, area-grade rows → `PromoteModal`) · a role-model proximity line under it → `RoleAdviceModal`; no date-scoped fact of any kind (2026-09-15, [../product-specs/home.md](../product-specs/home.md)) |
 | goals | 목표 | Target | `GoalsTab` | numbers only — `목표 (OKR)` cards (progress, pace, KR rows, check-in) · `새 목표` · `＋ 실행 연결` · `달성 처리` · `기록에서 제거` · `목표 삭제`; the only surface a task is created from, and the only screen showing goal progress with pace |
-| tasks | 실행 | ClipboardList | `TaskTab` | one time-ordered list from `todoOf` — groups `기한 지남` / `오늘` / `내일` / `이번 주` / `이후` + `오늘 완료`, three row kinds (task / event / biz), `할 일` / `완료` view chips, counts + business-count lines, `도감`, and `브리핑 열기 ›` |
-| schedule | 일정 | CalendarDays | `ScheduleTab` | `다가오는 일정` + `일정 추가` · counts line · the view toggle `목록` / `달력` (stored in `ui.scheduleView`) · **목록**: day groups `지난 마감` / `오늘` / `내일` / `이번 주` / `이후` (the last one collapsed to one row per event) · **달력**: `ScheduleCalendar` — month header (`{YYYY}년 {M}월` · `‹` · `›` · `오늘`), seven-column grid with one marker per occurrence, `선택한 날짜` panel with the same `EventRow` the groups use and its own `일정 추가` |
+| tasks | 할 일 | ClipboardList | `TaskTab` | one time-ordered list from `todoOf` — groups `기한 지남` / `오늘` / `내일` / `이번 주` / `이후` + `오늘 완료`, compact `TodoRow`s (lead chip, title, at most one marker) for all three row kinds, tapping opens `TaskDetailModal` / `EventDetailModal` / `BizTodoModal`, `할 일` / `완료` view chips, counts + business-count lines, `도감`, and `브리핑 열기 ›` |
+| schedule | 일정 | CalendarDays | `ScheduleTab` | calendar-only since 2026-09-16: `다가오는 일정` header + `캘린더로 내보내기` + counts line, then `ScheduleCalendar` always — month header (`{YYYY}년 {M}월` · `‹` · `›` · `오늘`), seven-column grid with one marker per occurrence, `선택한 날짜` panel with `EventRow` and its own `일정 추가` |
+| meetings | 미팅 | MessagesSquare | `MeetingsTab` | project-grouped, hand-written meeting minutes (schema v23); header (counts + storage-use line) + `프로젝트 추가` · one section per project (`프로젝트 수정`, `회의록 추가`, compact minutes rows) · `ProjectModal` / `MeetingModal` / `MeetingViewModal`; a record, never a task — see [../product-specs/meetings.md](../product-specs/meetings.md) |
 | biz | 사업 | Briefcase | `BizTab` | header (`이번 달 계약` / `남은 계약` lines) + per-view add button · the view toggle `계약` / `단가` / `포트폴리오` (stored in `ui.bizView`) · **계약**: groups `진행 중` / `예정` / `견적 대기` / `문의` / `종료` / `무산` by derived phase, payment chips, `최근 6개월` roll-up · **단가**: rate rows with margin, footer count · **포트폴리오**: one-column cards with links and a stored thumbnail |
 
-The sixth tab, 성장 (growth), is retired ([../product-specs/growth.md](../product-specs/growth.md)); its role-model headline, skill track, achievement wall and backup/reset controls are the home row above, `RoleAdviceModal` and two new modals (below).
+The former sixth tab, 성장 (growth), is retired ([../product-specs/growth.md](../product-specs/growth.md)); its role-model headline, skill track, achievement wall and backup/reset controls are the home row above, `RoleAdviceModal` and two modals from that rewrite (`SettingsModal`, `AchievementWallModal`, below).
 
-- Modals, one at a time (`modal.type`, 22 values): `addQuest` (renders `AddTaskModal`; the type string keeps the legacy name) / `addGoal` / `evidence` / `promote` / `role` / `activity` / `study` / `evidenceView` / `catalog` / `roleAdvice` / `event` / `deals` / `rates` / `folio` / `briefing` / `journal` / `bridge` / `review` / `profile` (renders `ProfileModal`, opened from the CV's `프로필` button) / `calExport` (renders `CalendarExportModal`, opened from the `일정` header's `캘린더로 내보내기` button) / `settings` (renders `SettingsModal`, opened from the CV's corner `설정` button; role model, backup, reset) / `wall` (renders `AchievementWallModal`, opened from the CV's `성취` row; trophies, specialisations, exam bests, per-area achievements).
+- Modals, one at a time (`modal.type`, 28 values since 2026-09-16): `addQuest` (renders `AddTaskModal`; the type string keeps the legacy name) / `addGoal` / `evidence` / `promote` / `role` / `activity` / `study` / `evidenceView` / `catalog` / `roleAdvice` / `event` / `deals` / `rates` / `folio` / `briefing` / `journal` / `bridge` / `review` / `profile` (renders `ProfileModal`, opened from the CV's `프로필 편집` button) / `calExport` (renders `CalendarExportModal`, opened from the `일정` header's `캘린더로 내보내기` button) / `settings` (renders `SettingsModal`, opened from the CV's corner `설정` button; role model, backup, reset) / `wall` (renders `AchievementWallModal`, opened from the CV's `성취` row; trophies, specialisations, exam bests, per-area achievements) / `taskDetail` / `eventDetail` / `bizDetail` (the `할 일` row detail sheets, [../product-specs/tasks.md](../product-specs/tasks.md)) / `project` / `meeting` / `meetingView` (the `미팅` sheets, [../product-specs/meetings.md](../product-specs/meetings.md)).
 - Overlays (`overlay.type`): `gradeup` / `achieve`. Toast: `ToastHost` holds one slot with no queue — a new `show` replaces the current message and restarts the 2600 ms timer.
 - Header on every tab: `LIFE MANAGER` · `{displayName(profile)}` (nickname, else name, else `사용자`) · `{status}` · `🔥 {streak}일` · `🛡 {shieldsLeft}` (보호권, streak shield).
 - Phases: `loading` (`불러오는 중...`) → `onboard` (`Onboarding`, rendered without `Shell`) → `main`.

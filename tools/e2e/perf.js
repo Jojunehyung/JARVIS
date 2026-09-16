@@ -41,7 +41,7 @@ const N = 5; // repeated measurements
   // 2) Catalogue open (first render of the 1,011-row list)
   const opens = [];
   for (let i = 0; i < N; i++) {
-    await clickTab("퀘스트");
+    await clickTab("할 일");
     const t = await page.evaluate(async () => {
       const btn = [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감");
       const t0 = performance.now();
@@ -56,7 +56,7 @@ const N = 5; // repeated measurements
   out.도감오픈ms = +(opens.sort((a, b) => a - b)[Math.floor(N / 2)]).toFixed(1);
 
   // 3) Catalogue search-input latency (keystroke → list update)
-  await clickTab("퀘스트");
+  await clickTab("할 일");
   await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감")?.click());
   await sleep(400);
   const keys = [];
@@ -74,7 +74,7 @@ const N = 5; // repeated measurements
 
   // 4) Tab switch render
   const tabs = [];
-  for (const t of ["홈", "목표", "퀘스트", "홈", "목표"]) {
+  for (const t of ["프로필", "목표", "할 일", "프로필", "목표"]) {
     const ms = await page.evaluate(async (name) => {
       const nav = document.querySelector("nav");
       const btn = [...nav.querySelectorAll("button")].find((b) => b.innerText.includes(name));

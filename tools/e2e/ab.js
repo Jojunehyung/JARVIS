@@ -20,11 +20,11 @@ async function measure(page, url) {
     return performance.now() - t0;
   }, n);
   const tabs = [];
-  for (const t of ["목표", "퀘스트", "홈", "목표", "퀘스트", "홈"]) { tabs.push(await tab(t)); await sleep(150); }
+  for (const t of ["목표", "할 일", "프로필", "목표", "할 일", "프로필"]) { tabs.push(await tab(t)); await sleep(150); }
 
   const opens = [], searches = [];
   for (let i = 0; i < 4; i++) {
-    await tab("퀘스트"); await sleep(150);
+    await tab("할 일"); await sleep(150);
     opens.push(await page.evaluate(async () => {
       const btn = [...document.querySelectorAll("button")].find((b) => b.innerText.trim() === "도감");
       const t0 = performance.now(); btn.click();

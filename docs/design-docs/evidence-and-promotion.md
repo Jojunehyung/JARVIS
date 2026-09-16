@@ -21,6 +21,8 @@ Because every check is `!q.evidence`, a daily activity task asks for a log once 
 ## Photo-mandatory evidence (`EvidenceModal`)
 `needPhoto = task.isCert || task.isExam`; `docName` is `성적표` (exam) or `합격증` (certification). Without an image the button is disabled and reads `제출하고 완료 — 첨부 필요`; submitting anyway shows `{docName} 사진을 첨부해야 완료할 수 있어요.` Text chips (`TASK_EV_CHIPS`: `합격·취득 완료` · `결과물 완성·제출` · `계약·판매·수익 발생` · `공식 기록·인증 있음`) and the memo are optional for photo tasks. A legacy B/A general task (`{diff}급 완료 — 증거 선택`) asks for no photo but needs at least one chip (`증거 항목을 하나 이상 선택해 주세요.`). The stored text is `📎 {docName | 사진} 첨부 · {chips joined by " · "} — {memo}`.
 
+**Exam tasks gained a second requirement, 2026-09-16 (schema v22): a score, not only a photo.** `EvidenceModal` asks for the exact figure the score report states — validated by `examScoreError` for **before** the photo-mandatory chips are reached — and refuses a score below the milestone's band (`{band.label} 구간 미만 점수예요 — 이 마일스톤은 {band.label} 이상일 때 완료해요.`) or above the family's scale maximum. This is a stricter gate, never a relaxation: a photo is still mandatory and the score cannot substitute for it, and the score itself changes no payout — `calcExamPayout` and the band snapshot stay byte-identical, and the score is stored purely for display (`tasks[].score`, `exams.best[famId].score`, [scoring-engine.md](scoring-engine.md), [Rule 1](core-beliefs.md#rule-1), [Rule 2](core-beliefs.md#rule-2)). Full validation order and messages: [../product-specs/evidence-modals.md](../product-specs/evidence-modals.md).
+
 `resizeImage(file, 256, 320)` paints the image onto a 256 × 320 canvas with `scale = max(256 / img.width, 320 / img.height)` (cover, centre crop) and exports JPEG at quality 0.82 — a landscape certificate photo is stored cropped to 4:5.
 
 ## Image keys and lifecycle
@@ -30,7 +32,7 @@ Because every check is `!q.evidence`, a daily activity task asks for a log once 
 | `liferpg-img-study-{taskId}-{n}` (n = 1..2) | `StudyVerifyModal` | `EvidenceViewModal` | `removeTask`, `resetAll` |
 | `liferpg-img-profile` | profile photo picker | app start | `resetAll` |
 
-The state itself lives under `liferpg-state-v1`; all keys are frozen ([Rule 12](core-beliefs.md#rule-12)). A completed row in `TaskTab` reads `완료 {date} · 🎯 {goal}` (or `목표 기여 없음`), plus ` · 증거 보기` when the task carries `evidence`; the link opens `EvidenceViewModal` with the completion date, the evidence text (or `기록된 텍스트 없음`) and every stored photo under `{합격증 | 성적표 | 산출물 | 증거} 사진 {n}장`.
+The state itself lives under `liferpg-state-v1`; all keys are frozen ([Rule 12](core-beliefs.md#rule-12)). Since 2026-09-16 the compact `할 일` row shows none of this — its own `TaskDetailModal` sheet does: a `증거 기록` row with the evidence text, and (only when `q.evidence` exists) a `증거 보기` button → `EvidenceViewModal`, which shows the completion date, the evidence text (or `기록된 텍스트 없음`) and every stored photo under `{합격증 | 성적표 | 산출물 | 증거} 사진 {n}장` — see [../product-specs/tasks.md](../product-specs/tasks.md).
 
 ## Study verification (`STUDY_REQ`, `StudyVerifyModal`)
 Decided 2026-08-29. The modal uses `STUDY_REQ[task.diff] || STUDY_REQ.D`, so an undefined tier (A) falls back to D.

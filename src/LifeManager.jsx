@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useId, forwardRef, useImperativeHandle } from "react";
 import {
   Trophy, Target, Plus, X, Lock, RotateCcw, Check, Star, Settings,
-  Flag, ClipboardList, CalendarDays, Briefcase, Camera, Paperclip, Link as LinkIcon,
+  IdCard, ClipboardList, CalendarDays, MessagesSquare, Briefcase, Camera, Paperclip, Link as LinkIcon,
 } from "lucide-react";
 
 /* ───────────────────────── Constants: grade and verdict rules ───────────────────────── */
@@ -1303,7 +1303,7 @@ const cvSummaryOf = (profile, today) => {
    named through `certByTitle` (longest name first, rule 15) with the D stored on the task. `profile.certs` is
    written only at onboarding, so without the second half the CV would omit exactly the certification that carries
    evidence. Highest D first, unknown D last, then by name. The home CV and `ProfileModal`'s `보유 기록` both read
-   this, so the two cannot disagree. Like the helpers above it runs from render only, so the forward references to
+   this, so the two cannot disagree; both print names only, and the order is what still carries the ranking. Like the helpers above it runs from render only, so the forward references to
    `certOf` / `certByTitle` are resolved by then. */
 const heldCertsOf = (state) => {
   const byName = new Map();
@@ -1371,6 +1371,17 @@ const storageUsedBytes = () => {
   } catch { return 0; }
 };
 
+// Storage in use once `state` is the saved copy: every other key as stored, plus `state` serialised the way `store.set`
+// writes it. The root persists in an effect that runs after render, so reading `storageUsedBytes()` alone during a
+// render or a handler can be one change behind; the meeting guard and the meetings tab's storage line read this instead.
+const storageUsedWith = (state) => {
+  let stored = 0;
+  try { stored = (window.localStorage.getItem(KEY) || "").length; } catch {}
+  let next = 0;
+  try { next = JSON.stringify(state).length; } catch {}
+  return storageUsedBytes() - stored + next;
+};
+
 // Budget check → write → read back. Returns the reason so the caller can name it; the record the image
 // belongs to is saved either way, and a write that did not survive is deleted rather than left in memory.
 const saveImageChecked = async (k, v) => {
@@ -1407,17 +1418,6 @@ function DiffBadge({ d }) {
   return (
     <span className={`inline-flex items-center justify-center w-7 h-7 rounded-lg border font-mono text-sm font-bold ${tone} bg-zinc-900 shrink-0`}>
       {d}
-    </span>
-  );
-}
-
-function DueChip({ due, today }) {
-  if (!due) return null;
-  const overdue = due < today;
-  const tone = overdue ? "text-rose-400 border-rose-800" : due === today ? "text-amber-300 border-amber-700" : "text-zinc-400 border-zinc-700";
-  return (
-    <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${tone}`}>
-      {overdue ? "기한 지남" : ddayStr(due)}
     </span>
   );
 }
@@ -1877,6 +1877,32 @@ function calcExamPayout(exState, fam, band) {
   return { payout: Math.round(diffP * mult), mult, prevP: prev ? prev.p : 0, prevLabel: prev ? prev.label : null, reason };
 }
 
+/* ── Exact exam score (schema v22) — a display string recorded beside the band. Nothing here feeds a payout, a grade or
+   a D figure: `calcExamPayout` and the band snapshot stay the only scoring path (rules 1, 2, 6). A family is numeric
+   when every band label is a number, alone or followed by a space (TEPS `268 (3+)`); `1급`, `N2`, `IH` and
+   `B2 First` are level labels, so their score is free text. ── */
+const EXAM_SCORE_MAX_LEN = 20;
+const EXAM_LABEL_NUM = /^\d+(\.\d+)?(?=\s|$)/;
+const examScoreNumeric = (fam) => !!fam && fam.bands.every((b) => EXAM_LABEL_NUM.test(b[0]));
+const examScoreError = (fam, band, raw) => {
+  const v = String(raw ?? "").trim();
+  if (!v) return "성적표에 적힌 점수를 입력해 주세요.";
+  if (v.length > EXAM_SCORE_MAX_LEN) return "점수는 20자까지예요.";
+  if (!examScoreNumeric(fam)) return "";
+  if (!/^\d{1,4}(\.\d{1,2})?$/.test(v)) return "점수는 숫자로 입력해 주세요.";
+  const n = parseFloat(v);
+  if (band && n < parseFloat(band.label)) return `${band.label} 구간 미만 점수예요 — 이 마일스톤은 ${band.label} 이상일 때 완료해요.`;
+  // The top band of every numeric family is the scale maximum, printed as the label writes it (`9.0`, not `9`).
+  const max = fam.bands[fam.bands.length - 1][0].match(EXAM_LABEL_NUM)[0];
+  if (n > parseFloat(max)) return `${fam.n} 최고 점수는 ${max}예요.`;
+  return "";
+};
+// Whether a same-band retake replaces the shown score: a higher number wins; a level family's free text has no order,
+// so the newer entry replaces.
+const examScoreBetter = (fam, next, prev) => (examScoreNumeric(fam) ? prev == null || parseFloat(next) > parseFloat(prev) : true);
+// The CV and profile text of one exam best: the exact score when recorded, otherwise the band it was paid for.
+const examBestText = (id, b) => `${examOf(id)?.n || id} ${b?.score ? b.score : `${b?.label} 구간`}`;
+
 
 function SectionLabel({ children, tone = "text-zinc-500" }) {
   return <div className={`text-xs tracking-widest font-semibold ${tone} mb-2`}>{children}</div>;
@@ -2295,7 +2321,7 @@ const revenueByMonth = (state, fromMonth, n) => {
   });
 };
 
-// The one object the `사업` header, the `실행` header and list, the briefing and the packet all read, so no two
+// The one object the `사업` header, the `할 일` header and list, the briefing and the packet all read, so no two
 // surfaces can state a different figure.
 const bizSummary = (state, today) => {
   const month = String(today).slice(0, 7);
@@ -2414,7 +2440,7 @@ const eventsOn = (state, date) => {
 };
 
 // The same rows for the `days`-day window starting at `from` (`from` included), date-ascending —
-// the schedule list and the assistant packet read the same expansion.
+// the calendar and the assistant packet read the same expansion.
 const upcomingEvents = (state, from, days = EVENT_HORIZON_DAYS) => {
   const out = [];
   for (let i = 0; i < days; i++) out.push(...eventsOn(state, shiftDay(from, i)));
@@ -2467,7 +2493,7 @@ const todoOf = (state, today) => {
   for (const o of [...past, ...ahead]) {
     if (o.done) continue; // a ticked occurrence is not to-do; un-ticking stays reachable from `오늘 완료` and the schedule tab
     const r = evRow(o);
-    // `이후` collapses each event to its earliest occurrence, exactly as ScheduleTab does: one weekly repeat would
+    // `이후` collapses each event to its earliest occurrence (the later group collapses repeats itself): one weekly repeat would
     // otherwise add 12 rows over the 90-day horizon and a daily one 83. The near groups stay one row per occurrence.
     if (bucket(r) === "later") {
       if (seenLater.has(o.ev.id)) continue;
@@ -2512,7 +2538,7 @@ const todoOf = (state, today) => {
     groups: TODO_GROUPS.map(([key, label]) => ({ key, label, rows: todoSort(by[key]) })),
     done,
     // `week` runs from today to Sunday, so it covers today and tomorrow too: it answers how much is left this
-    // week, not how many rows sit in the group of the same name — the same semantics as ScheduleTab's counts line.
+    // week, not how many rows sit in the group of the same name — the same semantics as the schedule tab's counts line.
     counts: {
       overdue: by.overdue.length,
       today: by.today.length,
@@ -2981,10 +3007,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
 
 /* ── State lifecycle ── */
 /**
- * @schema v21 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v23 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 21,
+ *   v: 23,
  *   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
  *              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
  *                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -2997,7 +3023,8 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   tasks: [{ id, title, areaId, goalId(required for new tasks — only legacy tasks are unlinked), diff(E-A), pts?,
  *             type("daily"|"once"), status, doneDates[], doneAt?, evidence?,
  *             isCert?, certD?, sg?, isExam?, famId?, band{label,d,p,conf}, isStudy?, source?, scope?,
- *             kind?("book"|"fit"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only) }],
+ *             kind?("book"|"fit"), createdAt, due?("YYYY-MM-DD" — once tasks and milestones only),
+ *             score?(string — exam milestones completed from v22 on, as entered, display only) }],
  *   goals: [{ id, title, areaId, deadline?, note?, status("active"|"done"), createdAt,
  *             krs: [{ id, type:"metric", title, start, target, current, unit }
  *                 | { id, type:"count",  title, need }
@@ -3013,22 +3040,28 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   deals: [{ id, client, title, status("lead"|"quote"|"won"|"lost"),           // a period contract is a billing rule plus the user's own
  *             monthly?, costMonthly?, months?, startMonth?("YYYY-MM"),          // payment stamps; months, totals, margin and the
  *             paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
+ *   meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
+ *   meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?,       // trophy, goal or streak (rules 1, 18). A meeting's time lives
+ *               summary, decisions?, actions?, eventId?, createdAt }],       // only in events; eventId (+ date) points at one occurrence and
+ *                                                                           // nothing is copied from it. Order and storage use are derived.
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
  *          briefingSeen?, lastReview? },                      // dates only — facts, never verdicts
- *   exams: { best{famId:{label,d,p,ver,date}}, dim{famId:mult}, spec{lang:true}, policy },
+ *   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
  *   role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
- *   ui: { scheduleView("list"|"calendar"), bizView("deals"|"rates"|"folio") },   // which view a tab opens on — a preference, never derived data
+ *   ui: { bizView("deals"|"rates"|"folio") },   // which view the business tab opens on — a preference, never derived data
+ *                                               // (scheduleView was retired 2026-09-16 and dropped at v22)
  *   lastTick, dModel
  * }
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
  * agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
  * contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
  * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
- * the displayed age (`ageText`) and the total months of practice (`careerMonths`), and the calendar export file (`buildIcs`).
+ * the displayed age (`ageText`) and the total months of practice (`careerMonths`), the calendar export file (`buildIcs`),
+ * and the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -3115,6 +3148,20 @@ const migrate = (s) => {
     const p = s.profile;
     s = { ...s, v: 21, profile: p ? { ...p, name: p.name ?? "", birth: p.birth ?? null, email: p.email ?? "", phone: p.phone ?? "", edus: p.edus || [], careers: p.careers || [] } : p };
   }
+  if (s.v < 22) {
+    // v22: exam scores are recorded exactly as the score report states them — tasks[].score and
+    // exams.best[famId].score, both optional display strings; payout, grade and D stay band-based (rules 1, 2, 6).
+    // Nothing is backfilled: a save from before v22 simply has no score and shows its band label. The retired
+    // schedule view preference ui.scheduleView (unread since the list view was removed) is dropped; ui.bizView is kept.
+    const { scheduleView, ...ui } = s.ui || {};
+    s = { ...s, v: 22, ui };
+  }
+  if (s.v < 23) {
+    // v23: meeting minutes — meetingProjects[] and meetings[], hand-written records grouped by project. A record, never a
+    // task: no payout, no trophy, no goal, no streak (rules 1, 18). The time of a meeting stays a schedule event; a meeting
+    // stores only its date and an optional eventId. Nothing existing is changed.
+    s = { ...s, v: 23, meetingProjects: s.meetingProjects || [], meetings: s.meetings || [] };
+  }
   return s;
 };
 
@@ -3126,7 +3173,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 21,
+  v: 23,
   profile: null,
   areas,
   tasks: [],
@@ -3135,6 +3182,8 @@ const freshState = (areas) => applyDailyTick({
   folio: [],
   rates: [],
   deals: [],
+  meetingProjects: [],
+  meetings: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
@@ -3142,7 +3191,7 @@ const freshState = (areas) => applyDailyTick({
   certBest: {},
   room: { trophies: [] },
   role: null,
-  ui: { scheduleView: "list", bizView: "deals" },
+  ui: { bizView: "deals" },
   lastTick: dstr(),
   dModel: DIFF_RAW_VERSION,
 });
@@ -3229,6 +3278,19 @@ const demoState = () => {
     { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9) },
     { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3) },
   ];
+  // Synthetic minutes: made-up companies, no personal names (SECURITY.md), no event link.
+  const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20) };
+  const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6) };
+  s.meetingProjects = [mp2, mp1];
+  s.meetings = [
+    { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
+      summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
+      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1) },
+    { id: uid(), projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
+      summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3) },
+    { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
+      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9) },
+  ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
     text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
@@ -3239,7 +3301,7 @@ const demoState = () => {
     wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
   }];
   s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: shiftDay(today, -7) };
-  s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60) } };
+  s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
   s.role = { name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 } };
@@ -3604,7 +3666,7 @@ function Onboarding({ onStart, onDemo }) {
                 className="px-3 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-medium self-start">무작위</button>
             </div>
           </div>
-          <p className="text-xs text-zinc-600">사진은 시작한 뒤 홈 프로필 카드에서 등록해요.</p>
+          <p className="text-xs text-zinc-600">사진은 시작한 뒤 프로필 탭의 프로필 편집에서 등록해요.</p>
           <Swatch label="피부" colors={SKINS} val={look.skin} set={(v) => setL("skin", v)} />
           <Swatch label="머리색" colors={HAIR_COLORS} val={look.hairColor} set={(v) => setL("hairColor", v)} />
           <Swatch label="옷 색상" colors={OUTFITS} val={look.outfit} set={(v) => setL("outfit", v)} />
@@ -3789,17 +3851,21 @@ function Onboarding({ onStart, onDemo }) {
 /* ───────────────────────── Home — the CV ───────────────────────── */
 /* Home is one CV that evaluates the account in numbers and grades, with the role-model proximity line under it
    (2026-09-15). A row is admitted when its value is a number, a grade or an ordinal credential level; a name
-   appears only as the label of such a value. Everything is derived at render and stored nowhere (rule 9), and a
-   zero is stated, never hidden (rule 13). Today's cards left home: the briefing opens from the `실행` header, goal
-   progress and pace live in `목표`, today's tasks are the `실행` list. */
+   appears only as the label of such a value. The `자격` and `시험` rows print a count and then names (an exam with its
+   exact recorded score, or its band label for a record from before v22 — `examBestText`) without their D figures (2026-09-16): they stay sorted highest D first, and the D that explains a
+   payout is on the wall sheet. Everything is derived at render and stored nowhere (rule 9), and a
+   zero is stated, never hidden (rule 13). Today's cards left home: the briefing opens from the `할 일` header, goal
+   progress and pace live in `목표`, today's tasks are the `할 일` list. The tab is labelled `프로필` (2026-09-16);
+   its internal key stays `home`. */
 
-// One CV record row: a fixed-width label and a one-line value. A button only when the row opens something.
-function CvFact({ label, children, onClick }) {
+// Label/value row shared by the CV and the detail sheets: a fixed-width label and a one-line value (`wrap` lets a
+// long value break over lines instead of truncating). A button only when the row opens something.
+function CvFact({ label, children, onClick, wrap = false }) {
   const cls = "flex items-baseline gap-2 text-xs w-full text-left";
   const body = (
     <>
       <span className="w-16 shrink-0 text-zinc-500">{label}</span>
-      <span className="min-w-0 flex-1 truncate text-zinc-300">{children}</span>
+      <span className={`min-w-0 flex-1 ${wrap ? "break-words" : "truncate"} text-zinc-300`}>{children}</span>
     </>
   );
   return onClick
@@ -3858,7 +3924,7 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
             {/* The one edit control on the CV. The photo, the personal facts and the records are all edited in the
                 screen this opens, so the card only states facts and points at the screen that owns them. */}
             <button onClick={onProfile}
-              className="bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium mt-2">프로필</button>
+              className="bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium mt-2">프로필 편집</button>
           </div>
           {/* Role model, backup and reset — set rarely, so they sit behind one icon in the corner of the card */}
           <button onClick={onSettings} aria-label="설정" title="설정"
@@ -3874,12 +3940,12 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
           <CvFact label="경력">{cv.career}</CvFact>
           <CvFact label="자격">
             <span className="font-mono">{held.length}건</span>
-            {held.map((c) => <span key={c.n}> · {c.n}{c.d != null && <> <span className="font-mono">D{c.d}</span></>}</span>)}
+            {held.map((c) => <span key={c.n}> · {c.n}</span>)}
           </CvFact>
           <CvFact label="시험">
             <span className="font-mono">{bests.length}건</span>
             {bests.map(([id, b]) => (
-              <span key={id}> · {examOf(id)?.n || id} {b?.label}{b?.d != null && <> <span className="font-mono">D{b.d}</span></>}</span>
+              <span key={id}> · {examBestText(id, b)}</span>
             ))}
           </CvFact>
           <CvFact label="포트폴리오"><span className="font-mono">{(state.folio || []).length}건</span></CvFact>
@@ -4012,7 +4078,7 @@ function ProfileModal({ profile, state, img, today, onUpload, onClearImg, onSave
             <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
               <div className="text-xs font-mono text-zinc-500">시험 성적 {bests.length}건</div>
               <div className="text-xs text-zinc-300 break-words">
-                {bests.length ? bests.map(([id, b]) => `${examOf(id)?.n || id} ${b.label}`).join(" · ") : "없음"}
+                {bests.length ? bests.map(([id, b]) => examBestText(id, b)).join(" · ") : "없음"}
               </div>
             </div>
             <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
@@ -4750,29 +4816,51 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
 }
 
 /* ───────────────────────── Tasks tab — one time-ordered list of tasks, schedule and business rows ───────────────────────── */
-/* A business row in the to-do list: a link into the `사업` tab and nothing else. No checkbox, no action row, no
-   evidence path, no payout — a contract is a record, never a task (rules 1, 18). Tapping it is its only behaviour. */
-function BizTodoRow({ row, onOpen }) {
+const TODO_TONE = { overdue: "text-rose-400", today: "text-amber-300", tomorrow: "text-zinc-400", week: "text-zinc-400", later: "text-zinc-500" };
+const TODO_DONE_MAX = 40; // rows the `완료` archive keeps, newest first — the count line still states the full total
+
+const LEAD_DONE = "text-emerald-400 border-emerald-800";
+const LEAD_TODAY = "text-amber-300 border-amber-700";
+const LEAD_NONE = "text-zinc-500 border-zinc-700";
+/* The one lead chip of a to-do row, `{ text, tone }`, derived at render (rule 9); first match wins. `r` is a `todoOf`
+   row (`{ kind, date, time, task | ev, done }`); `archived` marks a row of the `완료` view. */
+const todoLeadOf = (r, today, archived = false) => {
+  const q = r.kind === "task" ? r.task : null;
+  if (archived) return { text: (lastDoneDate(q) || "").slice(5) || "날짜 없음", tone: LEAD_DONE };
+  const doneToday = q ? (q.type === "daily" ? (q.doneDates || []).includes(today) : q.status === "done") : false;
+  if (r.done || doneToday) return { text: "완료", tone: LEAD_DONE };
+  // Today's group already names the day, so a timed appointment of today leads with its clock time instead.
+  if (r.kind === "event" && r.ev?.kind !== "due" && r.date === today && r.time) return { text: r.time, tone: LEAD_TODAY };
+  if (r.date) {
+    if (r.date < today) return { text: "기한 지남", tone: "text-rose-400 border-rose-800" };
+    if (r.date === today) return { text: ddayStr(r.date), tone: LEAD_TODAY };
+    return { text: ddayStr(r.date), tone: "text-zinc-400 border-zinc-700" };
+  }
+  return { text: q?.type === "daily" ? "매일" : "기한 없음", tone: LEAD_NONE };
+};
+
+/* One to-do row for every kind: the lead chip, the title and at most one marker. The row is a single button that
+   opens the item's detail sheet — it holds no checkbox, no nested control and no completion path of its own. The
+   meetings tab reuses the same shell for its minutes rows (date chip, title, no marker). */
+function TodoRow({ lead, title, done = false, marker = null, onOpen }) {
   return (
-    <button onClick={onOpen} className="w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 active:opacity-70">
-      <span className="font-mono text-xs font-bold border border-zinc-700 text-zinc-400 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">{row.month}</span>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold truncate">{row.title}</div>
-        <div className="text-xs text-zinc-500 truncate">{row.text}</div>
-      </div>
-      <span className="text-xs font-bold border border-zinc-700 text-zinc-300 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">사업</span>
+    <button onClick={onOpen}
+      className={`w-full text-left flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 active:opacity-70 ${done ? "opacity-50" : ""}`}>
+      <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${lead.tone}`}>{lead.text}</span>
+      <div className={`flex-1 min-w-0 text-sm font-semibold truncate ${done ? "line-through" : ""}`}>{title}</div>
+      {marker}
     </button>
   );
 }
 
-const TODO_TONE = { overdue: "text-rose-400", today: "text-amber-300", tomorrow: "text-zinc-400", week: "text-zinc-400", later: "text-zinc-500" };
-const TODO_DONE_MAX = 40; // rows the `완료` archive keeps, newest first — the count line still states the full total
+const NO_GOAL_MARKER = <span className="text-xs text-zinc-600 shrink-0">목표 기여 없음</span>;
 
 /* The list is a view over `todoOf`: the groups, their order and the sort are decided there, so this component only
-   decides what a row of each kind looks like. `onComplete` is passed to task rows and to nothing else — an event
-   row keeps the schedule tab's own buttons (they pay nothing and move no goal) and a business row has no control
-   at all (rules 1, 10, 16, 17). New tasks are created in `목표` only (rules 18, 19). */
-function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onViewEvidence, onEditEvent, onToggleEventDone, onSkipEvent, onGoBiz, onBriefing }) {
+   builds one compact row per item. Every row opens a detail sheet; completion is reachable only from the task sheet,
+   which calls `tryComplete` (rules 10, 16, 17). An event sheet keeps the schedule's own buttons (they pay nothing and
+   move no goal) and a business sheet has no control but a link into `사업` (rules 1, 18). A row that serves no goal
+   says so (rule 13). New tasks are created in `목표` only (rules 18, 19). */
+function TaskTab({ state, today, onOpenTask, onOpenEvent, onOpenBiz, onCatalog, onGoGoals, onGoBiz, onBriefing }) {
   const [view, setView] = useState("todo"); // open list or completed archive — a view preference, never stored (rule 9)
   const td = useMemo(() => todoOf(state, today), [state, today]);
   const biz = useMemo(() => bizSummary(state, today), [state, today]);
@@ -4781,65 +4869,25 @@ function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onV
     .sort((a, b) => (lastDoneDate(b) || "").localeCompare(lastDoneDate(a) || "") || a.title.localeCompare(b.title)), [state.tasks]);
   const doneShown = doneTasks.slice(0, TODO_DONE_MAX);
   const activeGoals = (state.goals || []).filter((g) => g.status === "active");
-  // `archived` renders a row that is finished but not finished *today*. The archive holds daily tasks whose last
-  // completion was an earlier day: without this they would draw an open checkbox, and tapping one there would
-  // complete the task for today — turning a list titled `완료` into a second completion surface.
-  const row = (q, archived = false) => {
-    const area = state.areas.find((x) => x.id === q.areaId);
-    const goal = q.goalId ? state.goals.find((g) => g.id === q.goalId) : null;
-    const doneToday = q.type === "daily" ? q.doneDates?.includes(today) : q.status === "done";
-    const closed = archived || doneToday;
-    const ev = needsEvidence(q);
-    const jw = q.isCert ? jobWeightForCert(state, q.areaId, certByTitle(q.title)) : null;
-    // Every row states its own goal: the list is time-ordered, so nothing above the row says which goal it serves.
-    const goalTag = goal ? <>🎯 {goal.title}</> : <span className="text-zinc-600">목표 기여 없음</span>;
-    return (
-      <div key={q.id} className={`flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 ${closed ? "opacity-50" : ""}`}>
-        {(q.isCert || q.isExam || q.isStudy) && !closed ? (
-          <button onClick={() => onComplete(q)} className="shrink-0 p-0.5 active:scale-90 transition-transform">
-            <Lock size={15} className="text-zinc-500" />
-          </button>
-        ) : (
-          <button onClick={() => !closed && onComplete(q)} disabled={closed}
-            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-transform ${
-              closed ? "border-emerald-400 bg-emerald-400" : "border-zinc-700 active:scale-90"}`}>
-            <Check size={13} className={closed ? "text-zinc-950" : "text-transparent"} />
-          </button>
-        )}
-        <div className="flex-1 min-w-0">
-          <div className={`text-sm font-semibold truncate ${closed ? "line-through" : ""}`}>{q.kind === "book" ? "📚 " : q.kind === "fit" ? "💪 " : ""}{q.title}</div>
-          <div className="text-xs text-zinc-500 truncate">
-            {closed ? (
-              <>완료 {lastDoneDate(q) || "날짜 없음"} · {goalTag}{q.evidence
-                ? <> · <button onClick={() => onViewEvidence(q)} className="underline underline-offset-2 text-zinc-400">증거 보기</button></>
-                : null}</>
-            )
-              : q.isCert ? <>{goalTag} · <span className="font-mono">{jw ? <>직무 적합 <b className={TIER_CLS[jw.tier]}>{jw.tier}</b> · </> : null}{q.certD != null ? `D${q.certD} · ` : ""}<span className="text-violet-300">증거 필요</span></span></>
-              : q.isExam ? <>{goalTag} · <span className="font-mono">D{q.band?.d} · <span className="text-sky-300">성적표 사진 필수</span></span></>
-              : <>{area?.name}{goal ? ` · 🎯 ${goal.title}` : ""}{q.type === "daily" ? " · 매일" : ""}{q.isStudy ? " · 📖 산출물검증" : ev ? " · 증거 필요" : ""}{!goal && <span className="text-zinc-600"> · 목표 기여 없음</span>}</>}
-          </div>
-        </div>
-        {!closed && <DueChip due={q.due} today={today} />}
-        {q.isExam ? <span className="text-xs font-mono font-bold text-sky-300 border border-sky-700 rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0">시험</span>
-          : q.isCert ? (
-            <span className="flex items-center gap-1 shrink-0">
-              <CertBadge g={q.certD != null ? achGrade(q.certD) : legacyCertGrade(q.pts ?? 0)} />
-            </span>
-          )
-          : <DiffBadge d={q.diff} />}
-        <button onClick={() => onRemove(q.id)} className="text-zinc-700 shrink-0"><X size={14} /></button>
-      </div>
-    );
+  // A task row's marker: the goal marker when its goal is gone, otherwise a lock on an open gated task — tapping it
+  // leads to an evidence gate, not a one-tap completion (rules 10, 16).
+  const taskMarker = (q, closed) => {
+    if (!(q.goalId && state.goals.some((g) => g.id === q.goalId))) return NO_GOAL_MARKER;
+    if (!closed && (q.isCert || q.isExam || q.isStudy || needsEvidence(q))) return <Lock size={13} className="text-zinc-500 shrink-0" aria-label="증거 필요" />;
+    return null;
   };
-  // One row per kind. `row(q)` is the only branch that reaches `onComplete`; the other two carry their own
-  // behaviour — the schedule tab's three buttons, or a tap into the `사업` tab.
-  const rowOf = (r) =>
-    r.kind === "task" ? row(r.task)
-      : r.kind === "event" ? (
-        <EventRow key={r.key} ev={r.ev} date={r.date} done={r.done} today={today} tail="목표 기여 없음"
-          onToggleDone={onToggleEventDone} onSkip={onSkipEvent} onEdit={onEditEvent} />
-      )
-      : <BizTodoRow key={r.key} row={r} onOpen={onGoBiz} />;
+  const rowOf = (r) => {
+    const lead = todoLeadOf(r, today);
+    if (r.kind === "task") {
+      const q = r.task;
+      const closed = !!r.done || (q.type === "daily" ? (q.doneDates || []).includes(today) : q.status === "done");
+      return <TodoRow key={r.key} lead={lead} title={q.title} done={closed} marker={taskMarker(q, closed)} onOpen={() => onOpenTask(q.id)} />;
+    }
+    if (r.kind === "event") {
+      return <TodoRow key={r.key} lead={lead} title={r.title} done={!!r.done} marker={NO_GOAL_MARKER} onOpen={() => onOpenEvent(r.ev.id, r.date)} />;
+    }
+    return <TodoRow key={r.key} lead={lead} title={r.title} marker={NO_GOAL_MARKER} onOpen={() => onOpenBiz(r)} />;
+  };
   const onlyBiz = td.counts.open > 0 && td.groups.every((g) => g.rows.every((r) => r.kind === "biz"));
 
   return (
@@ -4847,8 +4895,8 @@ function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onV
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <SectionLabel tone="text-zinc-400">실행 — 시간순 할 일</SectionLabel>
-            <p className="text-xs text-zinc-600 mt-0.5">실행·일정·사업을 시간순으로 모아서 보여줘요. 새 실행은 목표 탭에서 만들어요.</p>
+            <SectionLabel tone="text-zinc-400">할 일 — 시간순</SectionLabel>
+            <p className="text-xs text-zinc-600 mt-0.5">실행·일정·사업을 시간순으로 모아요. 항목을 누르면 상세가 열려요. 새 실행은 목표 탭에서 만들어요.</p>
           </div>
           <button onClick={onCatalog}
             className="shrink-0 px-3 py-2 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">도감</button>
@@ -4909,15 +4957,111 @@ function TaskTab({ state, today, onComplete, onRemove, onCatalog, onGoGoals, onV
           )}
         </>
       ) : (
-        /* The archive keeps `증거 보기` reachable for anything completed before today; events stay in the `일정` tab */
+        /* The archive keeps `증거 보기` reachable (inside the task sheet) for anything completed before today; events stay in the `일정` tab */
         <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
           <p className="text-xs font-mono text-zinc-400">완료 {doneTasks.length}건 · 최근 {doneShown.length}건</p>
           {doneShown.length === 0
             ? <p className="text-sm text-zinc-500 text-center py-3">완료한 항목이 없어요.</p>
-            : <div className="space-y-1.5 mt-2.5">{doneShown.map((q) => row(q, true))}</div>}
+            : <div className="space-y-1.5 mt-2.5">{doneShown.map((q) => (
+              <TodoRow key={q.id} lead={todoLeadOf({ kind: "task", task: q }, today, true)} title={q.title} done
+                marker={taskMarker(q, true)} onOpen={() => onOpenTask(q.id)} />
+            ))}</div>}
         </section>
       )}
     </>
+  );
+}
+
+/* ── Task detail sheet — everything a compact row leaves out, and the one place a task completes. `완료하기` calls
+   `onComplete`, which the root wires to `tryComplete` and nothing else, so the study, activity and evidence gates
+   stay exactly where they were (rules 10, 11, 16, 17). A closed task (done today, or a finished once task) shows no
+   completion control: the archive stays a record. The sheet reads the live task, so it disappears with it. ── */
+function TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, onViewEvidence }) {
+  const q = (state.tasks || []).find((x) => x.id === taskId);
+  if (!q) return null;
+  const daily = q.type === "daily";
+  const doneToday = daily && (q.doneDates || []).includes(today);
+  const closed = daily ? doneToday : q.status === "done";
+  const goal = q.goalId ? (state.goals || []).find((g) => g.id === q.goalId) : null;
+  const area = (state.areas || []).find((x) => x.id === q.areaId);
+  const status = daily
+    ? <>매일 · 완료 <span className="font-mono">{(q.doneDates || []).length}회</span>{doneToday ? " · 오늘 완료" : ""}</>
+    : q.status === "done" ? <>완료 <span className="font-mono">{q.doneAt || "날짜 없음"}</span></> : "할 일";
+  const due = q.due
+    ? <span className="font-mono">{q.due} · {q.due < today ? "기한 지남" : ddayStr(q.due)}</span>
+    : daily ? "매일" : "기한 없음";
+  const type = q.isCert ? "자격 마일스톤" : q.isExam ? "시험 마일스톤" : q.isStudy ? "📖 학습"
+    : q.kind === "book" ? "📚 독서" : q.kind === "fit" ? "💪 운동" : "일반";
+  const jw = q.isCert ? jobWeightForCert(state, q.areaId, certByTitle(q.title)) : null;
+  const diff = q.isCert ? (
+    <span className="inline-flex items-center gap-1.5">
+      <CertBadge g={q.certD != null ? achGrade(q.certD) : legacyCertGrade(q.pts ?? 0)} />
+      {q.certD != null && <span className="font-mono">D{q.certD}</span>}
+      {jw && <span> · 직무 적합 <b className={`font-mono ${TIER_CLS[jw.tier]}`}>{jw.tier}</b></span>}
+    </span>
+  ) : q.isExam ? (
+    <span>{examOf(q.famId)?.n || q.famId} {q.band?.label} 구간 · <span className="font-mono">D{q.band?.d}</span></span>
+  ) : <DiffBadge d={q.diff} />;
+  const evidence = q.isCert ? "합격증 사진 필수" : q.isExam ? "성적표 사진 + 점수 필수" : q.isStudy ? `산출물 검증 — ${q.diff}급 기준`
+    : q.kind === "book" ? "독후감 기록" : q.kind === "fit" ? "운동 기록" : needsEvidence(q) ? "증거 필요" : "없음";
+  return (
+    <Modal title={q.title} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <CvFact label="상태">{status}</CvFact>
+          <CvFact label="기한">{due}</CvFact>
+          <CvFact label="목표" wrap>{goal ? goal.title : "목표 기여 없음"}</CvFact>
+          <CvFact label="영역">{area?.name || "영역 없음"}</CvFact>
+          <CvFact label="유형">{type}</CvFact>
+          <CvFact label="난이도" wrap>{diff}</CvFact>
+          <CvFact label="증거" wrap>{evidence}</CvFact>
+          {q.score && <CvFact label="점수" wrap><span className="font-mono">{q.score}</span></CvFact>}
+          {q.evidence && (
+            <CvFact label="증거 기록" wrap>
+              {q.evidence}{" "}
+              <button onClick={() => onViewEvidence(q)} className="underline underline-offset-2 text-zinc-400">증거 보기</button>
+            </CvFact>
+          )}
+        </div>
+        {!closed && (
+          <button onClick={() => onComplete(q)}
+            className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 text-sm font-black active:translate-y-0.5">완료하기</button>
+        )}
+        <button onClick={() => onRemove(q.id)}
+          className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 text-sm font-bold active:translate-y-0.5">삭제</button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Event detail sheet — one occurrence, opened from the to-do list. Its only actions are the schedule's own
+   `EventRow` buttons: an event is a record that pays nothing and moves no goal (rules 1, 13). ── */
+function EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit }) {
+  const ev = (state.events || []).find((x) => x.id === eventId);
+  if (!ev) return null;
+  return (
+    <Modal title={`일정 — ${ev.title}`} onClose={onClose}>
+      <div className="space-y-3">
+        <EventRow ev={ev} date={date} done={(ev.doneDates || []).includes(date)} today={today}
+          onToggleDone={onToggleDone} onSkip={onSkip} onEdit={onEdit} />
+        <p className="text-xs text-zinc-500">목표 기여 없음 — 일정은 기록이라 점수와 목표에 반영되지 않아요.</p>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Business detail sheet — a render-time snapshot of one `todoOf` business row, held in the modal slot and never
+   stored (rule 9). No payment control: the payment chip stays in `사업` (rules 1, 18). ── */
+function BizTodoModal({ row, onClose, onOpen }) {
+  return (
+    <Modal title={`사업 — ${row.title}`} onClose={onClose}>
+      <div className="space-y-3">
+        <CvFact label="월"><span className="font-mono">{row.month}</span></CvFact>
+        <p className="text-xs text-zinc-400 break-words">{row.text}</p>
+        <button onClick={onOpen}
+          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">사업 탭에서 보기 ›</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -5131,10 +5275,13 @@ function EvidenceModal({ task, onClose, onSubmit }) {
   const [sel, setSel] = useState([]);
   const [memo, setMemo] = useState("");
   const [img, setImg] = useState(null);
+  const [score, setScore] = useState(""); // exam milestones only — the exact score, recorded for display (schema v22)
   const [err, setErr] = useState("");
   const fileRef = useRef(null);
   const needPhoto = task.isCert || task.isExam;
   const docName = task.isExam ? "성적표" : "합격증";
+  const fam = task.isExam ? examOf(task.famId) : null;
+  const numeric = examScoreNumeric(fam);
   const onFile = async (e) => {
     const fl = e.target.files?.[0]; e.target.value = "";
     if (!fl) return;
@@ -5143,11 +5290,15 @@ function EvidenceModal({ task, onClose, onSubmit }) {
   const submit = () => {
     if (needPhoto && !img) { setErr(`${docName} 사진을 첨부해야 완료할 수 있어요.`); return; }
     if (!needPhoto && !sel.length) { setErr("증거 항목을 하나 이상 선택해 주세요."); return; }
+    // The score is an extra requirement on top of the photo, checked before anything is written: a refused score
+    // leaves no evidence image behind and the task open (rules 10, 16).
+    const se = task.isExam ? examScoreError(fam, task.band, score) : "";
+    if (se) { setErr(se); return; }
     if (img) store.set(`liferpg-img-ev-${task.id}`, img);
     const bits = [];
     if (img) bits.push(`📎 ${needPhoto ? docName : "사진"} 첨부`);
     if (sel.length) bits.push(sel.join(" · "));
-    onSubmit(bits.join(" · ") + (memo.trim() ? ` — ${memo.trim()}` : ""));
+    onSubmit(bits.join(" · ") + (memo.trim() ? ` — ${memo.trim()}` : ""), task.isExam ? score.trim() : undefined);
   };
   return (
     <Modal title={task.isExam ? "시험 성적 — 성적표 제출" : task.isCert ? "자격증 취득 — 합격증 제출" : `${task.diff}급 완료 — 증거 선택`} onClose={onClose}>
@@ -5179,6 +5330,16 @@ function EvidenceModal({ task, onClose, onSubmit }) {
               <span className="text-xs text-zinc-600">JPG·PNG · 기록에 원본 저장</span>
             </button>
           )}
+        </div>
+      )}
+      {task.isExam && (
+        <div className="mb-3">
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">점수</div>
+          <input value={score} onChange={(e) => setScore(e.target.value)}
+            placeholder={numeric ? "성적표에 적힌 점수 — 숫자만" : "성적표에 적힌 등급·점수 그대로"}
+            inputMode={numeric ? "decimal" : "text"}
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+          <p className="text-xs text-zinc-500 mt-1">점수는 기록용이에요 — 지급 P·등급·난이도는 {task.band?.label} 구간 기준 그대로예요.</p>
         </div>
       )}
       <EvidencePicker
@@ -5449,7 +5610,7 @@ function AchievementWallModal({ state, onClose }) {
               const fam = examOf(id);
               return (
                 <div key={id} className="flex justify-between text-xs bg-zinc-950 rounded-lg px-3 py-2">
-                  <span className="text-zinc-300">{fam?.n} <b className="text-cyan-300">{b.label}</b></span>
+                  <span className="text-zinc-300">{fam?.n} <b className="text-cyan-300">{b.label}</b>{b.score ? <> · 점수 <span className="font-mono">{b.score}</span></> : null}</span>
                   <span className="font-mono text-zinc-500">D{b.d} · 누적 {b.p.toLocaleString()}P</span>
                 </div>
               );
@@ -5567,7 +5728,7 @@ const CAL_RANGE_MONTHS = 24; // how far the month grid may be paged either side 
 const WEEKDAY_LABEL = ["일", "월", "화", "수", "목", "금", "토"]; // Sunday first, matching Date#getDay()
 
 /* South Korean public holidays, display only — the grid tints the day number and the selected-day panel names
-   the date. A holiday is never an event: it is not stored, counted, briefed, paid, or listed in the list view.
+   the date. A holiday is never an event: it is not stored, counted, briefed, paid, or listed in the to-do list.
    None of it is computable. Lunar new year and the harvest festival follow the lunar calendar, substitute
    holidays are granted per year, and election days are set by their own law, so every row below is copied from
    the government announcement of record — the Gwanbo gazette notices issued under the Presidential Decree on
@@ -5627,9 +5788,9 @@ const HOLIDAYS = {
 // Derived, never restated: adding a year to the table moves the coverage note by itself.
 const HOLIDAY_YEARS = [...new Set(Object.keys(HOLIDAYS).map((d) => d.slice(0, 4)))].sort();
 
-/* One occurrence row, used by the list groups and by the calendar's selected-day panel. The markup exists
-   once so the two views cannot drift apart. */
-function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit, tail = null }) {
+/* One occurrence row, rendered by the calendar's selected-day panel and by the to-do list's event detail sheet.
+   The markup exists once so the two surfaces cannot drift apart. */
+function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
   const due = ev.kind === "due";
   const lead = due ? ddayStr(date) : ev.time || "시간 미정";
   const leadTone = !due ? "text-zinc-300 border-zinc-700"
@@ -5645,8 +5806,6 @@ function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit, tail = 
           <div className="text-xs text-zinc-500 truncate">
             <span className="font-mono">{date}</span>{ev.place ? ` · ${ev.place}` : ""}{ev.note ? ` · ${ev.note}` : ""}
             {ev.repeat && <span className="text-zinc-400"> · 반복 {REPEAT_LABEL[ev.repeat.freq]}</span>}
-            {/* The schedule tab passes nothing; the to-do list uses it to state that an event moves no goal */}
-            {tail && <span className="text-zinc-600"> · {tail}</span>}
           </div>
         </div>
         <span className={`text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${due ? "text-amber-300 border-amber-700" : "text-zinc-300 border-zinc-700"}`}>
@@ -5777,93 +5936,35 @@ function ScheduleCalendar({ state, today, onAdd, onEdit, onToggleDone, onSkip })
   );
 }
 
-function ScheduleTab({ state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip, onExport }) {
-  const cal = view === "calendar"; // any other value, including a save written before v17, opens the list
-  const tomorrow = shiftDay(today, 1);
+/* The schedule tab is the month calendar under a header (2026-09-16: the list view and its chips were removed).
+   Missed deadlines stay visible as the counts line figure and as `기한 지남` rows in the to-do list. */
+function ScheduleTab({ state, today, onAdd, onEdit, onToggleDone, onSkip, onExport }) {
   const weekEnd = shiftDay(mondayOf(today), 6);
-  const { groups, counts } = useMemo(() => {
+  const counts = useMemo(() => {
     // Past window: deadlines only — an appointment that already happened is not actionable, a missed deadline is.
     const past = upcomingEvents(state, shiftDay(today, -EVENT_PAST_DAYS), EVENT_PAST_DAYS).filter((o) => o.ev.kind === "due");
     const ahead = upcomingEvents(state, today, EVENT_HORIZON_DAYS);
-    const onToday = ahead.filter((o) => o.date === today);
-    // `이후` collapses each event to its earliest occurrence in the window — one row per event. Listing every
-    // occurrence buries the single dated deadline: one weekly repeat fills 12 rows over the 90-day horizon and a
-    // daily one 90. The row keeps its `반복 매주` marker, so the repeat is stated, not hidden. The near groups
-    // (`지난 마감` · `오늘` · `내일` · `이번 주`) stay one row per occurrence — those are the ones acted on one by one.
-    const later = [];
-    const seen = new Set();
-    for (const o of ahead) { // `ahead` is date-ascending, so the first hit is the earliest and the group stays sorted
-      if (o.date <= tomorrow || o.date <= weekEnd || seen.has(o.ev.id)) continue;
-      seen.add(o.ev.id);
-      later.push(o);
-    }
-    return {
-      groups: [
-        ["지난 마감", past, "text-rose-400"],
-        ["오늘", onToday, "text-amber-300"],
-        ["내일", ahead.filter((o) => o.date === tomorrow), "text-zinc-400"],
-        ["이번 주", ahead.filter((o) => o.date > tomorrow && o.date <= weekEnd), "text-zinc-400"],
-        ["이후", later, "text-zinc-500"],
-      ],
-      // The week count runs from today to Sunday, so it covers today and tomorrow too: it answers how much is
-      // left this week, not how many rows sit in the group of the same name.
-      counts: { today: onToday.length, week: ahead.filter((o) => o.date <= weekEnd).length, past: past.length },
-    };
-  }, [state, today, tomorrow, weekEnd]);
-  const shown = groups.reduce((n, [, list]) => n + list.length, 0);
+    // The week count runs from today to Sunday, so it covers today and tomorrow too: it answers how much is
+    // left this week.
+    return { today: ahead.filter((o) => o.date === today).length, week: ahead.filter((o) => o.date <= weekEnd).length, past: past.length };
+  }, [state, today, weekEnd]);
 
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        {/* The calendar panel owns the add button, so exactly one `일정 추가` button exists */}
         <div className="flex items-center justify-between gap-2">
           <SectionLabel tone="text-cyan-400">다가오는 일정</SectionLabel>
-          {/* In calendar view the panel owns the add button, so exactly one `일정 추가` button exists at a time */}
-          {!cal && (
-            <button onClick={() => onAdd()}
-              className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
-              <Plus size={14} /> 일정 추가
-            </button>
-          )}
-        </div>
-        {/* Full width, not beside the button: at 390 px the counts line wraps mid-word when it shares the row */}
-        <p className="text-xs font-mono text-zinc-400">
-          오늘 {counts.today}건 · 이번 주 {counts.week}건 · 지난 마감 {counts.past}건
-        </p>
-        {/* One export button on the chip row, so both views carry the same single entry point */}
-        <div className="flex items-center justify-between gap-2 mt-2.5">
-          <div className="flex gap-1.5">
-            <Chip on={!cal} onClick={() => onView("list")}>목록</Chip>
-            <Chip on={cal} onClick={() => onView("calendar")}>달력</Chip>
-          </div>
           <button onClick={() => onExport()}
             className="shrink-0 px-3 py-1.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">캘린더로 내보내기</button>
         </div>
+        <p className="text-xs font-mono text-zinc-400">
+          오늘 {counts.today}건 · 이번 주 {counts.week}건 · 지난 마감 {counts.past}건
+        </p>
       </section>
 
-      {cal ? (
-        <ScheduleCalendar state={state} today={today}
-          onAdd={onAdd} onEdit={onEdit} onToggleDone={onToggleDone} onSkip={onSkip} />
-      ) : (
-        <>
-          {shown === 0 && (
-            <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
-              <p className="text-sm text-zinc-500">등록한 일정이 없어요 — 표시할 약속·마감이 없어요.</p>
-            </section>
-          )}
-
-          {groups.map(([label, list, tone]) => list.length > 0 && (
-            <section key={label} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-              <SectionLabel tone={tone}>{label}</SectionLabel>
-              <div className="space-y-1.5">
-                {list.map((o) => (
-                  <EventRow key={`${o.ev.id}-${o.date}`} ev={o.ev} date={o.date} done={o.done} today={today}
-                    onToggleDone={onToggleDone} onSkip={onSkip} onEdit={onEdit} />
-                ))}
-              </div>
-            </section>
-          ))}
-        </>
-      )}
+      <ScheduleCalendar state={state} today={today}
+        onAdd={onAdd} onEdit={onEdit} onToggleDone={onToggleDone} onSkip={onSkip} />
     </>
   );
 }
@@ -6510,6 +6611,278 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
   );
 }
 
+/* ───────────────────────── Meetings — project minutes (schema v23) ───────────────────────── */
+/* A meeting is a record of what was said, never a task and never an appointment: no payout, no trophy, no goal, no
+   streak, no evidence gate (rules 1, 18), and nothing here reaches the briefing, the to-do list or the assistant packet
+   (rule 7). The time of a meeting lives only in `일정`; a meeting stores its date and, optionally, the id of the event
+   whose occurrence falls on that date, and reads that event's time and title at render. Full transcripts are not
+   stored — only a hand-written or pasted summary, capped below.
+   Storage arithmetic (the budget is counted in string length, like `storageUsedBytes`: 3.5 × 1,048,576 = 3,672,064
+   chars shared with the rest of the save and every thumbnail). An empty record costs about 190 chars (ids, both
+   dates, keys, the comma); a record with every field full costs 40 + 80 + 800 + 200 + 200 + 190 = 1,510 chars plus one
+   per newline; a typical one (25 / 30 / 400 / 100 / 100) about 850. At three a working day (750 a year) typical minutes
+   use 0.64 M chars a year — 52 % of the budget after three years, 87 % after five; full records reach 93 % after three.
+   So the caps alone promise nothing, and two facts guard the rest: the tab always states the storage in use, and a
+   save that would cross the budget is refused with the form kept open (`meetingFits` in the root). */
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 800, decisions: 200, actions: 200 };
+const PROJECT_LIMITS = { name: 40, note: 200 };
+const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
+const mbText = (chars) => (chars / 1048576).toFixed(1);
+const meetingOrder = (a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || "");
+
+// The event line of a meeting, read live: a link to an event that no longer exists is stated, never cleaned up.
+const meetingEventText = (state, m) => {
+  if (!m.eventId) return "연결 없음";
+  const ev = (state.events || []).find((e) => e.id === m.eventId);
+  return ev ? `${ev.time || "시간 미정"} ${ev.title}` : "연결된 일정이 삭제됐어요";
+};
+
+function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenMeeting }) {
+  const [expanded, setExpanded] = useState({}); // which projects show every row — view state only, never stored (rule 9)
+  const projects = state.meetingProjects || [];
+  const meetings = state.meetings || [];
+  const used = useMemo(() => storageUsedWith(state), [state]);
+  // Projects by their newest minutes; projects without minutes last, newest first. Derived at render (rule 9).
+  const groups = useMemo(() => {
+    const by = new Map(projects.map((p) => [p.id, []]));
+    for (const m of meetings) by.get(m.projectId)?.push(m);
+    const list = projects.map((p) => ({ p, rows: (by.get(p.id) || []).slice().sort(meetingOrder) }));
+    return list.sort((a, b) => {
+      const da = a.rows[0]?.date, db = b.rows[0]?.date;
+      if (da && db) return db.localeCompare(da) || (b.p.createdAt || "").localeCompare(a.p.createdAt || "");
+      if (da || db) return da ? -1 : 1;
+      return (b.p.createdAt || "").localeCompare(a.p.createdAt || "");
+    });
+  }, [projects, meetings]);
+
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-2">
+          <SectionLabel tone="text-cyan-400">미팅 — 프로젝트별 회의록</SectionLabel>
+          <button onClick={onAddProject}
+            className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
+            <Plus size={14} /> 프로젝트 추가
+          </button>
+        </div>
+        <p className="text-xs text-zinc-600 mt-0.5">회의 시간은 일정 탭에, 회의에서 나온 내용은 여기에 적어요. 회의록은 목표·실행·점수에 반영되지 않아요.</p>
+        {/* Fragments are nowrap so a 390 px line breaks only between them */}
+        <p className="text-xs font-mono text-zinc-400 mt-2">
+          <span className="whitespace-nowrap">프로젝트 {projects.length}개</span>{" · "}
+          <span className="whitespace-nowrap">회의록 {meetings.length}건</span>{" · "}
+          <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / 3.5MB</span>
+        </p>
+      </section>
+
+      {projects.length === 0 && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center">
+          <p className="text-sm text-zinc-500">프로젝트가 없어요 — 프로젝트를 먼저 만들어요.</p>
+        </section>
+      )}
+
+      {groups.map(({ p, rows }) => {
+        const open = !!expanded[p.id];
+        const shown = open ? rows : rows.slice(0, MEETING_ROWS_SHOWN);
+        return (
+          <section key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+            <div className="flex items-baseline gap-2">
+              <div className="flex-1 min-w-0 text-sm font-bold truncate">{p.name}</div>
+              <span className="text-xs font-mono text-zinc-500 shrink-0">회의록 {rows.length}건</span>
+            </div>
+            <div className="flex gap-1.5 mt-2">
+              <button onClick={() => onEditProject(p.id)}
+                className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">프로젝트 수정</button>
+              <button onClick={() => onAddMeeting(p.id)}
+                className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">회의록 추가</button>
+            </div>
+            {rows.length === 0 ? (
+              <p className="text-sm text-zinc-500 mt-3">회의록이 없어요.</p>
+            ) : (
+              <div className="space-y-1.5 mt-3">
+                {shown.map((m) => (
+                  <TodoRow key={m.id} lead={{ text: m.date.slice(2), tone: "text-zinc-400 border-zinc-700" }} title={m.title}
+                    onOpen={() => onOpenMeeting(m.id)} />
+                ))}
+              </div>
+            )}
+            {rows.length > MEETING_ROWS_SHOWN && (
+              <button onClick={() => setExpanded((x) => ({ ...x, [p.id]: !open }))}
+                className="mt-2 text-xs font-bold text-zinc-400 active:opacity-70">
+                {open ? "접기" : `${rows.length - MEETING_ROWS_SHOWN}건 더 보기`}
+              </button>
+            )}
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
+/* ── Project form. Deleting is offered only for a project without minutes: nothing is lost, so nothing is asked. ── */
+function ProjectModal({ project, meetingCount, onClose, onAdd, onUpdate, onRemove }) {
+  const [name, setName] = useState(project?.name || "");
+  const [note, setNote] = useState(project?.note || "");
+  const [err, setErr] = useState("");
+  const submit = () => {
+    const n = name.trim(), t = note.trim();
+    if (!n) { setErr("프로젝트 이름을 입력해 주세요."); return; }
+    if (n.length > PROJECT_LIMITS.name) { setErr(`프로젝트 이름은 ${PROJECT_LIMITS.name}자까지예요 — 지금 ${n.length}자예요.`); return; }
+    if (t.length > PROJECT_LIMITS.note) { setErr(`메모는 ${PROJECT_LIMITS.note}자까지예요 — 지금 ${t.length}자예요.`); return; }
+    const next = { name: n, ...(t ? { note: t } : {}) };
+    if (project) onUpdate(project.id, next); else onAdd(next);
+  };
+  return (
+    <Modal title={project ? "프로젝트 수정" : "새 프로젝트"} onClose={onClose}>
+      <div className="space-y-3">
+        <BizField value={name} onChange={setName} placeholder="프로젝트 이름 — 예: ○○물산 재고 관리" />
+        <BizField value={note} onChange={setNote} placeholder="메모 (선택)" />
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          {project ? "저장" : "등록"}
+        </button>
+        {project && (
+          <>
+            <button onClick={() => onRemove(project.id)} disabled={meetingCount > 0}
+              className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs disabled:opacity-30">삭제</button>
+            {meetingCount > 0 && <p className="text-xs text-zinc-500">회의록 {meetingCount}건이 있어 삭제할 수 없어요 — 회의록을 먼저 지워요.</p>}
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// A textarea with its `{n} / {cap}` counter. No `maxLength`: a paste is never silently truncated, the submit refuses
+// instead. The over-cap tone is rose-300 so the form's one rose-400 line stays its validation message.
+function MeetingText({ value, onChange, placeholder, rows, cap }) {
+  return (
+    <div>
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={rows}
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+      <div className={`text-xs font-mono text-right ${value.trim().length > cap ? "text-rose-300" : "text-zinc-600"}`}>{value.trim().length} / {cap}</div>
+    </div>
+  );
+}
+
+/* ── Meeting form — one form for add and edit. `onAdd` / `onUpdate` answer with an error string ("" = saved), so a
+   refusal from the storage guard keeps the form open with everything typed. ── */
+function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpdate, onRemove }) {
+  const projects = state.meetingProjects || [];
+  const [pid, setPid] = useState(meeting?.projectId || projectId || null);
+  const [date, setDate] = useState(meeting?.date || today);
+  const [title, setTitle] = useState(meeting?.title || "");
+  const [attendees, setAttendees] = useState(meeting?.attendees || "");
+  const [summary, setSummary] = useState(meeting?.summary || "");
+  const [decisions, setDecisions] = useState(meeting?.decisions || "");
+  const [actions, setActions] = useState(meeting?.actions || "");
+  const [eventId, setEventId] = useState(meeting?.eventId || null);
+  const [err, setErr] = useState("");
+  const dayEvents = date ? eventsOn(state, date) : [];
+
+  // A link is kept only while its event still has an occurrence on the chosen date.
+  const pickDate = (d) => {
+    setDate(d);
+    if (eventId && !(d && eventsOn(state, d).some((o) => o.ev.id === eventId))) setEventId(null);
+  };
+
+  const submit = () => {
+    const v = { title: title.trim(), attendees: attendees.trim(), summary: summary.trim(), decisions: decisions.trim(), actions: actions.trim() };
+    if (!pid || !projects.some((p) => p.id === pid)) { setErr("프로젝트를 골라 주세요."); return; }
+    if (!date) { setErr("날짜를 선택해 주세요."); return; }
+    if (!v.title) { setErr("회의 이름을 입력해 주세요."); return; }
+    if (!v.summary) { setErr("회의 요약을 입력해 주세요."); return; }
+    const names = { title: "회의 이름은", attendees: "참석자는", summary: "회의 요약은", decisions: "결정 사항은", actions: "후속 조치는" };
+    for (const k of Object.keys(names)) {
+      if (v[k].length > MEETING_LIMITS[k]) { setErr(`${names[k]} ${MEETING_LIMITS[k]}자까지예요 — 지금 ${v[k].length}자예요.`); return; }
+    }
+    // Only non-empty optional fields are written, so a cleared field disappears from the save.
+    const next = {
+      projectId: pid, date, title: v.title,
+      ...(v.attendees ? { attendees: v.attendees } : {}),
+      summary: v.summary,
+      ...(v.decisions ? { decisions: v.decisions } : {}),
+      ...(v.actions ? { actions: v.actions } : {}),
+      ...(eventId ? { eventId } : {}),
+    };
+    const refused = meeting ? onUpdate(meeting.id, next) : onAdd(next);
+    if (refused) setErr(refused);
+  };
+
+  return (
+    <Modal title={meeting ? "회의록 수정" : "새 회의록"} onClose={onClose}>
+      <div className="space-y-3">
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">프로젝트</div>
+          <div className="flex flex-wrap gap-1.5">
+            {projects.map((p) => <Chip key={p.id} on={pid === p.id} onClick={() => { setPid(p.id); setErr(""); }}>{p.name}</Chip>)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">날짜</div>
+          <input type="date" value={date} onChange={(e) => pickDate(e.target.value)}
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        </div>
+        <BizField value={title} onChange={setTitle} placeholder="회의 이름 — 예: 2차 요구사항 회의" />
+        <BizField value={attendees} onChange={setAttendees} placeholder="참석자 (선택) — 예: 김OO, 박OO" />
+        <MeetingText value={summary} onChange={setSummary} placeholder="회의 요약 — 논의한 내용을 요점으로 적어요" rows={8} cap={MEETING_LIMITS.summary} />
+        <MeetingText value={decisions} onChange={setDecisions} placeholder="결정 사항 (선택)" rows={3} cap={MEETING_LIMITS.decisions} />
+        <MeetingText value={actions} onChange={setActions} placeholder="후속 조치 (선택)" rows={3} cap={MEETING_LIMITS.actions} />
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">일정 연결 (선택)</div>
+          {dayEvents.length === 0 ? (
+            <p className="text-xs text-zinc-500">이 날짜에는 일정이 없어요.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              <Chip on={!eventId} onClick={() => setEventId(null)}>연결 안 함</Chip>
+              {dayEvents.map((o) => (
+                <Chip key={o.ev.id} on={eventId === o.ev.id} onClick={() => setEventId(o.ev.id)}>{o.ev.time || "시간 미정"} {o.ev.title}</Chip>
+              ))}
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-zinc-500">전체 녹취가 아니라 요약만 저장해요.</p>
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          {meeting ? "저장" : "등록"}
+        </button>
+        {meeting && (
+          <button onClick={() => onRemove(meeting.id)} className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs">삭제</button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Meeting view — the full minutes, read from the live record ── */
+function MeetingViewModal({ state, meetingId, onClose, onEdit }) {
+  const m = (state.meetings || []).find((x) => x.id === meetingId);
+  if (!m) return null;
+  const project = (state.meetingProjects || []).find((p) => p.id === m.projectId);
+  const block = (label, text) => (
+    <div>
+      <SectionLabel>{label}</SectionLabel>
+      <p className="text-sm text-zinc-200 whitespace-pre-wrap break-words">{text || "없음"}</p>
+    </div>
+  );
+  return (
+    <Modal title={m.title} onClose={onClose}>
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <CvFact label="프로젝트" wrap>{project?.name || "없음"}</CvFact>
+          <CvFact label="날짜"><span className="font-mono">{m.date}</span></CvFact>
+          <CvFact label="참석자" wrap>{m.attendees || "기록 없음"}</CvFact>
+          <CvFact label="일정" wrap>{meetingEventText(state, m)}</CvFact>
+        </div>
+        {block("요약", m.summary)}
+        {block("결정 사항", m.decisions)}
+        {block("후속 조치", m.actions)}
+        <button onClick={() => onEdit(m.id)}
+          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">수정</button>
+      </div>
+    </Modal>
+  );
+}
+
 /* ───────────────────────── Overlay effects ───────────────────────── */
 
 function Overlay({ data, onClose }) {
@@ -6680,7 +7053,7 @@ export default function LifeManager() {
     completeTask(q.id, null);
   };
 
-  const completeTask = (id, evidence) => {
+  const completeTask = (id, evidence, score) => {
     setState((prev) => {
       const s = structuredClone(prev);
       const beforeP = Object.fromEntries((prev.goals || []).filter((g) => g.status === "active").map((g) => [g.id, goalProgress(g, prev)]));
@@ -6694,6 +7067,7 @@ export default function LifeManager() {
         q.status = "done"; q.doneAt = today;
       }
       if (evidence) q.evidence = evidence;
+      if (q.isExam && score) q.score = score; // display only — nothing below reads it for P, grade or D (rules 1, 2)
 
       /* Streak (shields consumed automatically) */
       const a = s.act;
@@ -6715,8 +7089,8 @@ export default function LifeManager() {
         if (s.exams.dim[q.famId] === undefined) s.exams.dim[q.famId] = r.mult;
         const prevBest = s.exams.best[q.famId];
         if (!prevBest || q.band.p > prevBest.p) {
-          s.exams.best[q.famId] = { label: q.band.label, d: q.band.d, p: q.band.p, ver: POINT_POLICY_VERSION, date: today };
-        }
+          s.exams.best[q.famId] = { label: q.band.label, d: q.band.d, p: q.band.p, ver: POINT_POLICY_VERSION, date: today, ...(score ? { score } : {}) };
+        } else if (score && q.band.p === prevBest.p && examScoreBetter(fam, score, prevBest.score)) s.exams.best[q.famId] = { ...prevBest, score };
         if (area) area.achievements = [...area.achievements, {
           id: uid(), grade: area.grade, date: today,
           text: `${fam.n} ${q.band.label} — D${q.band.d} · +${r.payout.toLocaleString()}P${r.mult < 1 ? ` (감쇠 ×${r.mult})` : ""}`,
@@ -6923,9 +7297,6 @@ export default function LifeManager() {
     showToast({ msg: "이번 회차를 취소했어요" });
   };
 
-  // The chosen schedule view is a preference, not derived data: only the string is stored (schema v17).
-  const setScheduleView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), scheduleView: v } }));
-
   /* Business — portfolio, unit prices and period contracts. A business record is a record, never a task:
      no points, no trophy, no goal, no streak, no evidence gate (rules 1, 18). One generic trio keyed by
      the list name, because the three lists differ only in their form and their toast. */
@@ -6986,6 +7357,84 @@ export default function LifeManager() {
   };
   // The chosen business view is a preference, not derived data: only the string is stored (schema v20).
   const setBizView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), bizView: v } }));
+
+  /* Meetings — project minutes. A record, never a task: these handlers write `meetingProjects` and `meetings` and
+     nothing else — no act, tasks, goals, areas, room, exams or events (rules 1, 18). */
+  // Whether a meeting record still fits the storage budget, counted in string length like `storageUsedBytes`:
+  // the storage in use with the current state, plus the record, minus the record it replaces when editing.
+  const meetingFits = (next, prevLen = 0) => {
+    const used = storageUsedWith(state);
+    return used + JSON.stringify(next).length - prevLen <= STORAGE_BUDGET
+      ? ""
+      : `저장 공간이 부족해요 — 현재 ${mbText(used)}MB 사용 중이라 회의록을 저장하지 않았어요. 백업을 내보낸 뒤 오래된 회의록이나 사진을 지워요.`;
+  };
+  const addProject = (p) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.meetingProjects = [{ id: uid(), ...p, createdAt: today }, ...(s.meetingProjects || [])];
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "프로젝트를 등록했어요" });
+  };
+  const updateProject = (id, next) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const i = (s.meetingProjects || []).findIndex((x) => x.id === id);
+      if (i < 0) return prev;
+      const cur = s.meetingProjects[i];
+      s.meetingProjects[i] = { id: cur.id, ...next, createdAt: cur.createdAt }; // the form replaces the record; a cleared note disappears
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "프로젝트를 수정했어요" });
+  };
+  const removeProject = (id) => {
+    const n = (state.meetings || []).filter((m) => m.projectId === id).length;
+    // Refused here too, not only by the disabled button: deleting a project must never orphan or take minutes with it.
+    if (n > 0) { showToast({ msg: `회의록 ${n}건이 있어 삭제할 수 없어요 — 회의록을 먼저 지워요.` }); return; }
+    setState((prev) => ({ ...prev, meetingProjects: (prev.meetingProjects || []).filter((p) => p.id !== id) }));
+    setModal(null);
+    showToast({ msg: "프로젝트를 삭제했어요" });
+  };
+  const addMeeting = (next) => {
+    const rec = { id: uid(), ...next, createdAt: today };
+    const refused = meetingFits(rec);
+    if (refused) return refused;
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.meetings = [rec, ...(s.meetings || [])];
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "회의록을 등록했어요" });
+    return "";
+  };
+  const updateMeeting = (id, next) => {
+    const cur = (state.meetings || []).find((m) => m.id === id);
+    if (!cur) return "";
+    const rec = { id: cur.id, ...next, createdAt: cur.createdAt }; // the form replaces the record, keeping id and createdAt
+    const refused = meetingFits(rec, JSON.stringify(cur).length);
+    if (refused) return refused;
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const i = (s.meetings || []).findIndex((m) => m.id === id);
+      if (i < 0) return prev;
+      s.meetings[i] = rec;
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "회의록을 수정했어요" });
+    return "";
+  };
+  const removeMeeting = (id) => {
+    const m = (state.meetings || []).find((x) => x.id === id);
+    if (!m) return;
+    if (!window.confirm(`${m.title} 회의록을 삭제해요. 계속할까요?`)) return;
+    setState((prev) => ({ ...prev, meetings: (prev.meetings || []).filter((x) => x.id !== id) }));
+    setModal(null);
+    showToast({ msg: "회의록을 삭제했어요" });
+  };
 
   /* Daily assistant */
   const markBriefingSeen = () => setState((prev) => (prev.act?.briefingSeen === today ? prev : { ...prev, act: { ...prev.act, briefingSeen: today } }));
@@ -7160,10 +7609,11 @@ export default function LifeManager() {
   }
 
   const NAV = [
-    ["home", "홈", Flag],
+    ["home", "프로필", IdCard],
     ["goals", "목표", Target],
-    ["tasks", "실행", ClipboardList],
+    ["tasks", "할 일", ClipboardList],
     ["schedule", "일정", CalendarDays],
+    ["meetings", "미팅", MessagesSquare],
     ["biz", "사업", Briefcase],
   ];
 
@@ -7200,22 +7650,28 @@ export default function LifeManager() {
             onAddQuestFor={(gid) => setModal({ type: "addQuest", goalId: gid })} />
         )}
         {tab === "tasks" && (
-          <TaskTab state={state} today={today} onViewEvidence={(q) => setModal({ type: "evidenceView", task: q })}
-            onComplete={tryComplete} onRemove={removeTask}
+          <TaskTab state={state} today={today}
+            onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })}
+            onOpenEvent={(eventId, date) => setModal({ type: "eventDetail", eventId, date })}
+            onOpenBiz={(row) => setModal({ type: "bizDetail", row })}
             onCatalog={() => setModal({ type: "catalog" })}
             onGoGoals={() => setTab("goals")}
-            onEditEvent={(ev) => setModal({ type: "event", event: ev })}
-            onToggleEventDone={toggleEventDone} onSkipEvent={skipOccurrence}
             onGoBiz={() => { setBizView("deals"); setTab("biz"); }}
             onBriefing={() => setModal({ type: "briefing" })} />
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}
-            view={state.ui?.scheduleView} onView={setScheduleView}
             onAdd={(date) => setModal({ type: "event", date })}
             onEdit={(ev) => setModal({ type: "event", event: ev })}
             onToggleDone={toggleEventDone} onSkip={skipOccurrence}
             onExport={() => setModal({ type: "calExport" })} />
+        )}
+        {tab === "meetings" && (
+          <MeetingsTab state={state}
+            onAddProject={() => setModal({ type: "project" })}
+            onEditProject={(projectId) => setModal({ type: "project", projectId })}
+            onAddMeeting={(projectId) => setModal({ type: "meeting", projectId })}
+            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
         )}
         {tab === "biz" && (
           <BizTab state={state} today={today}
@@ -7226,11 +7682,11 @@ export default function LifeManager() {
         )}
       </main>
 
-      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-5 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
+      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-6 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
         {NAV.map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
-            <Icon size={18} /> {label}
+            <Icon size={18} /> <span className="whitespace-nowrap leading-4">{label}</span>
           </button>
         ))}
       </nav>
@@ -7245,7 +7701,7 @@ export default function LifeManager() {
       )}
       {modal?.type === "evidence" && (
         <EvidenceModal task={modal.task} onClose={() => setModal(null)}
-          onSubmit={(ev) => completeTask(modal.task.id, ev)} />
+          onSubmit={(ev, score) => completeTask(modal.task.id, ev, score)} />
       )}
       {modal?.type === "promote" && (
         <PromoteModal area={modal.area} onClose={() => setModal(null)}
@@ -7262,6 +7718,23 @@ export default function LifeManager() {
       {modal?.type === "study" && (
         <StudyVerifyModal task={modal.task} onClose={() => setModal(null)}
           onDone={(ev) => completeTask(modal.task.id, ev)} />
+      )}
+      {/* The to-do sheets. The task sheet's completion button reaches `tryComplete` and nothing else. */}
+      {modal?.type === "taskDetail" && (
+        <TaskDetailModal state={state} taskId={modal.taskId} today={today} onClose={() => setModal(null)}
+          onComplete={tryComplete}
+          onRemove={(id) => { removeTask(id); setModal(null); }}
+          onViewEvidence={(q) => setModal({ type: "evidenceView", task: q })} />
+      )}
+      {modal?.type === "eventDetail" && (
+        <EventDetailModal state={state} eventId={modal.eventId} date={modal.date} today={today} onClose={() => setModal(null)}
+          onToggleDone={toggleEventDone}
+          onSkip={(id, d) => { skipOccurrence(id, d); setModal(null); }}
+          onEdit={(ev) => setModal({ type: "event", event: ev })} />
+      )}
+      {modal?.type === "bizDetail" && (
+        <BizTodoModal row={modal.row} onClose={() => setModal(null)}
+          onOpen={() => { setModal(null); setBizView("deals"); setTab("biz"); }} />
       )}
       {modal?.type === "evidenceView" && (
         <EvidenceViewModal task={modal.task} onClose={() => setModal(null)} />
@@ -7291,6 +7764,21 @@ export default function LifeManager() {
         <FolioModal folio={modal.item} onClose={() => setModal(null)}
           onAdd={(f, warn) => addBiz("folio", f, warn)} onUpdate={(id, next, warn) => updateBiz("folio", id, next, warn)}
           onRemove={(id) => removeBiz("folio", id)} />
+      )}
+      {/* Meeting records — no payout, no goal, no streak (rules 1, 18) */}
+      {modal?.type === "project" && (
+        <ProjectModal project={(state.meetingProjects || []).find((p) => p.id === modal.projectId)}
+          meetingCount={(state.meetings || []).filter((m) => m.projectId === modal.projectId).length}
+          onClose={() => setModal(null)} onAdd={addProject} onUpdate={updateProject} onRemove={removeProject} />
+      )}
+      {modal?.type === "meeting" && (
+        <MeetingModal state={state} today={today} projectId={modal.projectId}
+          meeting={(state.meetings || []).find((m) => m.id === modal.meetingId)}
+          onClose={() => setModal(null)} onAdd={addMeeting} onUpdate={updateMeeting} onRemove={removeMeeting} />
+      )}
+      {modal?.type === "meetingView" && (
+        <MeetingViewModal state={state} meetingId={modal.meetingId} onClose={() => setModal(null)}
+          onEdit={(meetingId) => setModal({ type: "meeting", meetingId })} />
       )}
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />

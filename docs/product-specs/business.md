@@ -1,6 +1,6 @@
 # Business tab — `사업`
 
-The fifth tab holds what a pre-revenue software/AI business is judged by: what has been built (`포트폴리오`),
+The sixth and last tab (fifth before `미팅` landed 2026-09-16) holds what a pre-revenue software/AI business is judged by: what has been built (`포트폴리오`),
 what it sells for (`단가`), and what is contracted and collected (`계약`). A business record is a **record, never
 a 실행 (task)** — registering a contract, ticking a payment, or adding a rate or a portfolio entry pays no P,
 creates no trophy, moves no goal and touches no streak, exactly as a schedule event does not
@@ -15,14 +15,14 @@ home-card and packet rules: [../design-docs/assistant-bridge.md](../design-docs/
 
 ## Screen
 `BizTab` props: `state, today, view, onView, onAdd, onEdit, onTogglePaid`. Tab key `biz`, label `사업`, icon
-`Briefcase`, fifth and last entry of `NAV` (`grid-cols-5`, since the sixth tab, `성장`, was removed 2026-09-15 —
-[growth.md](growth.md)).
+`Briefcase`, sixth and last entry of `NAV` (`grid-cols-6` since `미팅` landed 2026-09-16, [meetings.md](meetings.md);
+the sixth tab, `성장`, was removed 2026-09-15 — [growth.md](growth.md)).
 
 - Header section, in this order: a `SectionLabel` reading `사업` (cyan) with the per-view add button on the same
   row (`계약 추가` / `단가 추가` / `포트폴리오 추가`), then two full-width `font-mono text-xs` lines — never beside
   the button, because a summary line sharing the header row was measured to wrap mid-word at 390 px — then the
   three view `Chip`s.
-- Both header lines read one `bizSummary(state, today)` call, so the tab header, the briefing, the `실행` header's
+- Both header lines read one `bizSummary(state, today)` call, so the tab header, the briefing, the `할 일` header's
   business button and the packet can never disagree:
   ```
   이번 달 계약 {won} · 입금 확인 {won}
@@ -217,21 +217,23 @@ The same `persisted` check runs after every `state` write; a save that does not 
   only `tasks`, so a pasted reply can never create a deal, a rate or a portfolio entry.
 
 There is no home-card line for this any more (2026-09-15) — home is a CV with no date-scoped facts; the unpaid
-count and the quote count instead render as a button on the `실행` header ([tasks.md](tasks.md)) whenever either
+count and the quote count instead render as a button on the `할 일` header ([tasks.md](tasks.md)) whenever either
 is above zero. Both remaining surfaces are specified in
 [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
-## The `실행` tab
+## The `할 일` tab
 Two of the facts above also render as rows in the unified to-do list ([tasks.md](tasks.md)),
 keyed to the same `bizSummary` call and capped by `BIZ_ALERT_MAX` (3, shared with the briefing's `slice(0,
-BIZ_ALERT_MAX)`): an unpaid billed month (`입금 미확인 {won} · 목표 기여 없음`) and a `won` contract ending inside
-`DEAL_END_SOON` months (`계약 종료 · 남은 계약 {won} · 목표 기여 없음`), each keyed to the month's closing day so
-they land in the same time group a task or an event would. A stale quote is deliberately **not** a row there — it
-has an age, not a date, so there is no day to file it under without inventing one
-([Rule 13](../design-docs/core-beliefs.md#rule-13)); it stays only in the briefing and in this tab's `견적 대기`
-group, and the to-do list's header states its count instead. Every business row there is a full-width button with
-**no completion control** — tapping it opens this tab on `계약`; nothing about a contract or a payment is ever
-reachable from `실행` beyond that.
+BIZ_ALERT_MAX)`): an unpaid billed month and a `won` contract ending inside `DEAL_END_SOON` months, each keyed to
+the month's closing day so they land in the same time group a task or an event would. A stale quote is
+deliberately **not** a row there — it has an age, not a date, so there is no day to file it under without
+inventing one ([Rule 13](../design-docs/core-beliefs.md#rule-13)); it stays only in the briefing and in this
+tab's `견적 대기` group, and the to-do list's header states its count instead. Every business row there is a
+compact `TodoRow` with **no completion control** — tapping it opens `BizTodoModal`, a detail sheet stating the
+month and the same fact text the old row printed on itself (`입금 미확인 {won} · 목표 기여 없음` /
+`계약 종료 · 남은 계약 {won} · 목표 기여 없음`) plus a `사업 탭에서 보기 ›` button that lands here on `계약`
+(2026-09-16, [tasks.md](tasks.md)); nothing about a contract or a payment is ever reachable from `할 일` beyond
+that.
 
 ## What a business record never does
 - No `goalId`, no difficulty, no points, no trophy, no achievement record, no metric change, no streak effect

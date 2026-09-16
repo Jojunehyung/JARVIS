@@ -11,17 +11,72 @@
   "theme_color": "#09090b",
   "lang": "ko",
   "dir": "ltr",
-  "categories": ["productivity", "lifestyle", "education"],
+  "categories": [
+    "productivity",
+    "lifestyle",
+    "education"
+  ],
   "icons": [
-    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "./icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ],
   "screenshots": [
-    { "src": "./screenshots/home.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "영역 등급·자격·시험 이력과 롤모델 근접도" },
-    { "src": "./screenshots/tasks.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "목표별 실행과 마일스톤" },
-    { "src": "./screenshots/goals.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "목표와 핵심결과" },
-    { "src": "./screenshots/calendar.png", "sizes": "430x932", "type": "image/png", "form_factor": "narrow", "label": "달력으로 보는 약속과 마감" }
+    {
+      "src": "./screenshots/home.png",
+      "sizes": "430x932",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "학력·경력·자격·시험 이력과 롤모델 근접도"
+    },
+    {
+      "src": "./screenshots/tasks.png",
+      "sizes": "430x932",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "기한 순으로 모은 할 일"
+    },
+    {
+      "src": "./screenshots/goals.png",
+      "sizes": "430x932",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "목표와 핵심결과"
+    },
+    {
+      "src": "./screenshots/calendar.png",
+      "sizes": "430x932",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "달력으로 보는 약속과 마감"
+    },
+    {
+      "src": "./screenshots/meetings.png",
+      "sizes": "430x932",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "프로젝트별 회의록"
+    }
   ]
 }

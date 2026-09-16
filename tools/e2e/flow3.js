@@ -1,12 +1,12 @@
 // Remaining paths — exam KR and score report, exercise activity, the activity-kind gate, profile photo, direction advice, task and goal deletion, streak after a day gap
 module.exports = async (h) => {
-  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity } = h;
+  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, openTodo } = h;
   // ── Profile photo upload (resizeImage path). The picker lives in the profile modal now, but the file input
   // it drives is mounted on the app shell — so `attach` finds it through its unscoped fallback, and the modal
   // closing mid-pick cannot take the input with it.
   await step("profile photo upload through the profile modal", async () => {
-    await clickTab("홈");
-    await clickText("프로필"); await sleep(400);
+    await clickTab("프로필");
+    await clickText("프로필 편집"); await sleep(400);
     if (await page.$('.fixed.inset-0 input[type="file"]')) throw new Error("the profile modal declared a file input of its own");
     await clickInModal("사진 등록");
     await attach();
@@ -40,8 +40,74 @@ module.exports = async (h) => {
     await clickInModal("등록 ›");
     await sleep(1200); await closeModal();
   });
-  await step("submit score report photo (exam payout)", async () => { await submitPhotoEvidence("TOEIC"); });
+  const readState = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
+  // The exact score is an extra requirement on the score report (schema v22): each refusal happens before anything is
+  // written, so the task stays open and no evidence image key appears.
+  await step("the score report needs a score inside the band", async () => {
+    await clickTab("할 일");
+    await completeQuest("TOEIC");
+    await sleep(400);
+    await attach();
+    const task = ((await readState())?.tasks || []).find((q) => q.isExam && q.famId === "toeic" && q.status !== "done");
+    if (!task) throw new Error("no open TOEIC milestone in the save");
+    const cases = [
+      [null, (e) => e === "성적표에 적힌 점수를 입력해 주세요."],
+      ["abc", (e) => e === "점수는 숫자로 입력해 주세요."],
+      ["790", (e) => e.includes("800 구간 미만 점수예요")],
+      ["1000", (e) => e === "TOEIC L&R 최고 점수는 990예요."],
+    ];
+    for (const [value, ok] of cases) {
+      if (value != null) await typeInto("성적표에 적힌", value);
+      await clickInModal("제출하고 완료");
+      const e = await modalError();
+      if (!ok(e)) throw new Error(`score ${JSON.stringify(value)} gave the modal error: ${e || "none"}`);
+      const q = ((await readState())?.tasks || []).find((x) => x.id === task.id);
+      if (!q || q.status === "done") throw new Error(`score ${JSON.stringify(value)} completed the milestone`);
+      if (await page.evaluate((k) => localStorage.getItem(k) != null, `liferpg-img-ev-${task.id}`)) throw new Error(`score ${JSON.stringify(value)} left an evidence image key behind`);
+    }
+    await closeModal();
+  });
+  await step("submit score report photo (exam payout)", async () => { await submitPhotoEvidence("TOEIC", { score: "835" }); });
   await shot("exam-done");
+  await step("the exact score is stored beside an unchanged band", async () => {
+    const st = await readState();
+    const q = (st?.tasks || []).find((x) => x.isExam && x.famId === "toeic" && x.status === "done");
+    if (!q) throw new Error("no completed TOEIC milestone in the save");
+    if (q.score !== "835" || q.band?.label !== "800") throw new Error("task score or band: " + JSON.stringify({ score: q.score, band: q.band }));
+    const b = st.exams?.best?.toeic || {};
+    if (b.score !== "835" || b.label !== "800" || b.p !== 720 || b.d !== 60) throw new Error("exams.best.toeic: " + JSON.stringify(b));
+    const area = (st.areas || []).find((a) => a.id === q.areaId);
+    const last = (area?.achievements || []).slice(-1)[0];
+    if (!last || !last.text.startsWith("TOEIC L&R 800 — D60")) throw new Error("the newest achievement text: " + JSON.stringify(last));
+    await clickTab("프로필");
+    const cv = await page.evaluate(() => (document.querySelector("main section")?.innerText || "").replace(/\s+/g, " "));
+    if (!cv.includes("TOEIC L&R 835")) throw new Error("the CV does not state the exact score: " + cv.slice(0, 240));
+    if (cv.includes("D60")) throw new Error("the CV prints the band's difficulty figure: " + cv.slice(0, 240));
+  });
+  // Same band again with a higher score: the band snapshot, D, P, date and the locked decay stay; only the shown score moves.
+  await step("a same-band retake updates only the shown score", async () => {
+    const before = await readState();
+    const done = (before.tasks || []).find((x) => x.isExam && x.famId === "toeic" && x.status === "done");
+    if (!done) throw new Error("no completed TOEIC milestone to copy");
+    const bestBefore = before.exams?.best?.toeic;
+    const dimBefore = before.exams?.dim?.toeic;
+    const today = await page.evaluate(() => { const d = new Date(); const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; });
+    await page.evaluate((t) => {
+      const st = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      st.tasks = [{ id: "tretake", title: "TOEIC L&R 800 재응시", isExam: true, famId: "toeic", band: t.band, goalId: t.goalId, areaId: t.areaId,
+        diff: "B", pts: 720, type: "once", status: "todo", doneDates: [], createdAt: t.today }, ...st.tasks];
+      localStorage.setItem("liferpg-state-v1", JSON.stringify(st));
+    }, { band: done.band, goalId: done.goalId, areaId: done.areaId, today });
+    await h.reload();
+    await submitPhotoEvidence("800 재응시", { score: "870" });
+    const st = await readState();
+    const b = st.exams?.best?.toeic || {};
+    const want = { ...bestBefore, score: "870" };
+    if (JSON.stringify(Object.keys(b).sort().map((k) => [k, b[k]])) !== JSON.stringify(Object.keys(want).sort().map((k) => [k, want[k]]))) {
+      throw new Error("exams.best.toeic after the retake: " + JSON.stringify(b) + " expected " + JSON.stringify(want));
+    }
+    if (st.exams?.dim?.toeic !== dimBefore) throw new Error(`the locked decay moved: ${dimBefore} → ${st.exams?.dim?.toeic}`);
+  });
 
   // ── Exercise activity (weight and skeletal muscle → metric KR)
   await step("register exercise activity task", async () => { await addKindTask("하네스", "운동", "웨이트 40분"); });
@@ -69,7 +135,7 @@ module.exports = async (h) => {
 
   // ── Promotion (evidence chip selection → actual promotion)
   await step("promotion — submit after selecting evidence chips", async () => {
-    await clickTab("홈");
+    await clickTab("프로필");
     if (!(await h.openAreaGate())) errors.push("no area row to open the promotion gate");
     await sleep(500);
     await page.evaluate(() => {
@@ -87,7 +153,7 @@ module.exports = async (h) => {
   // per-area bars, whose cell widths are the squared curve `roleGap` averages (rule 14): read off the first bar and
   // compared with the formula and with the save's grade and requirement for that area.
   await step("the proximity line opens direction advice with the squared bars", async () => {
-    await clickTab("홈");
+    await clickTab("프로필");
     await clickText("롤모델 근접도"); await sleep(600);
     const sheet = await h.overlayText();
     for (const t of ["방향 제안 —", "/ 요구", "칸 하나 = 등급 한 단계"]) {
@@ -120,17 +186,12 @@ module.exports = async (h) => {
 
   // ── Task deletion / goal removal
   await step("delete task", async () => {
-    await clickTab("실행");
-    const ok = await page.evaluate(() => {
-      const nodes = [...document.querySelectorAll("div")].filter((d) => d.innerText.includes("설계 실습 1시간"));
-      const inner = nodes[nodes.length - 1];
-      let row = inner; for (let i = 0; i < 6 && row; i++) { if (row.querySelectorAll("button").length > 1) break; row = row.parentElement; }
-      const btns = row ? [...row.querySelectorAll("button")] : [];
-      if (btns.length < 2) return false;
-      btns[btns.length - 1].click(); return true;
-    });
-    if (!ok) errors.push("task delete button not found");
+    await clickTab("할 일");
+    await openTodo("설계 실습 1시간");
+    await clickInModalExact("삭제");
     await sleep(600);
+    const left = await page.evaluate(() => (JSON.parse(localStorage.getItem("liferpg-state-v1")).tasks || []).some((q) => q.title === "설계 실습 1시간"));
+    if (left) throw new Error("the deleted task is still stored");
   });
   // ── One day later (streak, shields) — set lastActive to the past to exercise applyDailyTick
   await step("re-entry after a one-day gap (streak, shields)", async () => {

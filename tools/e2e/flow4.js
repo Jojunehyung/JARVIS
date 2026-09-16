@@ -1,16 +1,21 @@
 // Wrap-up — goal status changes and legacy migrations (last, because they affect later steps)
 module.exports = async (h) => {
   const { step, shot, clickText, clickTab, clickExact, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
+  // The schema version every migrated fixture must end at — bumped with each new `migrate` block (rule 12).
+  const SCHEMA_V = 23;
+  // Order-independent deep equality for plain JSON records read back from the save.
+  const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.keys(v).sort().map((k) => [k, canon(v[k])]) : v);
+  const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
 
   // Plant a legacy save, reload, and read back the migrated state.
   const migrateFixture = async (save) => {
     await page.evaluate((s) => localStorage.setItem("liferpg-state-v1", JSON.stringify(s)), save);
     await h.reload();
     await sleep(900);
-    await clickTab("홈"); await sleep(400);
+    await clickTab("프로필"); await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 21) throw new Error("schema version " + st.v + " (expected 21)");
+    if (st.v !== SCHEMA_V) throw new Error("schema version " + st.v + " (expected " + SCHEMA_V + ")");
     return st;
   };
   // ── Goal status change and removal
@@ -30,7 +35,7 @@ module.exports = async (h) => {
     await typeInto("무엇을 하나요", "마무리 점검 실행");
     await clickInModalExact("등록");
     await sleep(1000); await closeModal();
-    await clickTab("실행");
+    await clickTab("할 일");
     await completeQuest("마무리 점검 실행");
     await sleep(500);
     await assertDone("마무리 점검 실행");
@@ -96,7 +101,7 @@ module.exports = async (h) => {
     if (keep.goalId !== "gdel" || keep.evidence !== "정리 완료") throw new Error("completed task was rewritten: " + JSON.stringify(keep));
     // The completed task keeps its evidence and now states that it serves no goal; it was completed before
     // today, so the `완료` archive is where it is listed.
-    await clickTab("실행");
+    await clickTab("할 일");
     await clickExact("완료");
     await expectText("남길 실행");
     await expectText("목표 기여 없음");
@@ -124,7 +129,7 @@ module.exports = async (h) => {
       try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; }
     });
     if (!st) throw new Error("no state after migration");
-    if (st.v !== 21) throw new Error("schema version " + st.v + " (expected 21)");
+    if (st.v !== SCHEMA_V) throw new Error("schema version " + st.v + " (expected " + SCHEMA_V + ")");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     const kinds = (st.room?.trophies || []).map((t) => t.kind);
@@ -144,11 +149,11 @@ module.exports = async (h) => {
     await h.reload();
     await sleep(900);
     // the save is written at boot; render home (every fixture now shows the CV there), then check the schema
-    await clickTab("홈");
+    await clickTab("프로필");
     await sleep(400);
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!st) throw new Error("no state");
-    if (st.v !== 21) throw new Error("schema version " + st.v + " (expected 21)");
+    if (st.v !== SCHEMA_V) throw new Error("schema version " + st.v + " (expected " + SCHEMA_V + ")");
     if (!Array.isArray(st.tasks) || !Array.isArray(st.areas)) throw new Error("v14 fields (tasks, areas) missing");
     if (st.quests || st.parts) throw new Error("legacy fields (quests, parts) remain");
     // v12 built a life-metric store that v19 then deletes, so nothing v12 produced is observable in an end state.
@@ -223,7 +228,9 @@ module.exports = async (h) => {
       certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
     };
     const st = await migrateFixture(s16);
-    if (st.ui?.scheduleView !== "list") throw new Error("v17 schedule view missing or not list: " + JSON.stringify(st.ui));
+    // v17 wrote ui.scheduleView and v22 drops it again, so the v17 normalisation is no longer observable in an end
+    // state (the v12 precedent); what is left to check is that the key is gone.
+    if ("scheduleView" in (st.ui || {})) throw new Error("v22 left the retired schedule view: " + JSON.stringify(st.ui));
     if (st.events?.length !== 1 || st.events[0].title !== "레거시 면접") throw new Error("v16 events changed by the v17 block: " + JSON.stringify(st.events));
     if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v15 records lost by the v17 block");
   });
@@ -248,7 +255,7 @@ module.exports = async (h) => {
     if ("kind" in mt) throw new Error("meet kind survived the v18 block: " + JSON.stringify(mt));
     if (mt.title !== "거래처 미팅" || mt.diff !== "D" || mt.status !== "done" || mt.doneAt !== "2026-01-02") throw new Error("v18 changed a field it must keep: " + JSON.stringify(mt));
     if (mt.evidence !== "회의록 · ○○상사 김과장 — 안건: 사양 협의") throw new Error("v18 dropped the recorded minutes: " + JSON.stringify(mt));
-    if (st.ui?.scheduleView !== "calendar") throw new Error("v18 rewrote the v17 schedule view: " + JSON.stringify(st.ui));
+    if ("scheduleView" in (st.ui || {})) throw new Error("v22 left the retired schedule view: " + JSON.stringify(st.ui)); // no longer observable after v22 (the v12 precedent)
   });
   await step("v18 save → v19 life metrics removed", async () => {
     // shieldMonth and briefingSeen are stamped with today so that the monthly shield reset (applyDailyTick)
@@ -275,7 +282,7 @@ module.exports = async (h) => {
     if (actKeys !== "briefingSeen,lastActive,lastReview,shieldMonth,shieldsLeft,streak") throw new Error("v19 changed the act key set: " + actKeys);
     if (st.act?.streak !== 3 || st.act?.shieldsLeft !== 1) throw new Error("v19 changed the streak counters: " + JSON.stringify(st.act));
     if (st.act?.briefingSeen !== now || st.act?.lastReview !== "2026-01-02") throw new Error("v19 dropped an act stamp it must keep: " + JSON.stringify(st.act));
-    if (st.ui?.scheduleView !== "calendar") throw new Error("v19 rewrote the schedule view: " + JSON.stringify(st.ui));
+    if ("scheduleView" in (st.ui || {})) throw new Error("v22 left the retired schedule view: " + JSON.stringify(st.ui)); // no longer observable after v22 (the v12 precedent)
     if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v19 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
   });
   await step("v19 save → v20 business", async () => {
@@ -299,7 +306,7 @@ module.exports = async (h) => {
       if (st[k].length) throw new Error(`v20 invented ${k} rows: ` + JSON.stringify(st[k]));
     }
     if (st.ui?.bizView !== "deals") throw new Error("v20 business view missing or not deals: " + JSON.stringify(st.ui));
-    if (st.ui?.scheduleView !== "calendar") throw new Error("v20 rewrote the schedule view: " + JSON.stringify(st.ui));
+    if ("scheduleView" in (st.ui || {})) throw new Error("v22 left the retired schedule view: " + JSON.stringify(st.ui)); // no longer observable after v22 (the v12 precedent)
     if (st.events?.length !== 1 || st.events[0].title !== "레거시 면접") throw new Error("v20 changed the schedule records: " + JSON.stringify(st.events));
     if (st.tasks?.length !== 1 || st.tasks[0].id !== "tb") throw new Error("v20 changed the task records: " + JSON.stringify(st.tasks));
     if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v20 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
@@ -321,7 +328,7 @@ module.exports = async (h) => {
     await sleep(900);
     const half = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
     if (!half) throw new Error("no state");
-    if (half.v !== 21) throw new Error("schema version " + half.v + " (expected 21)");
+    if (half.v !== SCHEMA_V) throw new Error("schema version " + half.v + " (expected " + SCHEMA_V + ")");
     if (half.profile !== null) throw new Error("v21 materialised a profile on a half-onboarded save: " + JSON.stringify(half.profile));
     if (!(await hasText("시작하기"))) throw new Error("a profile-less save no longer routes to onboarding");
 
@@ -360,7 +367,76 @@ module.exports = async (h) => {
     if (st.events?.length !== 1 || st.folio?.length !== 1) throw new Error("v21 changed a record array: " + JSON.stringify({ events: st.events?.length, folio: st.folio?.length }));
     if (st.journal?.length !== 1 || st.reviews?.length !== 1) throw new Error("v21 lost a record: " + JSON.stringify({ journal: st.journal?.length, reviews: st.reviews?.length }));
     if (st.act?.streak !== 5 || st.act?.shieldsLeft !== 1 || st.act?.lastReview !== "2026-01-02") throw new Error("v21 changed an act stamp: " + JSON.stringify(st.act));
-    if (st.ui?.scheduleView !== "calendar" || st.ui?.bizView !== "folio") throw new Error("v21 rewrote a view preference: " + JSON.stringify(st.ui));
+    if (st.ui?.bizView !== "folio") throw new Error("v21 rewrote the business view: " + JSON.stringify(st.ui));
+    if ("scheduleView" in (st.ui || {})) throw new Error("v22 left the retired schedule view: " + JSON.stringify(st.ui)); // no longer observable after v22 (the v12 precedent)
+  });
+  await step("v21 save → v22 exam score fields", async () => {
+    // Nothing is backfilled: a completed exam milestone and its best band keep exactly the fields they were paid with,
+    // and the CV falls back to the band label. The retired schedule view is dropped; the business view is kept.
+    const now = await page.evaluate(() => { const d = new Date(); const p2 = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; });
+    const task = { id: "tx", title: "TOEIC L&R 700 달성", areaId: "ax", goalId: "gx", isExam: true, famId: "toeic", band: { label: "700", d: 49, p: 480, conf: "B" },
+      diff: "B", pts: 480, type: "once", status: "done", doneAt: "2026-01-02", doneDates: [], createdAt: "2026-01-01", evidence: "📎 성적표 첨부" };
+    const best = { label: "700", d: 49, p: 480, ver: "1.0", date: "2026-01-02" };
+    const s21 = {
+      v: 21,
+      profile: { name: "v21 사용자", nick: "v21세이브", birth: "1996-03-02", email: "", phone: "", gender: "남성", status: "직장인 1~3년",
+        edus: [{ id: "ex1", school: "레거시대학교", degree: "ba", status: "grad" }], careers: [],
+        edu: "ba", career: "y13", certs: [], examsOwned: [], directions: [], look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
+      areas: [{ id: "ax", name: "기본지식", grade: 2, achievements: [{ id: "achx", text: "TOEIC L&R 700 — D49 · +480P", date: "2026-01-02", grade: 2 }] }],
+      tasks: [task],
+      goals: [{ id: "gx", title: "레거시 어학 목표", areaId: "ax", status: "active", createdAt: "2026-01-01", krs: [] }],
+      events: [{ id: "ex", title: "레거시 면접", kind: "appt", date: "2026-01-05", time: "10:00", createdAt: "2026-01-02" }],
+      folio: [], rates: [{ id: "rx", name: "레거시 단가", unit: "day", price: 300000, createdAt: "2026-01-02" }], deals: [],
+      journal: [{ id: "jx", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [],
+      ui: { scheduleView: "calendar", bizView: "rates" },
+      act: { streak: 2, lastActive: "2026-01-02", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
+      exams: { best: { toeic: best }, dim: { toeic: 1 }, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [{ id: "trx", kind: "ach", label: "TOEIC L&R 700", tier: "D", date: "2026-01-02" }] }, role: null,
+      lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s21);
+    if (!same(st.ui, { bizView: "rates" })) throw new Error("v22 ui: " + JSON.stringify(st.ui));
+    const q = (st.tasks || []).find((x) => x.id === "tx");
+    if (!same(q, task)) throw new Error("v22 changed the exam task: " + JSON.stringify(q));
+    if (!same(st.exams?.best?.toeic, best)) throw new Error("v22 changed exams.best.toeic: " + JSON.stringify(st.exams?.best?.toeic));
+    for (const k of ["areas", "tasks", "goals", "events", "folio", "rates", "deals", "journal", "reviews"]) {
+      if ((st[k] || []).length !== s21[k].length) throw new Error(`v22 changed the length of ${k}: ${(st[k] || []).length} (planted ${s21[k].length})`);
+    }
+    if ((st.room?.trophies || []).length !== 1) throw new Error("v22 changed the trophies: " + JSON.stringify(st.room));
+    await clickTab("프로필");
+    await expectText("TOEIC L&R 700 구간");
+  });
+  await step("v22 save → v23 meeting records", async () => {
+    // Every other top-level key must come back exactly as planted; only v and the daily-tick stamp may move.
+    const now = await page.evaluate(() => { const d = new Date(); const p2 = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; });
+    const s22 = {
+      v: 22,
+      profile: { name: "v22 사용자", nick: "v22세이브", birth: "1996-03-02", email: "", phone: "", gender: "남성", status: "직장인 1~3년",
+        edus: [{ id: "ey1", school: "레거시대학교", degree: "ba", status: "grad" }], careers: [],
+        edu: "ba", career: "y13", certs: [], examsOwned: [], directions: [], look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
+      areas: [{ id: "ay", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "ty", title: "레거시 실행", areaId: "ay", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [],
+      events: [{ id: "ey", title: "레거시 회의", kind: "appt", date: "2026-01-05", time: "10:00", createdAt: "2026-01-02" }],
+      folio: [], rates: [], deals: [],
+      journal: [{ id: "jy", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [],
+      ui: { bizView: "deals" },
+      act: { streak: 1, lastActive: "2026-01-02", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
+      exams: { best: { toeic: { label: "800", d: 60, p: 720, ver: "1.0", date: "2026-01-02", score: "835" } }, dim: { toeic: 1 }, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s22);
+    if (!same(st.meetingProjects, []) || !same(st.meetings, [])) throw new Error("v23 meeting arrays: " + JSON.stringify({ meetingProjects: st.meetingProjects, meetings: st.meetings }));
+    for (const k of Object.keys(s22)) {
+      if (k === "v" || k === "lastTick") continue;
+      if (!same(st[k], s22[k])) throw new Error(`v23 changed ${k}: ` + JSON.stringify(st[k]));
+    }
+    const extra = Object.keys(st).filter((k) => !(k in s22) && k !== "meetingProjects" && k !== "meetings");
+    if (extra.length) throw new Error("v23 added keys it does not own: " + extra.join(", "));
+    await clickTab("미팅");
+    await expectText("프로젝트가 없어요 — 프로젝트를 먼저 만들어요.");
   });
   await shot("migrated");
 };

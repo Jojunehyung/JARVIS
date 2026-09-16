@@ -12,6 +12,6 @@ The `성장` tab was removed on 2026-09-15: home became one CV plus a role-model
 | `롤모델 설정` / `롤모델 수정` button | `SettingsModal`'s `롤모델` section |
 | `방향 제안` button | The home proximity line itself is now the entry (when a role model is set); the modal it opens, `RoleAdviceModal`, is unchanged |
 
-Nav order is now five tabs, `홈 · 목표 · 실행 · 일정 · 사업`, `grid-cols-5`. `성장` survives in the source only as an onboarding concept name (`성장시킬 영역`, `추천과 성장 방향`), not as a screen.
+Nav order became five tabs, `홈 · 목표 · 실행 · 일정 · 사업`, `grid-cols-5`, on 2026-09-15; a further rename and a sixth tab landed 2026-09-16 — `프로필 · 목표 · 할 일 · 일정 · 미팅 · 사업`, `grid-cols-6` (see [home.md](home.md), [tasks.md](tasks.md), [meetings.md](meetings.md)). `성장` survives in the source only as an onboarding concept name (`성장시킬 영역`, `추천과 성장 방향`), not as a screen.
 
 For the plan that made the change: [`../exec-plans/completed/2026-09-15-cv-home.md`](../exec-plans/completed/2026-09-15-cv-home.md).

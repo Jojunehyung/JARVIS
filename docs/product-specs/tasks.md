@@ -1,20 +1,34 @@
-# Tasks tab
+# Tasks tab — `할 일`
 <!-- src: SPEC-4-4 -->
 
-Open rows carry a `DueChip` when the task has a `due` date, and `AddTaskModal` offers `기한 (선택)` (a date input) for `오늘 1회` tasks and for study tasks; a milestone created from a KR defaults its `due` to the goal deadline.
+`TaskTab` (tab key `tasks`, nav label `할 일` since 2026-09-16 — the label names what the list is, a time-ordered
+collection of tasks, events and business rows, while `실행` stays the word for a task created under a goal, per
+the glossary) is one time-ordered list of everything actionable, built by the pure helper `todoOf(state, today)`
+([Rule 9](../design-docs/core-beliefs.md#rule-9)). `목표` stays numbers-only ([goals.md](goals.md)) and is the
+only surface a task can be created from ([Rule 18](../design-docs/core-beliefs.md#rule-18)); certification and
+exam milestones still come only from the goal's KR bridge ([Rule 19](../design-docs/core-beliefs.md#rule-19)).
+The 도감 (catalogue) `CatalogModal` is a read-only browser of the payout tables. Hierarchy:
+`information-architecture.md`; payouts: `scoring-engine.md` (both under `../design-docs/`).
 
-`TaskTab` is one time-ordered list of everything actionable — tasks, schedule occurrences and two dated business facts — built by the pure helper `todoOf(state, today)` ([Rule 9](../design-docs/core-beliefs.md#rule-9)). `목표` stays numbers-only ([goals.md](goals.md)) and is the only surface a task can be created from ([Rule 18](../design-docs/core-beliefs.md#rule-18)); certification and exam milestones still come only from the goal's KR bridge ([Rule 19](../design-docs/core-beliefs.md#rule-19)). The 도감 (catalogue) `CatalogModal` is a read-only browser of the payout tables. Hierarchy: `information-architecture.md`; payouts: `scoring-engine.md` (both under `../design-docs/`).
+Since 2026-09-16 (D-P3, [decision log](../design-docs/decision-log.md)) a row is one compact line — a lead chip,
+the title and at most one marker — with no checkbox and no nested control of any kind. Tapping a row opens a
+detail sheet that holds everything the row used to print, including the one and only completion control. This
+page documents the rows first, then the three sheets, then `todoOf` (unchanged), then `AddTaskModal` and
+`CatalogModal` (unchanged).
 
 ## `TaskTab`
-Props: `state, today, onComplete (tryComplete), onRemove (removeTask), onCatalog, onGoGoals, onViewEvidence (opens EvidenceViewModal), onEditEvent, onToggleEventDone, onSkipEvent, onGoBiz, onBriefing`. `onAddFor` no longer exists — a task is never created from this tab.
+Props: `state, today, onOpenTask, onOpenEvent, onOpenBiz, onCatalog, onGoGoals, onGoBiz, onBriefing`. There is no
+`onComplete` or `onRemove` prop any more — the tab itself completes and deletes nothing; both live only in
+`TaskDetailModal`.
 
-- Header: `실행 — 시간순 할 일` / `실행·일정·사업을 시간순으로 모아서 보여줘요. 새 실행은 목표 탭에서 만들어요.` / button `도감` (unchanged — the only general entry to `CatalogModal`).
+- Header: `할 일 — 시간순` / `실행·일정·사업을 시간순으로 모아요. 항목을 누르면 상세가 열려요. 새 실행은 목표 탭에서 만들어요.` / button `도감` (unchanged — the only general entry to `CatalogModal`).
 - Counts line (`text-xs font-mono text-zinc-400`): `기한 지남 {n} · 오늘 {n} · 이번 주 {n}`. `이번 주` is today through Sunday inclusive of today and tomorrow — how much is left this week, the same semantics as `ScheduleTab`'s counts line, not the row count of the group of the same name.
 - Business line, a button → `onGoBiz` (switches to `사업` on `계약`), rendered only when `bizSummary(state, today).counts.unpaid > 0 || counts.quote > 0`: `사업 입금 미확인 {n}건 · 견적 대기 {n}건 ›`, the unpaid count in rose above zero. This is what keeps the `BIZ_ALERT_MAX` cap below, and the excluded stale quotes, honest — the full counts stay on screen even though the list itself shows at most three unpaid months and no quote at all.
-- Chip row (2026-09-15): `할 일` / `완료` view chips — component state (`useState`), never `state.ui` ([Rule 9](../design-docs/core-beliefs.md#rule-9)) — on the left, and on the right `브리핑 열기 ›` → `onBriefing` (`setModal({ type: "briefing" })`). This button is the manual way back into the daily briefing once its auto-open is dismissed, and through it the only way back to the journal, the weekly review and the assistant bridge; it sits here rather than on home, which is a CV with no date-scoped facts — see [home.md](home.md), [daily-briefing.md](daily-briefing.md).
+- Chip row (2026-09-15): `할 일` / `완료` view chips — component state (`useState`), never `state.ui` ([Rule 9](../design-docs/core-beliefs.md#rule-9)) — on the left, and on the right `브리핑 열기 ›` → `onBriefing` (`setModal({ type: "briefing" })`). This button is the manual way back into the daily briefing once its auto-open is dismissed, and through it the only way back to the journal, the weekly review and the assistant bridge; see [home.md](home.md), [daily-briefing.md](daily-briefing.md).
 
-### `todoOf(state, today)`
-The single expansion this tab reads (`agendaOf` inside it). Pure — computed at render, never stored. Returns `{ groups, done, counts }`.
+### `todoOf(state, today)` — unchanged by the 2026-09-16 rewrite
+The single expansion this tab reads (`agendaOf` inside it). Pure — computed at render, never stored. Returns
+`{ groups, done, counts }`.
 
 - **Groups**, rendered only when non-empty, in this order: `기한 지남` (rose) · `오늘` (amber) · `내일` (zinc-400) · `이번 주` (zinc-400) · `이후` (zinc-500), then `오늘 완료` (emerald) last.
 - **Bucketing**, one rule for all three row kinds (`tomorrow = today + 1`; `weekEnd` = the coming Sunday): a task with no date is `오늘` when it is `daily`, otherwise `이후` (only a task can be undated); a dated row is `기한 지남` before today, `오늘` / `내일` on those dates, `이번 주` through `weekEnd`, else `이후`.
@@ -24,43 +38,124 @@ The single expansion this tab reads (`agendaOf` inside it). Pure — computed at
 
   | Fact | Lands in | Row states |
   |---|---|---|
-  | An unpaid billed month (`bizSummary().unpaid`, oldest first, capped at `BIZ_ALERT_MAX` = 3) | past months → `기한 지남`; the current month → wherever its closing date falls | lead chip `{month}`, `{client} {title}`, `입금 미확인 {won} · 목표 기여 없음` |
-  | A `won` contract ending within `DEAL_END_SOON` months | usually `이후` | lead chip `{end}`, `{client} {title}`, `계약 종료 · 남은 계약 {won} · 목표 기여 없음` |
+  | An unpaid billed month (`bizSummary().unpaid`, oldest first, capped at `BIZ_ALERT_MAX` = 3) | past months → `기한 지남`; the current month → wherever its closing date falls | lead chip `{month}`, title `{client} {title}` |
+  | A `won` contract ending within `DEAL_END_SOON` months | usually `이후` | lead chip `{end}`, title `{client} {title}` |
 
   A stale quote has an age, not a date — there is no day its follow-up is due, so filing it under `기한 지남` (a claimed miss) or `오늘` (an invented deadline) would both be a false number under [Rule 13](../design-docs/core-beliefs.md#rule-13). It stays in the daily briefing and in `사업`'s `견적 대기` group; only its count reaches this tab, in the business line above. Business detail: [business.md](business.md).
 - **Sorting** inside a group: date first, then clock-timed rows in time order, then untimed rows task → event → business, ties by title — undated rows sort last, so in `오늘` the dated rows come before the daily tasks.
 - **`오늘 완료`**: today's completions — `daily` tasks whose `doneDates` includes today, `once` tasks done today, and ticked event occurrences — same sort. Business rows are never "done".
 - **`counts`**: `overdue` / `today` = the row counts of those two groups; `week` = `오늘` + `내일` + `이번 주` (how much is left this week); `open` = every open row across the five groups (`오늘 완료` excluded).
 
-### Row kinds
-Three kinds, distinguishable without a legend, and only one reaches a completion path — `onComplete` appears exactly once, on the task row.
+## Rows — `TodoRow`, one shape for every item
+`TodoRow({ lead, title, done, marker, onOpen })`: a single full-width `<button>` (`bg-zinc-950 rounded-xl`, the
+classes `todoRows` in the E2E harness locates rows by) holding, in order, the lead chip (`font-mono`, bordered,
+toned per `todoLeadOf`), the title (`truncate`, struck through when `done`), and at most one marker. No nested
+button, no checkbox, no input — the row's only behaviour is opening the item's detail sheet.
 
-- **`task`** → the existing row markup (below), the only kind with a checkbox or `Lock` and the only one wired to `onComplete` → `tryComplete`.
-- **`event`** → `EventRow` ([schedule.md](schedule.md)) with `tail="목표 기여 없음"`; it keeps its own lead chip, its `약속`/`마감` chip and its three buttons (`완료 표시`/`완료 취소`, `이번 회차 취소`, `수정`) — no checkbox, no evidence, no payout.
-- **`biz`** → `BizTodoRow({ row, onOpen })`: a full-width button — mono month/end-date chip, title, meta line, chip `사업` — with **no control at all**; tapping the row is its only behaviour, routed to `onGoBiz`.
+What a row keeps, and why:
 
-### Row (`task` kind)
-`doneToday` = `daily` → `doneDates.includes(today)`, `once` → `status === "done"`; `closed = archived || doneToday` (`archived` only set by the `완료` view below); a closed row is `opacity-50` with a struck-through title. Every row states its own goal, because nothing above it groups by one any more.
-- Left control: an undone milestone shows a `Lock` icon button; every other row a check box (`Check` icon; emerald and `disabled` once closed). Both call `onComplete(q)` → `tryComplete`, which opens `StudyVerifyModal` (`isStudy`), `ActivityLogModal` (`kind`), or `EvidenceModal` (`needsEvidence`: cert, exam, or pts ≥ 150) before `completeTask` — [Rule 10](../design-docs/core-beliefs.md#rule-10), [Rule 16](../design-docs/core-beliefs.md#rule-16), [Rule 17](../design-docs/core-beliefs.md#rule-17).
-- Title: kind prefix `📚 ` / `💪 ` + `title`. Subtitle when closed: `완료 {lastDoneDate(q) || "날짜 없음"} · 🎯 {goal.title}` (or `목표 기여 없음`), then ` · 증거 보기` (link → `onViewEvidence(q)`) when `evidence` exists. Subtitle when open: `isCert` → `🎯 {goal.title} · ` (or `목표 기여 없음 · `) prefixed onto `직무 적합 {jw.tier}` (in `TIER_CLS`, only when `jobWeightForCert(state, areaId, certByTitle(title))` returns a tier) ` · D{certD} · 증거 필요` (violet); `isExam` → the same goal prefix onto `D{band.d} · 성적표 사진 필수` (sky); otherwise `{area.name}[ · 🎯 {goal.title}][ · 매일][ · 📖 산출물검증 | · 증거 필요]` plus ` · 목표 기여 없음` when the goal is missing ([Rule 13](../design-docs/core-beliefs.md#rule-13)) — this generic branch is unchanged from before the rewrite.
-- Right badge (open rows only show `DueChip` first): `isExam` → `시험` (sky); `isCert` → `CertBadge(certD != null ? achGrade(certD) : legacyCertGrade(pts))`; otherwise `DiffBadge(diff)`.
-- `X` → `onRemove(id)` = `removeTask`: no confirmation, works on completed rows too, and deletes the evidence images `liferpg-img-ev-{id}` and `liferpg-img-study-{id}-1..2` together with the task.
+| Kept | Why |
+|---|---|
+| Lead chip (D-day) | The user asked for the D-day; it is the one fact the time-ordered list is sorted by. |
+| Title | The user asked for the title; `truncate`, the full title is the sheet's title. |
+| Marker `목표 기여 없음` (`text-xs text-zinc-600 shrink-0`) on every row that serves no goal — every event row, every business row, and a task whose `goalId` finds no goal | [Rule 13](../design-docs/core-beliefs.md#rule-13) forbids hiding it; today each such row states it. |
+| Otherwise, marker `<Lock size={13} />` (`aria-label="증거 필요"`) on an open task with `isCert`, `isExam`, `isStudy` or `needsEvidence(q)` | Tapping such a row leads to a gate, not a one-tap completion; one 13 px icon states that before the tap ([Rule 10](../design-docs/core-beliefs.md#rule-10), [Rule 16](../design-docs/core-beliefs.md#rule-16)). |
 
-### Empty states
+Dropped from the row (moved into the sheets, or simply gone with the row-level checkbox): goal title, area name,
+`매일` suffix, `증거 필요` / `성적표 사진 필수` text, job-fit tier, D value, difficulty badge, cert badge, `시험`
+/ `사업` badges, kind emoji, completion date and `증거 보기`, the checkbox / lock button, the trailing `X` delete
+button, the event's own three buttons (they now live inside the event sheet), the business month chip.
+
+### Lead chip — `todoLeadOf(r, today, archived)`
+A pure helper, `{ text, tone }`, first match wins:
+1. `archived` (the `완료` view) → `{lastDoneDate(q).slice(5)}` (`MM-DD`), emerald; `날짜 없음` when there is no date.
+2. A done row (`r.done`, or a task done today) → `완료`, emerald.
+3. An appointment (`약속`, not `마감`) dated today with a time → `{time}` (`HH:MM`), amber — the `오늘` group already says the day, so the time is what distinguishes today's appointments from each other.
+4. Any row with `r.date`: `r.date < today` → `기한 지남`, rose; `r.date === today` → `ddayStr(r.date)` (`D-DAY`), amber; later → `ddayStr(r.date)`, zinc-400. Business rows use their own `r.date` (the month-end date `todoOf` already assigns).
+5. An undated daily task → `매일`, zinc-500.
+6. Any other undated task → `기한 없음`, zinc-500.
+
+`DueChip` is deleted (its tones live inside this helper). Width budget at 390 px: row content 390 − 32 (page
+padding) − 32 (row padding) − 24 (gaps) = 302 px; lead ≤ 60 px (`기한 지남`), marker ≤ 84 px (`목표 기여 없음`),
+two 10 px gaps → the title keeps ≥ 138 px (about ten Hangul glyphs at `text-sm`).
+
+### `rowOf(r)` in `TaskTab`
+- **`task`** → `onOpenTask(q.id)` opens `TaskDetailModal`; marker is the goal marker when the goal is gone, otherwise a lock on an open gated task, otherwise none.
+- **`event`** → `onOpenEvent(r.ev.id, r.date)` opens `EventDetailModal`; marker is always `목표 기여 없음` — an event pays nothing and moves no goal.
+- **`biz`** → `onOpenBiz(r)` opens `BizTodoModal`; marker is always `목표 기여 없음`.
+
+The `완료` archive (below) renders the same `TodoRow` with `archived` lead chips and no per-row completion control
+of its own — the sheet it opens has none either.
+
+## Empty states
 - No open row and no active goal: `EmptyQuestSvg` + `실행은 목표의 실행 단위입니다 — 목표가 먼저예요.` + button `목표 먼저 세우기 ›` → `onGoGoals`.
 - No open row with an active goal: `EmptyQuestSvg` + `예정된 항목이 없어요 — 실행·일정·사업 모두 0건이에요.`
 - Every open row is a business row: `완료할 실행·일정이 없어요 — 남은 항목은 사업 기록이에요.`
 
-### `완료` view — the archive
-`state.tasks` filtered to any completion at all (`daily` with a non-empty `doneDates`, `once` with `status === "done"`), sorted by `lastDoneDate` descending then title, capped at `TODO_DONE_MAX` (40, newest first — the count line still states the full total); count line `완료 {total}건 · 최근 {shown}건`; empty: `완료한 항목이 없어요.` Rows use the same markup as a `task` row above, with `archived = true`. An archived row is **always** closed regardless of `doneToday`: a `daily` task completed on an earlier day is not done *today*, so without this flag it would draw a live, unchecked checkbox — and tapping it inside a list titled `완료` would complete that task for today, turning the archive into a second completion surface. The trailing `X` stays live on purpose, so an old record can still be deleted. This view is what keeps [Rule 16](../design-docs/core-beliefs.md#rule-16)'s `증거 보기` reachable for anything completed before today; today's own completions are already in `오늘 완료`.
+## `완료` view — the archive
+`state.tasks` filtered to any completion at all (`daily` with a non-empty `doneDates`, `once` with `status ===
+"done"`), sorted by `lastDoneDate` descending then title, capped at `TODO_DONE_MAX` (40, newest first — the
+count line still states the full total); count line `완료 {total}건 · 최근 {shown}건`; empty: `완료한 항목이
+없어요.` Rows are `TodoRow`s with `lead={todoLeadOf({ kind: "task", task: q }, today, true)}`, `done`, and the
+same marker rule as an open task row; tapping one opens `TaskDetailModal`, whose body carries no completion
+control while the task is closed — the archive stays a record, exactly as before the rewrite. This view is what
+keeps [Rule 16](../design-docs/core-beliefs.md#rule-16)'s `증거 보기` reachable (inside the sheet) for anything
+completed before today; today's own completions are already in `오늘 완료`.
 
-### Deleted from `TaskTab`
-The per-goal `<section>` loop, the `{goalProgress}%` figure shown in each section's header (the figure itself is unchanged and still lives in `목표` — the only screen that shows it since home became a CV, 2026-09-15 — and is still read by `completeTask` / `checkinKR` / `goalStatus`), the milestone divider `마일스톤 — 자격·시험·학습 (하루분량 예외 · 증거로만 완료)`, `연결된 실행이 아직 없습니다.`, `＋ 이 목표에 실행`, and the whole `미분류 — 목표 연결 전 항목` section (with its note `완료·삭제는 가능하지만, 새 실행은 목표에서만 만들 수 있어요.`). Orphan tasks are not lost: they render as ordinary rows tagged `목표 기여 없음`, in whichever time group their `due` (or the lack of one) puts them.
+## Detail sheets — where everything else, and the one completion path, live
 
-One consequence worth stating: a task of a **done** goal — previously invisible, because it matched neither the active-goal loop (goal not active) nor the orphan section (the goal still resolves, just isn't active) — now appears again like any other task, since the list no longer filters on goal status at all ([TD-02](../exec-plans/tech-debt-tracker.md), resolved 2026-09-13).
+### `TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, onViewEvidence })`
+`modal: { type: "taskDetail", taskId }`. Reads the live task (`state.tasks.find`) and returns `null` once it is
+gone, so a sheet left open across a delete disappears with its task. Title: the task title. Body, one `CvFact`
+row each (`CvFact` gained an optional `wrap` prop for this sheet — `break-words` instead of `truncate` for the
+value):
+
+| Label | Value |
+|---|---|
+| `상태` | once: `할 일` or `완료 {doneAt}`; daily: `매일 · 완료 {n}회` plus ` · 오늘 완료` when done today |
+| `기한` | `{due} · {ddayStr(due)}` (`기한 지남` instead of the D+ figure once past), `매일`, or `기한 없음` |
+| `목표` | `{goal.title}` or `목표 기여 없음` |
+| `영역` | area name, or `영역 없음` |
+| `유형` | `📚 독서` · `💪 운동` · `📖 학습` · `자격 마일스톤` · `시험 마일스톤` · `일반` |
+| `난이도` | cert: `<CertBadge>` + `D{certD}` and, when `jobWeightForCert` returns a tier, ` · 직무 적합 {tier}` (`TIER_CLS`); exam: `{exam name} {band.label} 구간 · D{band.d}`; otherwise `<DiffBadge d={q.diff} />` |
+| `증거` | cert `합격증 사진 필수`; exam `성적표 사진 + 점수 필수` (2026-09-16, schema v22 — [evidence-modals.md](evidence-modals.md)); study `산출물 검증 — {diff}급 기준`; book `독후감 기록`; fit `운동 기록`; other `needsEvidence` → `증거 필요`; else `없음` |
+| `점수` (only when `q.score`) | the exact score the score report stated, `font-mono`, display only |
+| `증거 기록` (only when `q.evidence`) | the evidence text (`wrap`), then a `증거 보기` button → `onViewEvidence(q)` |
+
+Actions: while the task is not closed (daily not done today / once not done), a full-width `완료하기` button
+(`bg-cyan-500 text-zinc-950 font-black`) → `onComplete(q)`; always a full-width `삭제` button (`border
+border-rose-800 text-rose-300`) → `onRemove(q.id)`. No completion control once closed — the archive stays a
+record. Root wiring: `onComplete={tryComplete}` — plain tasks: `completeTask` already calls `setModal(null)`;
+gated tasks: `tryComplete` replaces this sheet with the study, activity or evidence modal, exactly as the old
+row's checkbox did ([Rules 10, 11, 16, 17](../design-docs/core-beliefs.md#rule-10)). `onRemove={(id) => {
+removeTask(id); setModal(null); }}` (`removeTask` unchanged — it asked nothing before either, tracked as
+[TD-47](../exec-plans/tech-debt-tracker.md)). `onViewEvidence={(q) => setModal({ type: "evidenceView", task: q
+})}`.
+
+### `EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit })`
+`modal: { type: "eventDetail", eventId, date }`, title `일정 — {ev.title}`. Body: the existing `EventRow` for the
+live occurrence (`done` read from `ev.doneDates`) — its `완료 표시` / `완료 취소`, `이번 회차 취소` and `수정`
+buttons are the event's detail actions, unchanged from the list — then a fixed line `목표 기여 없음 — 일정은
+기록이라 점수와 목표에 반영되지 않아요.` Returns `null` once the event is gone. Root: `onToggleDone={toggleEventDone}`
+(the sheet stays open and re-renders flipped); `onSkip={(id, d) => { skipOccurrence(id, d); setModal(null); }}`
+(the occurrence no longer exists); `onEdit={(ev) => setModal({ type: "event", event: ev })}`. `EventRow`'s
+now-unused `tail` prop was removed with the tab's own row markup.
+
+### `BizTodoModal({ row, onClose, onOpen })`
+`modal: { type: "bizDetail", row }` — `row` is a render-time snapshot of one `todoOf` business row, held in the
+modal slot and never stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Title `사업 — {row.title}`. Body:
+`CvFact` `월` → `{row.month}` (`font-mono`), then the row's own text (`row.text`, already ends `목표 기여 없음`),
+then a full-width button `사업 탭에서 보기 ›` → root `() => { setModal(null); setBizView("deals"); setTab("biz"); }`.
+No payment control here — the payment chip stays in `사업` ([Rule 1](../design-docs/core-beliefs.md#rule-1),
+[Rule 18](../design-docs/core-beliefs.md#rule-18)).
+
+The briefing's `오늘 할 일` lines keep completing through `closeBriefing` → `tryComplete`, unaffected by any of
+this — the user asked about the list only.
 
 ## `AddTaskModal` — `실행 추가`
-Props: `areas, exams, certBest, tasks, goalId, goal, onClose, onAdd (addQuest)`. `areaId = goal.areaId` — inherited, no area picker. Top card: `🎯 {goal.title}` / `영역: {areaName} (목표에서 상속)`. `gk = goalKinds(goal)` — the activity kinds and the study flag inferred from the goal's title, note, and KRs — scopes everything below.
+Props: `areas, exams, certBest, tasks, goalId, goal, onClose, onAdd (addQuest)`. `areaId = goal.areaId` —
+inherited, no area picker. Top card: `🎯 {goal.title}` / `영역: {areaName} (목표에서 상속)`. `gk = goalKinds(goal)`
+— the activity kinds and the study flag inferred from the goal's title, note, and KRs — scopes everything below.
 
 ### KR bridge — `이 목표의 핵심결과 — 클릭해서 바로 연결` (shown when `goal.krs` is non-empty)
 | KR type | Row | Right label | Creates |

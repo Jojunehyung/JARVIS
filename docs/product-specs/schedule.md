@@ -9,58 +9,43 @@ Data shape: [`events[]` in the generated schema](../generated/db-schema.md). Occ
 rules: [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
 ## Screen
-`ScheduleTab` props: `state, today, view, onView, onAdd, onEdit, onToggleDone, onSkip, onExport`. Tab key
-`schedule`, label `일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-5`), before `사업` — the fifth and
-last, since the sixth tab, `성장`, was removed 2026-09-15 ([growth.md](growth.md)).
+`ScheduleTab` props: `state, today, onAdd, onEdit, onToggleDone, onSkip, onExport`. Tab key `schedule`, label
+`일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-6` since the `미팅` tab landed, [meetings.md](meetings.md)),
+before `미팅` and `사업`.
 
-- Header section: `다가오는 일정` (cyan `SectionLabel`) and, in `목록` view only, the button `일정 추가` →
-  `EventModal` in add mode. In `달력` view the button lives in the selected-day panel instead, so exactly one
-  button with that label exists at a time.
-- Counts line, full width under the header, in **both** views: `오늘 {n}건 · 이번 주 {n}건 · 지난 마감 {n}건`.
+Calendar-only since 2026-09-16 (D-P2b, [decision log](../design-docs/decision-log.md)): the `목록` view, its
+`목록`/`달력` chips and the header's own `일정 추가` button are all gone, so `ScheduleTab` renders only the header
+section and `ScheduleCalendar`, always. The calendar panel's own `일정 추가` is the one add button on the tab, as
+it already was in `달력` view before this change.
+
+- Header section: first row `SectionLabel` `다가오는 일정` on the left, the button `캘린더로 내보내기` →
+  `onExport()` → `CalendarExportModal` (below) on the right; second row the counts line.
+- Counts line, full width under the header: `오늘 {n}건 · 이번 주 {n}건 · 지난 마감 {n}건`.
   - `오늘` — occurrences dated today.
   - `이번 주` — every occurrence from today to Sunday (`mondayOf(today) + 6`). It answers how much is left this
-    week, so it includes today and tomorrow and is **not** the row count of the group of the same name.
-  - `지난 마감` — `마감` occurrences in the last 30 days (`EVENT_PAST_DAYS`); equal to the rows of that group.
-- Empty state, when no group has a row (`목록` view): `등록한 일정이 없어요 — 표시할 약속·마감이 없어요.`
+    week, so it includes today and tomorrow.
+  - `지난 마감` — `마감` occurrences in the last 30 days (`EVENT_PAST_DAYS`).
+- `<ScheduleCalendar … />` always follows, today selected on entry.
 
-## Views — `목록` and `달력`
-Two `Chip`s under the counts line, `목록` first. `목록` answers "what is next", `달력` answers "what does this
-month look like"; both read the same expansion and the same row, so they can state nothing different. The same
-row also carries, right-aligned, the text-only button `캘린더로 내보내기` → `onExport()` → `CalendarExportModal`
-(below) — the one entry point into the calendar export, present in both views so neither reads differently.
+The month shown and the selected day are **component state** in `ScheduleCalendar`, never stored
+([Rule 9](../design-docs/core-beliefs.md#rule-9)) — entering the tab always opens on the current month with
+today selected, whichever month was open last time.
 
-- The choice is stored in `state.ui.scheduleView` (`"list"` | `"calendar"`, schema v17) and survives a reload:
-  the root's `setScheduleView` spreads it into `ui`, `ScheduleTab` reads `view === "calendar"` and treats every
-  other value, including a save written before v17, as `목록`.
-- The month shown and the selected day are **component state** in `ScheduleCalendar`, never stored
-  ([Rule 9](../design-docs/core-beliefs.md#rule-9)) — entering the tab always opens on the current month with
-  today selected, whichever month was open last time.
+`state.ui.scheduleView` is retired: nothing has read it since this change, and the v22 migration block drops it
+from the save on load ([state-lifecycle.md](../design-docs/state-lifecycle.md)). A save that still carries
+`"list"` (every save that never chose the calendar before 2026-09-16) simply opens on the calendar the next time
+it loads and loses the key on the way.
 
-## Day groups (`목록` view)
-Rendered in this order; a group with no row is not rendered at all.
-
-| Group | Window | Rows |
-|---|---|---|
-| `지난 마감` | today − 30 … yesterday | `마감` only — a past appointment is not actionable, a missed deadline is ([Rule 13](../design-docs/core-beliefs.md#rule-13)). Ticked occurrences stay so `완료 취소` remains reachable |
-| `오늘` | today | one row per occurrence |
-| `내일` | tomorrow | one row per occurrence |
-| `이번 주` | tomorrow + 1 … Sunday | one row per occurrence |
-| `이후` | after tomorrow and after Sunday, to today + 90 (`EVENT_HORIZON_DAYS`) | **one row per event** — its earliest occurrence in the window |
-
-The `이후` collapse (2026-09-11) exists because the group is the only unbounded one: at one row per occurrence a
-single weekly repeat fills 12 rows over the 90-day horizon and a daily one 90, and the one dated deadline in
-between disappears. The collapsed row keeps its `반복 매주` marker, so the repeat is stated rather than hidden,
-and no new copy was needed. The near groups stay one row per occurrence because those are the ones a person acts
-on individually — ticking or cancelling a single date. Rows stay date-ascending in every group.
+Missed deadlines the old `목록` view showed under `지난 마감` stay visible two other ways: the counts line's
+`지난 마감` figure above, and `기한 지남` rows in `할 일` ([tasks.md](tasks.md)) — `todoOf` already lists deadlines
+of the past 30 days.
 
 ## Row anatomy
-`EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit, tail = null })` is a module-level component
-rendered by the day groups **and** by the calendar's selected-day panel, so the two views cannot drift apart.
-`tail` is an optional trailing fragment on the sub-line, rendered as `` · {tail}`` in `text-zinc-600` — the same
-markup a task row uses for `목표 기여 없음`. This tab and `ScheduleCalendar` pass nothing, so their `EventRow` is
-byte-identical to before; the `실행` tab ([tasks.md](tasks.md)) is the one caller that passes
-`tail="목표 기여 없음"`, since an event there sits beside tasks and has to state, on the row itself, that it moves
-no goal.
+`EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit })` is a module-level component rendered by the
+calendar's selected-day panel **and** by `할 일`'s `EventDetailModal` ([tasks.md](tasks.md)), so the two surfaces
+cannot drift apart. The now-unused `tail` prop (a trailing fragment the old `할 일` row used to print
+`목표 기여 없음` on the same line) was removed in the same change that moved that marker onto the compact row shell
+instead.
 ```
 [ D-3 ]  전기기사 실기 원서 접수 마감                    [마감]
          2026-09-20 · 접수 후 수험표 확인 · 반복 매주
@@ -76,9 +61,10 @@ no goal.
   edited or deleted again, so a one-off is removed with `삭제` in the modal; `수정` opens the modal in edit mode.
 - Ordering inside a date: `마감` first, then `약속` by time with untimed last, ties by title (`eventsOn`).
 
-## Calendar view (`달력`)
+## The month grid and selected-day panel — `ScheduleCalendar`
 `ScheduleCalendar` props: `state, today, onAdd, onEdit, onToggleDone, onSkip`. Two sections under the header:
-the month grid, then the selected-day panel.
+the month grid, then the selected-day panel. This is the whole tab body since 2026-09-16 — there is no longer a
+second view to switch to.
 
 ### Month header
 `{YYYY}년 {M}월` in mono on the left; `‹`, `›` and `오늘` on the right.
@@ -143,33 +129,29 @@ the date, not from the table.
 **A holiday is never an event.** `HOLIDAYS` is read only by `ScheduleCalendar`. No `events[]` record, no
 `occurrencesOf` / `eventsOn` / `upcomingEvents` involvement, no counts-line change, no briefing line, no packet
 line, no task, goal, point, metric, trophy or streak effect, and no schema field
-([Rule 9](../design-docs/core-beliefs.md#rule-9), [Rule 12](../design-docs/core-beliefs.md#rule-12)). **The `목록`
-view shows nothing about holidays**: every row there carries `완료 표시` / `수정`, feeds the counts and the `이후`
-collapse, and a holiday is none of those. `demoState` is unchanged — the layer is static, so the demo shows it
-without demo data.
+([Rule 9](../design-docs/core-beliefs.md#rule-9), [Rule 12](../design-docs/core-beliefs.md#rule-12)). `demoState`
+is unchanged — the layer is static, so the demo shows it without demo data.
 
 ### Selected-day panel
 `선택한 날짜` (`SectionLabel`), the mono line `{YYYY-MM-DD} · {n}건`, then — when `HOLIDAYS[sel]` exists — one
 `text-xs text-rose-400` line `공휴일 · {name}` directly under it (never appended to the mono line, which the E2E
 asserts verbatim, and the `공휴일 · ` prefix keeps a bare name from reading like an event title), then the day's
-occurrences as `EventRow`s —
-the same rows in the same order as the list's groups, `완료 표시` / `이번 회차 취소` / `수정` included. A day with
-none reads `이 날짜에는 일정이 없어요.` The panel's `일정 추가` calls `onAdd(selected)`, so `EventModal` opens in
-add mode with its date input already on that day (`useState(event?.date || initialDate || "")`) and registering
-stores the event on it.
+occurrences as `EventRow`s, `완료 표시` / `이번 회차 취소` / `수정` included — the same component `할 일`'s
+`EventDetailModal` renders for a single occurrence ([tasks.md](tasks.md)). A day with none reads `이 날짜에는
+일정이 없어요.` The panel's `일정 추가` calls `onAdd(selected)`, so `EventModal` opens in add mode with its date
+input already on that day (`useState(event?.date || initialDate || "")`) and registering stores the event on it.
 
 ### Selection and range
 | Action | Selection afterwards |
 |---|---|
-| entering the tab in `달력` view | today, in the current month |
+| entering the tab | today, in the current month |
 | tapping a day | that day; the panel follows immediately |
 | `‹` / `›` | the **1st** of the month moved to — keeping the old day would leave the panel on a date the shown month no longer answers for |
 | `오늘` | today, back in the current month |
 
 Paging is bounded by `CAL_RANGE_MONTHS = 24` months either side of today; at the edge the button is disabled
-(`opacity-30`), so `‹` cannot walk into years of empty grids. Past months are browsable and show **both** kinds
-— unlike the list's `지난 마감` window (`EVENT_PAST_DAYS`, deadlines only) — with `완료 표시` and `수정` still
-reachable: a schedule is also a record of what happened.
+(`opacity-30`), so `‹` cannot walk into years of empty grids. Past months are browsable and show **both** kinds,
+with `완료 표시` and `수정` still reachable: a schedule is also a record of what happened.
 
 ## `EventModal` (`modal.type: "event"`)
 One form for both modes: `새 일정` when opened from `일정 추가`, `일정 수정` when opened from a row (`modal.event`).
@@ -218,7 +200,7 @@ RFC decisions: [../design-docs/calendar-export.md](../design-docs/calendar-expor
 sheet and what each source contributes.
 
 ### `CalendarExportModal` (`modal.type: "calExport"`)
-`CalendarExportModal({ state, today, onClose, onExport })`, opened by the header button above, in both views.
+`CalendarExportModal({ state, today, onClose, onExport })`, opened by the header button above.
 Everything it shows is read live from `calendarExportOf(state, today, days)` (`useMemo` keyed on
 `[state, today, days]`) — the same function `buildIcs` calls to write the file, so the sheet cannot promise a
 count the export does not produce. Nothing here is stored: `remindAt` and `days` are `useState`, reset to their

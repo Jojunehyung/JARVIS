@@ -1,5 +1,5 @@
-// Daily assistant — due dates, the `실행` list's time-ordered groups, the briefing and the journal. The briefing
-// is opened from the `실행` header since 2026-09-15, and the journal, the weekly review and the assistant bridge
+// Daily assistant — due dates, the `할 일` list's time-ordered groups, the briefing and the journal. The briefing
+// is opened from the `할 일` header since 2026-09-15, and the journal, the weekly review and the assistant bridge
 // are reached through it. The assistant bridge and the weekly review are appended in phase C.
 module.exports = async (h) => {
   const { step, clickText, clickInModal, clickInModalExact, clickTab, hasText, expectText, todoRows, typeInto, setValue, openTaskModalFor, closeModal, sleep, page, errors } = h;
@@ -15,10 +15,10 @@ module.exports = async (h) => {
     await clickText(label);
     await sleep(ms);
   };
-  // Open the briefing from the `실행` header and tap one of its lines or buttons — the only manual way into the
+  // Open the briefing from the `할 일` header and tap one of its lines or buttons — the only manual way into the
   // journal and the weekly review once the daily auto-open has been dismissed.
   const fromBriefing = async (label) => {
-    await openFrom("실행", "브리핑 열기");
+    await openFrom("할 일", "브리핑 열기");
     await clickInModal(label);
   };
 
@@ -41,7 +41,7 @@ module.exports = async (h) => {
 
   await step("once task with a due date", async () => {
     await addDatedTask("저녁 요가 30분", 3);
-    await clickTab("실행");
+    await clickTab("할 일");
     await expectText("D-3");
   });
 
@@ -49,7 +49,7 @@ module.exports = async (h) => {
   // inside the group of that name, not merely somewhere on the screen.
   await step("overdue task shows as past due", async () => {
     await addDatedTask("밀린 독서 30분", -1);
-    await clickTab("실행");
+    await clickTab("할 일");
     const overdue = await todoRows("기한 지남");
     if (!overdue) throw new Error("the overdue group is missing from the list");
     if (!overdue.some((r) => r.title.includes("밀린 독서 30분"))) {
@@ -58,7 +58,7 @@ module.exports = async (h) => {
   });
 
   await step("the tasks tab keeps the D-3 item in a later group", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     const all = (await todoRows()) || [];
     const hit = all.filter((r) => r.title.includes("저녁 요가 30분"));
     if (!hit.length) throw new Error("the dated task is not listed: " + all.map((r) => `${r.group}/${r.title}`).join(" | "));
@@ -68,7 +68,7 @@ module.exports = async (h) => {
   // The list leads with what is already late: the overdue group comes first and holds the overdue task. The
   // three-day item staying out of that group is asserted by the step above.
   await step("the tasks tab leads with the overdue group", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     const rows = (await todoRows()) || [];
     if (rows[0]?.group !== "기한 지남" || !rows[0].title.includes("밀린 독서 30분")) {
       throw new Error("the first row is not the overdue task in the overdue group: " + rows.map((r) => `${r.group}/${r.title}`).join(" | "));
@@ -76,7 +76,7 @@ module.exports = async (h) => {
   });
 
   await step("the tasks tab opens the briefing and stamps it seen", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await clickText("브리핑 열기");
     await sleep(400);
     await expectText("오늘 브리핑 —");
@@ -126,7 +126,7 @@ module.exports = async (h) => {
   });
 
   await step("packet carries the goals, tasks and journal", async () => {
-    await openFrom("실행", "브리핑 열기");
+    await openFrom("할 일", "브리핑 열기");
     await clickInModal("AI에게 보내기");
     await sleep(400);
     const txt = await page.evaluate(() => document.querySelector(".fixed.inset-0 textarea")?.value || "");
@@ -205,7 +205,7 @@ module.exports = async (h) => {
   });
 
   await step("a reply without a JSON block is stored as text only", async () => {
-    await openFrom("실행", "브리핑 열기");
+    await openFrom("할 일", "브리핑 열기");
     await clickInModal("AI 답변 붙여넣기"); await sleep(400);
     await setValue(".fixed.inset-0 textarea", "오늘은 기한 지난 실행부터 처리해요. 제안할 실행은 없어요.");
     await clickInModalExact("답변 확인");
@@ -234,15 +234,14 @@ module.exports = async (h) => {
   });
 
   await step("briefing reflects the saved review", async () => {
-    await openFrom("실행", "브리핑 열기");
+    await openFrom("할 일", "브리핑 열기");
     await expectText("이번 주 리뷰 완료");
     await closeModal();
   });
 
   await step("the completed archive states its date and completes nothing", async () => {
-    // A daily task finished on an earlier day is finished, not open. Without an inert row the archive would
-    // draw a live checkbox, and tapping it there would complete the task for today — a list titled `완료`
-    // doubling as a second completion surface.
+    // A daily task finished on an earlier day is finished, not open. Its row leads with the completion date and its
+    // sheet offers no completion control — otherwise a list titled `완료` would double as a second completion surface.
     const yesterday = await dstrIn(-1);
     const title = await page.evaluate((y) => {
       const k = "liferpg-state-v1";
@@ -255,29 +254,35 @@ module.exports = async (h) => {
     }, yesterday);
     if (!title) throw new Error("no daily task to archive");
     await h.reload();
-    await clickTab("실행");
-    await clickText("완료");
+    await clickTab("할 일");
+    await h.clickExact("완료");
     await sleep(400);
     const before = await readState();
     const seen = await page.evaluate((t) => {
-      // An activity task renders its kind emoji before the title, so the row is matched on the tail.
-      const node = [...document.querySelectorAll(".text-sm.font-semibold")].find((n) => (n.innerText || "").trim().endsWith(t));
-      if (!node) return null;
-      let row = node;
-      for (let i = 0; i < 6 && row.parentElement; i++) {
-        row = row.parentElement;
-        if (/bg-zinc-950/.test(row.className || "") && /rounded-xl/.test(row.className || "")) break;
-      }
-      // The completion control is the row's first button; the trailing `X` deletes the record and stays live
-      // on purpose. Tap the completion control to prove it does nothing.
-      const first = [...row.querySelectorAll("button")][0] || null;
-      if (first) { first.scrollIntoView({ block: "center" }); first.click(); }
-      return { text: (row.innerText || "").replace(/\s+/g, " ").trim(), completeLive: first ? !first.disabled : null };
+      // The archive is the one section in `main` led by the `완료 {n}건 · 최근 {n}건` count line.
+      const sec = [...document.querySelectorAll("main section")].find((x) => /^완료 \d+건 · 최근 \d+건/.test((x.innerText || "").trim()));
+      const node = sec && [...sec.querySelectorAll(".text-sm.font-semibold")].find((n) => (n.innerText || "").trim() === t);
+      const row = node && node.closest("button");
+      if (!row) return null;
+      const lead = row.querySelector("span.font-mono");
+      const out = { text: (row.innerText || "").replace(/\s+/g, " ").trim(), lead: lead ? lead.innerText.trim() : "", controls: row.querySelectorAll("button,input").length };
+      row.scrollIntoView({ block: "center" });
+      row.click();
+      return out;
     }, title);
     if (!seen) throw new Error("the archive does not list the task completed yesterday: " + title);
-    if (!seen.text.includes(`완료 ${yesterday}`)) throw new Error("the archive row does not state its completion date: " + seen.text);
-    if (seen.completeLive !== false) throw new Error(`the archive row's completion control is live (${seen.completeLive}) — it can complete the task`);
+    if (seen.lead !== yesterday.slice(5)) throw new Error(`the archive row leads with "${seen.lead}", expected ${yesterday.slice(5)}: ` + seen.text);
+    if (seen.controls) throw new Error(`the archive row carries ${seen.controls} inner control(s)`);
     await sleep(500);
+    const sheet = await h.overlayText();
+    if (!sheet.includes("매일 · 완료 1회")) throw new Error("the archive sheet does not state the completion count: " + sheet.slice(0, 300));
+    const live = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      return !!ov && [...ov.querySelectorAll("button")].some((b) => (b.innerText || "").trim() === "완료하기");
+    });
+    if (live) throw new Error("the archive sheet offers the completion button — it can complete the task");
+    await closeModal();
+    await sleep(300);
     const after = await readState();
     const q = (after.tasks || []).find((x) => x.title === title);
     if ((q.doneDates || []).join() !== yesterday) throw new Error("the archive changed the completion record: " + JSON.stringify(q.doneDates));

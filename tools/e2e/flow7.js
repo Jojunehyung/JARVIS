@@ -10,8 +10,8 @@ module.exports = async (h) => {
     return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
   }, delta);
   const readState = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
-  // Occurrence rows come from the shared `rows` reader in run.js: for a repeat, `texts` carries the
-  // occurrence date next to the title so one occurrence is addressed rather than the whole event.
+  // Occurrence rows come from the shared `rows` reader in run.js, read off the calendar's selected-day panel: for a
+  // repeat, `texts` carries the occurrence date next to the title so one occurrence is addressed rather than the whole event.
   const openEventModal = async () => { await clickText("일정 추가"); await sleep(400); };
   // Register one event through the modal: a title, a day offset from today, and optionally a time,
   // the `마감` kind chip and a repeat chip (all of them Korean UI copy, used here as selectors).
@@ -26,195 +26,7 @@ module.exports = async (h) => {
     await sleep(700);
   };
 
-  await step("schedule tab starts empty", async () => {
-    await clickTab("일정");
-    await expectText("다가오는 일정");
-    await expectText("등록한 일정이 없어요");
-  });
-
-  await step("the form refuses an event without a title or a date", async () => {
-    await openEventModal();
-    await expectText("새 일정");
-    await clickInModalExact("등록");
-    const noTitle = await modalError();
-    if (!noTitle.includes("일정 이름을 입력해 주세요.")) errors.push("an event without a title was accepted: " + noTitle);
-    await typeInto("일정 이름", "면접 리허설");
-    await clickInModalExact("등록");
-    const noDate = await modalError();
-    if (!noDate.includes("날짜를 선택해 주세요.")) errors.push("an event without a date was accepted: " + noDate);
-    await closeModal();
-    const st = await readState();
-    if ((st.events || []).length) throw new Error("a rejected form stored an event anyway");
-  });
-
-  await step("appointment registers under its day group with its time", async () => {
-    const before = await readState();
-    await addEvent("면접 리허설", 1, { time: "14:00" });
-    await expectText("내일");
-    const r = await rows(["면접 리허설", await dstrIn(1)]);
-    if (r.rows.length !== 1) throw new Error(`appointment row count ${r.rows.length}, expected 1`);
-    if (!r.rows[0].includes("14:00")) throw new Error("the appointment row does not lead with its time: " + r.rows[0]);
-    const st = await readState();
-    const ev = (st.events || []).find((x) => x.title === "면접 리허설");
-    if (!ev) throw new Error("the event was not stored");
-    if (ev.goalId || ev.pts || ev.diff) throw new Error("the event carries task fields: " + JSON.stringify(ev));
-    if (st.tasks.length !== before.tasks.length) throw new Error(`registering an event changed the task count ${before.tasks.length} to ${st.tasks.length}`);
-  });
-
-  await step("deadline registers and shows its D-day", async () => {
-    await addEvent("원서 접수 마감", 3, { kind: "마감" });
-    const r = await rows(["원서 접수 마감", await dstrIn(3)]);
-    if (!r.rows.length) throw new Error("the deadline row is missing");
-    if (!r.rows[0].includes("D-3")) throw new Error("the deadline row does not lead with D-3: " + r.rows[0]);
-  });
-
-  await step("weekly repeat shows next week and collapses the later occurrences", async () => {
-    await addEvent("주간 스터디", 1, { time: "20:00", freq: "매주" });
-    const next = await rows(["주간 스터디", await dstrIn(8)]);
-    if (!next.rows.length) throw new Error("the weekly event has no occurrence on the same weekday next week");
-    if (!next.rows[0].includes("반복 매주")) throw new Error("the occurrence does not state its repeat: " + next.rows[0]);
-    // The later group keeps one row per event, so a weekly event shows twice: tomorrow and its earliest later date.
-    const all = await rows(["주간 스터디"]);
-    if (all.rows.length !== 2) throw new Error(`weekly event row count ${all.rows.length}, expected 2 (tomorrow plus the earliest later occurrence)`);
-    const st = await readState();
-    const saved = (st.events || []).find((x) => x.title === "주간 스터디");
-    if (saved.repeat?.freq !== "weekly") throw new Error("the repeat rule was not stored: " + JSON.stringify(saved.repeat));
-    for (const k of Object.keys(saved)) {
-      if (Array.isArray(saved[k]) && k !== "skip" && k !== "doneDates") throw new Error("derived occurrences were written into the save: " + k);
-    }
-  });
-
-  await step("completion mark flips the button and stores only the date", async () => {
-    const before = await readState();
-    const date = await dstrIn(3);
-    const r = await rows(["원서 접수 마감", date], "완료 표시");
-    if (!r.clicked) throw new Error("the deadline row has no completion button: " + r.rows.join(" | "));
-    await sleep(800);
-    const after = await rows(["원서 접수 마감", date]);
-    if (!after.rows[0]?.includes("완료 취소")) throw new Error("the button did not flip after the completion mark: " + after.rows.join(" | "));
-    const st = await readState();
-    const ev = st.events.find((x) => x.title === "원서 접수 마감");
-    if (!(ev.doneDates || []).includes(date)) throw new Error("the completed date was not stored: " + JSON.stringify(ev.doneDates));
-    if (st.act.streak !== before.act.streak) throw new Error(`an event changed the streak ${before.act.streak} to ${st.act.streak}`);
-    if (st.room.trophies.length !== before.room.trophies.length) throw new Error("an event created a trophy");
-    if (st.tasks.length !== before.tasks.length) throw new Error("an event changed the task list");
-  });
-
-  await step("cancelling one occurrence leaves the next one", async () => {
-    const date = await dstrIn(1);
-    const r = await rows(["주간 스터디", date], "이번 회차 취소");
-    if (!r.clicked) throw new Error("the repeating row has no cancel-occurrence button: " + r.rows.join(" | "));
-    await sleep(800);
-    const gone = await rows(["주간 스터디", date]);
-    if (gone.rows.length) throw new Error("the cancelled occurrence is still listed: " + gone.rows.join(" | "));
-    const kept = await rows(["주간 스터디", await dstrIn(8)]);
-    if (!kept.rows.length) throw new Error("the following occurrence disappeared with the cancelled one");
-    const st = await readState();
-    const ev = st.events.find((x) => x.title === "주간 스터디");
-    if (!(ev.skip || []).includes(date)) throw new Error("the cancelled date was not stored: " + JSON.stringify(ev.skip));
-  });
-
-  await step("editing changes the stored event and its row", async () => {
-    const r = await rows(["면접 리허설"], "수정");
-    if (!r.clicked) throw new Error("the appointment row has no edit button: " + r.rows.join(" | "));
-    await sleep(400);
-    await expectText("일정 수정");
-    await typeInto("일정 이름", "면접 리허설 2차");
-    await clickInModalExact("저장");
-    await sleep(800);
-    const after = await rows(["면접 리허설 2차"]);
-    if (after.rows.length !== 1) throw new Error(`row count for the edited title ${after.rows.length}, expected 1`);
-    const st = await readState();
-    if (st.events.some((x) => x.title === "면접 리허설")) throw new Error("the old title is still stored");
-  });
-
-  await step("deleting removes the event from the tab", async () => {
-    const r = await rows(["면접 리허설 2차"], "수정");
-    if (!r.clicked) throw new Error("the renamed row has no edit button");
-    await sleep(400);
-    await clickInModalExact("삭제");
-    await sleep(800);
-    const after = await rows(["면접 리허설 2차"]);
-    if (after.rows.length) throw new Error("the deleted event is still listed: " + after.rows.join(" | "));
-    const st = await readState();
-    if (st.events.some((x) => x.title === "면접 리허설 2차")) throw new Error("the deleted event is still stored");
-  });
-
-  await step("briefing states the schedule between the tasks and the streak", async () => {
-    await clickTab("일정");
-    await addEvent("서류 제출 마감", 0, { kind: "마감" });
-    await clickTab("실행");
-    await clickText("브리핑 열기");
-    await sleep(500);
-    const brief = await overlayText();
-    if (!brief.includes("오늘 일정")) throw new Error("the briefing has no schedule section: " + brief.slice(0, 200));
-    if (!brief.includes("서류 제출 마감 — 오늘 마감")) throw new Error("the deadline of the day is not stated: " + brief.slice(0, 300));
-    const pos = ["오늘 할 일", "오늘 일정", "연속 기록"].map((t) => brief.indexOf(t));
-    if (!(pos[0] < pos[1] && pos[1] < pos[2])) throw new Error("the schedule section is not between the tasks and the streak: " + pos.join(","));
-  });
-
-  await step("the briefing line opens the schedule tab", async () => {
-    await clickInModal("서류 제출 마감");
-    await sleep(500);
-    const open = await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length);
-    if (open) { await closeModal(); throw new Error("the briefing stayed open after its schedule line was tapped"); }
-    await expectText("다가오는 일정");
-  });
-
-  /* The same occurrence in the `실행` list: the to-do tab lists an event but never gives it a task's controls.
-     Ticking and un-ticking it here is the schedule tab's own `toggleEventDone`, so the save is left as it was
-     and the packet assertions below still see an open deadline. */
-  await step("the tasks tab lists today's deadline and completes it without a task path", async () => {
-    await clickTab("실행");
-    const open = (await todoRows("오늘")) || [];
-    const ev = open.find((r) => r.title === "서류 제출 마감");
-    if (!ev) throw new Error("today's deadline is not in the today group: " + open.map((r) => r.title).join(" | "));
-    if (!ev.text.includes("마감") || !ev.text.includes("목표 기여 없음")) {
-      throw new Error("the deadline row does not state its kind and that it moves no goal: " + ev.text);
-    }
-    // The rule boundary, read off the row: an event keeps the schedule tab's two buttons and carries no
-    // completion control of its own — no checkbox, no lock, no evidence path, no payout (rules 1, 10, 16).
-    if (ev.buttons.join("·") !== "완료 표시·수정") throw new Error("the deadline row's buttons: " + JSON.stringify(ev.buttons));
-    if (ev.controls !== ev.buttons.length) throw new Error(`the deadline row carries ${ev.controls - ev.buttons.length} unlabelled control(s)`);
-    await todoRows("오늘", { title: "서류 제출 마감", button: "완료 표시" });
-    await sleep(700);
-    const done = (await todoRows("오늘 완료")) || [];
-    if (!done.some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence did not move into the done-today group: " + done.map((r) => r.title).join(" | "));
-    if (((await todoRows("오늘")) || []).some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence is still listed as open");
-    await todoRows("오늘 완료", { title: "서류 제출 마감", button: "완료 취소" });
-    await sleep(700);
-    const back = (await todoRows("오늘")) || [];
-    if (!back.some((r) => r.title === "서류 제출 마감")) throw new Error("un-ticking did not return the deadline to the today group: " + back.map((r) => r.title).join(" | "));
-  });
-
-  /* Today's figure where it now lives: the removed home line counted `서류 제출 마감` twice (today's occurrence and a
-     deadline inside three days). The tab's own counts line states today's occurrence and no missed deadline; the
-     briefing's `— 오늘 마감` line and the `실행` today-group step above still assert the deadline itself. */
-  await step("the schedule tab counts line states today's deadline", async () => {
-    await clickTab("일정");
-    const line = await page.evaluate(() => {
-      const p = [...document.querySelectorAll("main p")].find((x) => /^오늘 \d+건 · 이번 주 \d+건 · 지난 마감 \d+건$/.test((x.innerText || "").replace(/\s+/g, " ").trim()));
-      return p ? p.innerText.replace(/\s+/g, " ").trim() : "";
-    });
-    if (!line.startsWith("오늘 1건 · ") || !line.endsWith("지난 마감 0건")) throw new Error("schedule tab counts line: " + JSON.stringify(line));
-  });
-
-  await step("the assistant packet lists the upcoming schedule", async () => {
-    await clickTab("실행");
-    await clickText("브리핑 열기");
-    await sleep(500);
-    await clickInModal("AI에게 보내기");
-    await sleep(500);
-    const txt = await page.evaluate(() => document.querySelector(".fixed.inset-0 textarea")?.value || "");
-    if (!txt.includes("## 다가오는 일정 (14일)")) throw new Error("the packet has no schedule section");
-    if (txt.indexOf("## 다가오는 일정 (14일)") < txt.indexOf("## 열린 실행")) throw new Error("the schedule section is not placed after the open tasks");
-    if (!txt.includes("서류 제출 마감")) throw new Error("the deadline of the day is missing from the packet");
-    if (!txt.includes("주간 스터디 · 반복 매주")) throw new Error("the repeating appointment is missing its repeat marker in the packet");
-    if (txt.length > 4000) errors.push("packet longer than the 4000-char cap: " + txt.length);
-    await closeModal();
-  });
-
-  /* ── Calendar view (2026-09-11) ──────────────────────────────────────────────────────────────────
+  /* ── Calendar readers (2026-09-11; the tab is calendar-only since 2026-09-16) ──────────────────────
      The grid is read structurally: leading and trailing cells are plain `div`s without a day number, so
      only the day buttons come back and a bare number inside a panel row can never pass for a cell. */
   const gridCells = () => page.evaluate(() => {
@@ -284,18 +96,242 @@ module.exports = async (h) => {
     await sleep(350);
   };
   const addButtonCount = () => page.evaluate(() => [...document.querySelectorAll("button")].filter((b) => (b.innerText || "").trim().includes("일정 추가")).length);
-  // Reload, reopen the tab, and report which view it came back on and which one the save holds.
-  const reopenTab = async () => {
-    await h.reload();
+  // Show the month holding `date` and select that day, so the panel lists exactly that day's occurrences.
+  // The tab has no list view any more, so every occurrence is read off the selected day's panel.
+  const showDay = async (date) => {
     await clickTab("일정");
-    const st = await readState();
-    return { calendar: await hasText("선택한 날짜"), stored: st.ui?.scheduleView };
+    const ym = (y, m) => y * 12 + (m - 1);
+    const want = ym(Number(date.slice(0, 4)), Number(date.slice(5, 7)));
+    for (let i = 0; ; i++) {
+      const m = (await monthLabel()).match(/^(\d{4})년 (\d{1,2})월$/);
+      if (!m) throw new Error("the calendar month header is missing");
+      const diff = want - ym(Number(m[1]), Number(m[2]));
+      if (diff === 0) break;
+      if (i >= 2) throw new Error(`the calendar is still ${diff} month(s) away from ${date} after two presses`);
+      await clickExact(diff > 0 ? "›" : "‹");
+    }
+    await pickDay(Number(date.slice(8)));
   };
+
+  await step("schedule tab opens on the calendar and starts empty", async () => {
+    await clickTab("일정");
+    await expectText("다가오는 일정");
+    await expectText("이 날짜에는 일정이 없어요.");
+    const counts = await page.evaluate(() => (document.body.innerText.match(/오늘 \d+건 · 이번 주 \d+건 · 지난 마감 \d+건/) || [""])[0]);
+    if (counts !== "오늘 0건 · 이번 주 0건 · 지난 마감 0건") throw new Error("schedule tab counts line: " + JSON.stringify(counts));
+    if (await hasText("목록")) throw new Error("the schedule tab still offers a list view");
+  });
+
+  await step("the form refuses an event without a title or a date", async () => {
+    await openEventModal();
+    await expectText("새 일정");
+    await clickInModalExact("등록");
+    const noTitle = await modalError();
+    if (!noTitle.includes("일정 이름을 입력해 주세요.")) errors.push("an event without a title was accepted: " + noTitle);
+    await typeInto("일정 이름", "면접 리허설");
+    // The only add button is the calendar panel's, which opens on the selected day — clear it to test the refusal.
+    await setValue('.fixed.inset-0 input[type="date"]', "");
+    await clickInModalExact("등록");
+    const noDate = await modalError();
+    if (!noDate.includes("날짜를 선택해 주세요.")) errors.push("an event without a date was accepted: " + noDate);
+    await closeModal();
+    const st = await readState();
+    if ((st.events || []).length) throw new Error("a rejected form stored an event anyway");
+  });
+
+  await step("appointment registers on its day with its time", async () => {
+    const before = await readState();
+    await addEvent("면접 리허설", 1, { time: "14:00" });
+    await showDay(await dstrIn(1));
+    const r = await rows(["면접 리허설", await dstrIn(1)]);
+    if (r.rows.length !== 1) throw new Error(`appointment row count ${r.rows.length}, expected 1`);
+    if (!r.rows[0].includes("14:00")) throw new Error("the appointment row does not lead with its time: " + r.rows[0]);
+    const st = await readState();
+    const ev = (st.events || []).find((x) => x.title === "면접 리허설");
+    if (!ev) throw new Error("the event was not stored");
+    if (ev.goalId || ev.pts || ev.diff) throw new Error("the event carries task fields: " + JSON.stringify(ev));
+    if (st.tasks.length !== before.tasks.length) throw new Error(`registering an event changed the task count ${before.tasks.length} to ${st.tasks.length}`);
+  });
+
+  await step("deadline registers and shows its D-day", async () => {
+    await addEvent("원서 접수 마감", 3, { kind: "마감" });
+    await showDay(await dstrIn(3));
+    const r = await rows(["원서 접수 마감", await dstrIn(3)]);
+    if (!r.rows.length) throw new Error("the deadline row is missing");
+    if (!r.rows[0].includes("D-3")) throw new Error("the deadline row does not lead with D-3: " + r.rows[0]);
+  });
+
+  await step("weekly repeat marks both weeks and the to-do list collapses the later ones", async () => {
+    await addEvent("주간 스터디", 1, { time: "20:00", freq: "매주" });
+    for (const delta of [1, 8]) {
+      await showDay(await dstrIn(delta));
+      const day = await rows(["주간 스터디"]);
+      if (day.rows.length !== 1) throw new Error(`the weekly event shows ${day.rows.length} rows on day +${delta}, expected 1`);
+      if (!day.rows[0].includes("반복 매주")) throw new Error("the occurrence does not state its repeat: " + day.rows[0]);
+    }
+    // The to-do list's later group keeps one row per event, so a weekly event shows once tomorrow and at most once later.
+    await clickTab("할 일");
+    const todo = (await todoRows()) || [];
+    const inTomorrow = todo.filter((r) => r.group === "내일" && r.title === "주간 스터디").length;
+    const inLater = todo.filter((r) => r.group === "이후" && r.title === "주간 스터디").length;
+    if (inTomorrow !== 1) throw new Error(`the weekly event shows ${inTomorrow} rows in the tomorrow group, expected 1`);
+    if (inLater > 1) throw new Error(`the weekly event shows ${inLater} rows in the later group, expected at most 1 (the collapse)`);
+    const st = await readState();
+    const saved = (st.events || []).find((x) => x.title === "주간 스터디");
+    if (saved.repeat?.freq !== "weekly") throw new Error("the repeat rule was not stored: " + JSON.stringify(saved.repeat));
+    for (const k of Object.keys(saved)) {
+      if (Array.isArray(saved[k]) && k !== "skip" && k !== "doneDates") throw new Error("derived occurrences were written into the save: " + k);
+    }
+  });
+
+  await step("completion mark flips the button and stores only the date", async () => {
+    const before = await readState();
+    const date = await dstrIn(3);
+    await showDay(date);
+    const r = await rows(["원서 접수 마감", date], "완료 표시");
+    if (!r.clicked) throw new Error("the deadline row has no completion button: " + r.rows.join(" | "));
+    await sleep(800);
+    const after = await rows(["원서 접수 마감", date]);
+    if (!after.rows[0]?.includes("완료 취소")) throw new Error("the button did not flip after the completion mark: " + after.rows.join(" | "));
+    const st = await readState();
+    const ev = st.events.find((x) => x.title === "원서 접수 마감");
+    if (!(ev.doneDates || []).includes(date)) throw new Error("the completed date was not stored: " + JSON.stringify(ev.doneDates));
+    if (st.act.streak !== before.act.streak) throw new Error(`an event changed the streak ${before.act.streak} to ${st.act.streak}`);
+    if (st.room.trophies.length !== before.room.trophies.length) throw new Error("an event created a trophy");
+    if (st.tasks.length !== before.tasks.length) throw new Error("an event changed the task list");
+  });
+
+  await step("cancelling one occurrence leaves the next one", async () => {
+    const date = await dstrIn(1);
+    await showDay(date);
+    const r = await rows(["주간 스터디", date], "이번 회차 취소");
+    if (!r.clicked) throw new Error("the repeating row has no cancel-occurrence button: " + r.rows.join(" | "));
+    await sleep(800);
+    const gone = await rows(["주간 스터디", date]);
+    if (gone.rows.length) throw new Error("the cancelled occurrence is still listed: " + gone.rows.join(" | "));
+    await showDay(await dstrIn(8));
+    const kept = await rows(["주간 스터디", await dstrIn(8)]);
+    if (!kept.rows.length) throw new Error("the following occurrence disappeared with the cancelled one");
+    const st = await readState();
+    const ev = st.events.find((x) => x.title === "주간 스터디");
+    if (!(ev.skip || []).includes(date)) throw new Error("the cancelled date was not stored: " + JSON.stringify(ev.skip));
+  });
+
+  await step("editing changes the stored event and its row", async () => {
+    await showDay(await dstrIn(1));
+    const r = await rows(["면접 리허설"], "수정");
+    if (!r.clicked) throw new Error("the appointment row has no edit button: " + r.rows.join(" | "));
+    await sleep(400);
+    await expectText("일정 수정");
+    await typeInto("일정 이름", "면접 리허설 2차");
+    await clickInModalExact("저장");
+    await sleep(800);
+    const after = await rows(["면접 리허설 2차"]);
+    if (after.rows.length !== 1) throw new Error(`row count for the edited title ${after.rows.length}, expected 1`);
+    const st = await readState();
+    if (st.events.some((x) => x.title === "면접 리허설")) throw new Error("the old title is still stored");
+  });
+
+  await step("deleting removes the event from the tab", async () => {
+    await showDay(await dstrIn(1));
+    const r = await rows(["면접 리허설 2차"], "수정");
+    if (!r.clicked) throw new Error("the renamed row has no edit button");
+    await sleep(400);
+    await clickInModalExact("삭제");
+    await sleep(800);
+    const after = await rows(["면접 리허설 2차"]);
+    if (after.rows.length) throw new Error("the deleted event is still listed: " + after.rows.join(" | "));
+    const st = await readState();
+    if (st.events.some((x) => x.title === "면접 리허설 2차")) throw new Error("the deleted event is still stored");
+  });
+
+  await step("briefing states the schedule between the tasks and the streak", async () => {
+    await clickTab("일정");
+    await addEvent("서류 제출 마감", 0, { kind: "마감" });
+    await clickTab("할 일");
+    await clickText("브리핑 열기");
+    await sleep(500);
+    const brief = await overlayText();
+    if (!brief.includes("오늘 일정")) throw new Error("the briefing has no schedule section: " + brief.slice(0, 200));
+    if (!brief.includes("서류 제출 마감 — 오늘 마감")) throw new Error("the deadline of the day is not stated: " + brief.slice(0, 300));
+    const pos = ["오늘 할 일", "오늘 일정", "연속 기록"].map((t) => brief.indexOf(t));
+    if (!(pos[0] < pos[1] && pos[1] < pos[2])) throw new Error("the schedule section is not between the tasks and the streak: " + pos.join(","));
+  });
+
+  await step("the briefing line opens the schedule tab", async () => {
+    await clickInModal("서류 제출 마감");
+    await sleep(500);
+    const open = await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length);
+    if (open) { await closeModal(); throw new Error("the briefing stayed open after its schedule line was tapped"); }
+    await expectText("다가오는 일정");
+    const line = await panelLine();
+    if (!line.startsWith(await dstrIn(0))) throw new Error("the schedule tab did not open with today selected: " + JSON.stringify(line));
+  });
+
+  /* The same occurrence in the `할 일` list: a compact row with no controls that opens the event sheet. The sheet's
+     actions are the schedule's own `EventRow` buttons (`toggleEventDone`), so ticking and un-ticking here leaves the
+     save as it was and the packet assertions below still see an open deadline. */
+  await step("the to-do list lists today's deadline and ticks it only through its event sheet", async () => {
+    await clickTab("할 일");
+    const open = (await todoRows("오늘")) || [];
+    const ev = open.find((r) => r.title === "서류 제출 마감");
+    if (!ev) throw new Error("today's deadline is not in the today group: " + open.map((r) => r.title).join(" | "));
+    if (!ev.text.includes("D-DAY") || !ev.text.includes("목표 기여 없음")) {
+      throw new Error("the deadline row does not lead with D-DAY and state that it moves no goal: " + ev.text);
+    }
+    // The rule boundary, read off the row: no checkbox, no lock, no evidence path, no payout (rules 1, 10, 16).
+    if (ev.controls !== 0) throw new Error(`the deadline row carries ${ev.controls} inner control(s): ` + JSON.stringify(ev.buttons));
+    await todoRows("오늘", { title: "서류 제출 마감" });
+    await sleep(500);
+    const sheet = await overlayText();
+    for (const t of ["일정 — 서류 제출 마감", "완료 표시", "수정", "목표 기여 없음 — 일정은 기록이라 점수와 목표에 반영되지 않아요."]) {
+      if (!sheet.includes(t)) throw new Error(`the event sheet does not state "${t}": ` + sheet.slice(0, 300));
+    }
+    if (sheet.includes("완료하기")) throw new Error("the event sheet offers the task completion button");
+    await clickInModalExact("완료 표시");
+    await closeModal();
+    const done = (await todoRows("오늘 완료")) || [];
+    if (!done.some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence did not move into the done-today group: " + done.map((r) => r.title).join(" | "));
+    if (((await todoRows("오늘")) || []).some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence is still listed as open");
+    await todoRows("오늘 완료", { title: "서류 제출 마감" });
+    await sleep(500);
+    await clickInModalExact("완료 취소");
+    await closeModal();
+    const back = (await todoRows("오늘")) || [];
+    if (!back.some((r) => r.title === "서류 제출 마감")) throw new Error("un-ticking did not return the deadline to the today group: " + back.map((r) => r.title).join(" | "));
+  });
+
+  /* Today's figure where it now lives: the removed home line counted `서류 제출 마감` twice (today's occurrence and a
+     deadline inside three days). The tab's own counts line states today's occurrence and no missed deadline; the
+     briefing's `— 오늘 마감` line and the `할 일` today-group step above still assert the deadline itself. */
+  await step("the schedule tab counts line states today's deadline", async () => {
+    await clickTab("일정");
+    const line = await page.evaluate(() => {
+      const p = [...document.querySelectorAll("main p")].find((x) => /^오늘 \d+건 · 이번 주 \d+건 · 지난 마감 \d+건$/.test((x.innerText || "").replace(/\s+/g, " ").trim()));
+      return p ? p.innerText.replace(/\s+/g, " ").trim() : "";
+    });
+    if (!line.startsWith("오늘 1건 · ") || !line.endsWith("지난 마감 0건")) throw new Error("schedule tab counts line: " + JSON.stringify(line));
+  });
+
+  await step("the assistant packet lists the upcoming schedule", async () => {
+    await clickTab("할 일");
+    await clickText("브리핑 열기");
+    await sleep(500);
+    await clickInModal("AI에게 보내기");
+    await sleep(500);
+    const txt = await page.evaluate(() => document.querySelector(".fixed.inset-0 textarea")?.value || "");
+    if (!txt.includes("## 다가오는 일정 (14일)")) throw new Error("the packet has no schedule section");
+    if (txt.indexOf("## 다가오는 일정 (14일)") < txt.indexOf("## 열린 실행")) throw new Error("the schedule section is not placed after the open tasks");
+    if (!txt.includes("서류 제출 마감")) throw new Error("the deadline of the day is missing from the packet");
+    if (!txt.includes("주간 스터디 · 반복 매주")) throw new Error("the repeating appointment is missing its repeat marker in the packet");
+    if (txt.length > 4000) errors.push("packet longer than the 4000-char cap: " + txt.length);
+    await closeModal();
+  });
+
   let freeDate = ""; // the empty day the panel line and the prefilled add are checked on
 
-  await step("the calendar view opens on this month with its weekday header", async () => {
+  await step("the calendar opens on this month with its weekday header", async () => {
     await clickTab("일정");
-    await clickExact("달력");
     await expectText("선택한 날짜");
     const head = await weekdayCells();
     const want = ["일", "월", "화", "수", "목", "금", "토"];
@@ -307,16 +343,24 @@ module.exports = async (h) => {
     const dim = await daysThisMonth();
     if (cells.length !== dim) throw new Error(`tappable day cells ${cells.length}, expected ${dim} (the padding cells must stay inert)`);
     const adds = await addButtonCount();
-    if (adds !== 1) throw new Error(`add-event buttons in calendar view: ${adds}, expected 1 (the header button is hidden here)`);
-    const st = await readState();
-    if (st.ui?.scheduleView !== "calendar") throw new Error("the chosen view was not stored: " + JSON.stringify(st.ui));
+    if (adds !== 1) throw new Error(`add-event buttons on the schedule tab: ${adds}, expected 1 (the panel's own)`);
   });
 
-  await step("the chosen view survives a reload", async () => {
-    const back = await reopenTab();
-    if (!back.calendar) throw new Error("the tab reopened on the list after a reload");
-    if (await hasText("이후")) throw new Error("the list groups are still rendered in calendar view");
-    if (back.stored !== "calendar") throw new Error("the stored view after a reload: " + back.stored);
+  // `ui.scheduleView` is retired and read by nothing: a save that still holds "list" opens on the calendar all the same,
+  // and the v22 block drops the key on load. The plant marks the save v21 — a save already at v22 never runs that block.
+  await step("a save that stored the list view opens on the calendar", async () => {
+    await page.evaluate(() => {
+      const st = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      st.ui = { ...(st.ui || {}), scheduleView: "list" };
+      st.v = 21;
+      localStorage.setItem("liferpg-state-v1", JSON.stringify(st));
+    });
+    await h.reload();
+    await clickTab("일정");
+    await expectText("선택한 날짜");
+    if (await hasText("목록")) throw new Error("a list view came back from the stored preference");
+    const st = await readState();
+    if ("scheduleView" in (st.ui || {})) throw new Error("the retired schedule view survived the load: " + JSON.stringify(st.ui));
   });
 
   await step("today's cell marks its deadline and the panel opens on today", async () => {
@@ -332,7 +376,7 @@ module.exports = async (h) => {
     if (line !== want) throw new Error(`panel line "${line}" disagrees with the cell markers ${JSON.stringify(cur)}`);
   });
 
-  await step("the selected day's panel renders the list's own row", async () => {
+  await step("the selected day's panel renders the full event row", async () => {
     const today = await dstrIn(0);
     const r = await rows(["서류 제출 마감", today]);
     if (r.rows.length !== 1) throw new Error(`panel rows for today ${r.rows.length}, expected 1`);
@@ -488,16 +532,14 @@ module.exports = async (h) => {
     if (await coverageNote()) throw new Error("the current month shows the coverage note — extend the holiday table past this year");
   });
 
-  await step("the list view comes back with its groups and counts", async () => {
-    await clickExact("목록");
-    await expectText("다가오는 일정");
-    await expectText("이후");
-    if (await hasText("선택한 날짜")) throw new Error("the calendar is still rendered in list view");
+  await step("no list view remains", async () => {
+    await clickTab("일정");
+    const chips = await page.evaluate(() => [...document.querySelectorAll("button")]
+      .map((b) => (b.innerText || "").trim()).filter((t) => t === "목록" || t === "달력"));
+    if (chips.length) throw new Error("view chips are still rendered: " + chips.join(", "));
+    const adds = await addButtonCount();
+    if (adds !== 1) throw new Error(`add-event buttons on the schedule tab: ${adds}, expected 1`);
     const counts = await page.evaluate(() => (document.body.innerText.match(/오늘 \d+건 · 이번 주 \d+건 · 지난 마감 \d+건/) || [""])[0]);
-    if (!counts) throw new Error("the counts line is missing from the list view");
-    const back = await reopenTab();
-    if (back.calendar) throw new Error("the tab reopened on the calendar after the list was chosen");
-    await expectText("다가오는 일정");
-    if (back.stored !== "list") throw new Error("the stored view after a reload: " + back.stored);
+    if (!counts) throw new Error("the counts line is missing from the schedule tab");
   });
 };

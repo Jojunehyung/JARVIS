@@ -1,6 +1,6 @@
 // Deep flows — photo evidence submission, study output verification, activity logs (reading, exercise, meetings), promotion, role model, migration
 module.exports = async (h) => {
-  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, completeQuest, closeModal, sleep, page, errors, attach, addKindTask, submitPhotoEvidence, logActivity } = h;
+  const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, completeQuest, closeModal, sleep, page, errors, attach, addKindTask, submitPhotoEvidence, logActivity, openTodo, todoRows, overlayText } = h;
 
   // ── Certification milestone → certificate photo submission (evidence gate)
   await step("goals tab → one-click cert KR milestone registration", async () => {
@@ -10,7 +10,7 @@ module.exports = async (h) => {
     await sleep(1200); await closeModal();
   });
   await step("tasks tab — certification milestone present", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await expectText("전기기사");
   });
   await step("evidence modal — submit blocked without a photo", async () => {
@@ -26,16 +26,17 @@ module.exports = async (h) => {
     await attach();
     await clickInModal("제출하고 완료");
     await sleep(1200); await closeModal();
-    await clickTab("실행");
+    await clickTab("할 일");
     await assertDone("전기기사");
   });
   await step("evidence viewer — stored certificate photo shown", async () => {
-    await clickTab("실행");
-    const opened = await page.evaluate(() => {
-      const b = [...document.querySelectorAll("button")].find((x) => x.innerText.trim() === "증거 보기");
-      if (!b) return false; b.click(); return true;
-    });
-    if (!opened) throw new Error("evidence view button not found");
+    await clickTab("할 일");
+    await openTodo("전기기사 취득");
+    const sheet = await overlayText();
+    for (const t of ["합격증 사진 필수", "증거 기록"]) {
+      if (!sheet.includes(t)) throw new Error(`the certificate task sheet does not state "${t}": ` + sheet.slice(0, 300));
+    }
+    await clickInModalExact("증거 보기");
     await sleep(900);
     await expectText("증거 —");
     const imgs = await page.evaluate(() => [...document.querySelectorAll(".fixed.inset-0 img")].map((i) => (i.src || "").slice(0, 30)));
@@ -45,6 +46,48 @@ module.exports = async (h) => {
     await closeModal();
   });
   await shot("cert-done");
+
+  // A to-do row is one button: a lead chip, the title and at most one marker. Everything else lives in the sheet.
+  await step("to-do rows show a lead chip, the title and at most one marker", async () => {
+    await clickTab("할 일");
+    const all = (await todoRows()) || [];
+    if (!all.length) throw new Error("the to-do list has no rows to check");
+    const st = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")));
+    const liveGoals = new Set((st.goals || []).map((g) => g.id));
+    const goalTitles = new Set((st.tasks || []).filter((q) => q.goalId && liveGoals.has(q.goalId)).map((q) => q.title));
+    const recordTitles = new Set([...(st.events || []).map((e) => e.title), ...(st.deals || []).map((d) => `${d.client} ${d.title}`)]);
+    for (const r of all) {
+      if (r.controls !== 0) throw new Error(`the row "${r.title}" carries ${r.controls} inner control(s)`);
+      for (const t of ["🎯", "직무 적합", "증거 필요", "산출물검증", "증거 보기"]) {
+        if (r.text.includes(t)) throw new Error(`the row "${r.title}" still prints "${t}": ` + r.text);
+      }
+      if (goalTitles.has(r.title) && r.text.includes("목표 기여 없음")) throw new Error("a row that serves a goal says it serves none: " + r.text);
+      if (recordTitles.has(r.title) && !r.text.includes("목표 기여 없음")) throw new Error("an event or business row hides that it serves no goal: " + r.text);
+    }
+  });
+
+  /* The sheet holds what the row leaves out. `설계 실습 1시간` was completed today in flow.js, so its sheet is closed:
+     it states the facts and offers `삭제` but no completion control. */
+  await step("the task sheet states goal, area, type, difficulty and evidence", async () => {
+    await clickTab("할 일");
+    const goal = await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      const q = (s.tasks || []).find((x) => x.title === "설계 실습 1시간");
+      return q ? ((s.goals || []).find((g) => g.id === q.goalId)?.title || null) : null;
+    });
+    if (!goal) throw new Error("the daily task or its goal is not stored");
+    await openTodo("설계 실습 1시간");
+    const sheet = await overlayText();
+    for (const t of ["상태", "기한", "목표", "영역", "유형", "난이도", "증거", "삭제", goal, "매일 · 완료 1회 · 오늘 완료"]) {
+      if (!sheet.includes(t)) throw new Error(`the task sheet does not state "${t}": ` + sheet.slice(0, 300));
+    }
+    const hasComplete = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      return !!ov && [...ov.querySelectorAll("button")].some((b) => (b.innerText || "").trim() === "완료하기");
+    });
+    if (hasComplete) throw new Error("the sheet of a task done today still offers the completion button");
+    await closeModal();
+  });
 
   // ── Study task (output verification)
   await step("register study milestone", async () => {
@@ -59,7 +102,7 @@ module.exports = async (h) => {
     await sleep(600); await closeModal();
   });
   await step("study verification modal — summary and new knowledge", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await completeQuest("회로이론 3장");
     await sleep(300);
     await typeInto("핵심 주장", "노드 해석과 메시 해석의 적용 조건을 정리했고 실무 회로 예제로 검산했다");
@@ -115,7 +158,7 @@ module.exports = async (h) => {
     await sleep(800); await closeModal();
   });
   await step("role-model proximity sits under the CV and matches roleGap", async () => {
-    await clickTab("홈");
+    await clickTab("프로필");
     await sleep(300);
     // The proximity line is the last block on home, and its number must be the one `roleGap` computes from the save.
     const res = await page.evaluate(() => {
@@ -141,7 +184,7 @@ module.exports = async (h) => {
   await shot("rolemodel");
 
   await step("CV grade rows are one line each and open the promotion gate", async () => {
-    await clickTab("홈");
+    await clickTab("프로필");
     await sleep(300);
     const before = await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
@@ -165,8 +208,8 @@ module.exports = async (h) => {
 
   // The CV counts what the save holds — declared and earned certifications together — and the wall sheet it opens
   // holds every item those counts stand for.
-  await step("the CV states held credentials and record counts, and the wall lists every area", async () => {
-    await clickTab("홈");
+  await step("the CV states held credentials without difficulty figures, and the wall lists every area", async () => {
+    await clickTab("프로필");
     await sleep(300);
     const res = await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
@@ -183,6 +226,7 @@ module.exports = async (h) => {
     if (res.held.length < 2) throw new Error("fewer than two certifications are held, so the declared-plus-earned union is not exercised: " + JSON.stringify(res.held));
     const want = [`자격 ${res.held.length}건`, ...res.held, `시험 ${res.exams}건`, `트로피 ${res.trophies}개 · 검증된 성취 ${res.achievements}건`];
     for (const t of want) if (!res.cv.includes(t)) throw new Error(`the CV does not state "${t}": ` + res.cv);
+    if (/D\d{1,3}/.test(res.cv)) throw new Error("the CV still prints a difficulty figure: " + res.cv);
     const cvLines = (res.cv.match(/검증된 성취/g) || []).length;
     if (cvLines !== 1) throw new Error(`the CV states the verified-achievement count ${cvLines} times, expected once`);
     await clickText("검증된 성취");
@@ -197,7 +241,7 @@ module.exports = async (h) => {
 
   // ── Catalogue exam mode
   await step("catalogue — exam tab", async () => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await clickText("도감"); await sleep(400);
     await clickText("시험"); await sleep(400);
     await expectText("TOEIC");

@@ -54,13 +54,14 @@ const clickInModal = async (text) => {
   if (ok !== "ok") throw new Error(`click inside modal failed (${ok}): ${text}`);
   await sleep(400);
 };
-// Verify the task really shows as completed — the title node's sibling text must carry the "done" label (Korean UI copy)
+// Verify the task really shows as completed — the title node's parent is the compact row button, which carries the
+// `완료` lead chip once the task is done (Korean UI copy)
 const assertDone = async (title) => {
   const res = await page.evaluate((t) => {
     const nodes = [...document.querySelectorAll("div")].filter((d) => (d.innerText || "").trim().startsWith(t) && d.children.length === 0);
     const titleNode = nodes[0] || [...document.querySelectorAll("div")].filter((d) => (d.innerText || "").includes(t) && d.children.length === 0)[0];
     if (!titleNode) return "제목 노드 없음";
-    const row = titleNode.parentElement;                 // title + status line
+    const row = titleNode.parentElement;                 // the row button: lead chip + title + marker
     const txt = (row?.innerText || "");
     return /완료/.test(txt) ? "ok" : "미완료: " + txt.replace(/s+/g, " ").slice(0, 80);
   }, title);
@@ -113,23 +114,30 @@ const typeExact = async (placeholder, value) => {
   if (!el) throw new Error(`input not found (exact match): ${placeholder}`);
   await el.click({ clickCount: 3 }); await el.type(value, { delay: 8 });
 };
-// Click the complete button on a task card — walk up from the innermost node holding the title to the row that has buttons
+// Tap the to-do row whose title includes `title`: find the `.text-sm.font-semibold` title node inside `main` and walk up
+// to the enclosing row button (`bg-zinc-950` + `rounded-xl`). Rows carry no controls of their own, so this opens the
+// item's detail sheet. Returns false when no row matched.
+const tapTodoRow = (title) => page.evaluate((t) => {
+  const node = [...document.querySelectorAll("main .text-sm.font-semibold")].find((e) => (e.innerText || "").includes(t));
+  let row = node;
+  while (row && !(row.tagName === "BUTTON" && /bg-zinc-950/.test(row.className || "") && /rounded-xl/.test(row.className || ""))) row = row.parentElement;
+  if (!row) return false;
+  row.scrollIntoView({ block: "center" });
+  row.click();
+  return true;
+}, title);
+// Open a to-do row's detail sheet without completing anything.
+const openTodo = async (title) => {
+  if (!(await tapTodoRow(title))) throw new Error(`task row not found: ${title}`);
+  await sleep(450);
+};
+// Complete a task the only way the app allows: open its row's detail sheet and press `완료하기`, which runs the same
+// gate as before (a gated task opens its evidence, study or activity modal next).
 const completeQuest = async (title) => {
-  const r = await page.evaluate((t) => {
-    const nodes = [...document.querySelectorAll("div,span")].filter((e) => (e.innerText || "").includes(t));
-    const inner = nodes.filter((e) => !nodes.some((o) => o !== e && e.contains(o)));
-    if (!inner.length) return "카드 없음";
-    let row = inner[0];
-    for (let i = 0; i < 6 && row; i++) { if (row.querySelector("button")) break; row = row.parentElement; }
-    if (!row || !row.querySelector("button")) return "버튼 없음";
-    const btns = [...row.querySelectorAll("button")];
-    // first button that is not the delete (X) button = the completion checkbox or the lock (evidence) button
-    const btn = btns[0];
-    btn.click();
-    return "ok";
-  }, title);
-  if (r !== "ok") throw new Error(`task completion failed (${r}): ${title}`);
-  await sleep(600);
+  if (!(await tapTodoRow(title))) throw new Error(`task row not found: ${title}`);
+  await sleep(450);
+  try { await clickInModalExact("완료하기"); }
+  catch { throw new Error(`no completion button in the detail sheet: ${title}`); }
 };
 const typeInto = async (placeholder, value) => {
   const el = await page.$(`input[placeholder*="${placeholder}"], textarea[placeholder*="${placeholder}"]`);
@@ -201,16 +209,17 @@ const typeInto = async (placeholder, value) => {
     btn.click();
     return { rows: out, clicked: true };
   }, texts, label);
-  // The `실행` to-do list, read by group. Each group is a `<section>` led by its label and every row carries its
-  // title in a `.text-sm.font-semibold` node; all three row kinds share the same shell, so the walk up from the
-  // title stops on the shell and the buttons/inputs that come back are exactly that row's controls. `label` null
-  // reads every group. With `tap = { title, button }` the named button of that row is pressed — or the row itself
-  // when `button` is omitted — so a step addresses one row instead of the first same-named button on the screen.
+  // The `할 일` to-do list, read by group. Each group is a `<section>` led by its label and every row carries its
+  // title in a `.text-sm.font-semibold` node; all three row kinds share one shell — a single button with zero inner
+  // controls — so the walk up from the title stops on the shell and `controls` counts anything nested in it (it must
+  // be 0). `label` null reads every group. With `tap = { title }` and no `button`, the row itself is pressed, which
+  // opens its detail sheet; a step addresses one row instead of the first same-named text on the screen.
   const todoRows = (label = null, tap = null) => page.evaluate((l, tp) => {
     const labelOf = (s) => { const e = s.querySelector(".tracking-widest"); return e ? (e.innerText || "").trim() : null; };
     const secs = [...document.querySelectorAll("section")].filter((s) => labelOf(s) !== null && (l === null || labelOf(s) === l));
     if (l !== null && !secs.length) return null;
     const out = [];
+    let tapped = false; // only the first row of that title is pressed — two rows may share one title
     for (const sec of secs) {
       for (const node of sec.querySelectorAll(".text-sm.font-semibold")) {
         let row = node;
@@ -221,9 +230,9 @@ const typeInto = async (placeholder, value) => {
         }
         const btns = [...row.querySelectorAll("button")];
         const title = (node.innerText || "").trim();
-        if (tp && tp.title === title) {
+        if (tp && !tapped && tp.title === title) {
           const b = tp.button ? btns.find((x) => (x.innerText || "").trim() === tp.button) : row.tagName === "BUTTON" ? row : null;
-          if (b) { b.scrollIntoView({ block: "center" }); b.click(); }
+          if (b) { b.scrollIntoView({ block: "center" }); b.click(); tapped = true; }
         }
         out.push({
           group: labelOf(sec), title,
@@ -259,7 +268,7 @@ const typeInto = async (placeholder, value) => {
   // The settings sheet behind the icon-only button in the corner of the home CV: role model, backup and reset.
   // Throws when the button is missing or the sheet did not open, so no step runs against the wrong screen.
   const openSettings = async () => {
-    await clickTab("홈");
+    await clickTab("프로필");
     const found = await page.evaluate(() => {
       const b = document.querySelector('main button[aria-label="설정"]');
       if (!b) return false;
@@ -365,20 +374,22 @@ const typeInto = async (placeholder, value) => {
     const e = await modalError(); if (e) errors.push("task registration rejected: " + e);
     await sleep(600); await closeModal();
   };
-  // Complete an evidence-gated task (cert/exam) by attaching the photo fixture and submitting
-  const submitPhotoEvidence = async (title) => {
-    await clickTab("실행");
+  // Complete an evidence-gated task (cert/exam) by attaching the photo fixture and submitting. An exam milestone also
+  // needs the exact score from its report (schema v22): pass it as `score`.
+  const submitPhotoEvidence = async (title, { score } = {}) => {
+    await clickTab("할 일");
     await completeQuest(title);
     await sleep(400);
     await attach();
+    if (score != null) await typeInto("성적표에 적힌", score);
     await clickInModal("제출하고 완료");
     await sleep(1200); await closeModal();
-    await clickTab("실행");
+    await clickTab("할 일");
     await assertDone(title);
   };
   // Complete an activity task through its log modal; `fill` enters the modal fields
   const logActivity = async (title, fill) => {
-    await clickTab("실행");
+    await clickTab("할 일");
     await completeQuest(title);
     await sleep(400);
     await fill();
@@ -386,7 +397,18 @@ const typeInto = async (placeholder, value) => {
     await sleep(1000); await closeModal();
     await assertDone(title);
   };
-  const h = { step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, rows, todoRows, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  // What saving a record (a contract, a meeting) must never move: payouts, achievements, the streak, tasks and goals.
+  // Flows compare this before and after a write (rules 1, 18).
+  const recordBoundary = (st) => ({
+    trophies: (st.room?.trophies || []).length,
+    achievements: (st.areas || []).map((a) => (a.achievements || []).length).join("/"),
+    streak: st.act?.streak,
+    shields: st.act?.shieldsLeft,
+    lastActive: st.act?.lastActive,
+    tasks: (st.tasks || []).length,
+    goals: JSON.stringify(st.goals || []),
+  });
+  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);
