@@ -388,7 +388,8 @@ module.exports = async (h) => {
     }
     if (!txt.includes("계약·단가·포트폴리오는 제안하지 않아요")) throw new Error("the packet rules do not exclude business proposals");
     if (txt.length > 4000) errors.push("packet longer than the 4000-char cap: " + txt.length);
-    // A reply full of business data: `parseAssistantReply` reads `tasks` and nothing else, so none of it lands.
+    // A reply full of business data and one appointment: `parseAssistantReply` reads `tasks` and nothing else,
+    // so no deal, rate, portfolio entry or event lands.
     const before = await readState();
     await clickInModal("AI 답변 붙여넣기");
     await sleep(400);
@@ -400,6 +401,7 @@ module.exports = async (h) => {
         deals: [{ client: "◎◎커머스", title: "정산 자동화 구축", status: "won", monthly: 2500000, months: 5, startMonth: month }],
         rates: [{ name: "데이터 파이프라인 구축 (월)", unit: "month", price: 2800000, cost: 700000 }],
         folio: [{ title: "정산 자동화 데모", links: [{ label: "GitHub", url: "https://example.com/settle" }] }],
+        events: [{ title: "◎◎커머스 킥오프 미팅", kind: "appt", date: `${month}-18`, time: "14:00" }],
         note: "계약 1건과 단가 1건을 등록해요.",
       }),
       "```",
@@ -410,7 +412,7 @@ module.exports = async (h) => {
     await clickInModal("선택한 실행 등록");
     await sleep(900);
     const after = await readState();
-    for (const list of ["deals", "rates", "folio"]) {
+    for (const list of ["deals", "rates", "folio", "events"]) {
       if (JSON.stringify(before[list] || []) !== JSON.stringify(after[list] || [])) throw new Error(`a pasted reply changed ${list}`);
     }
     if ((after.tasks || []).length !== (before.tasks || []).length) throw new Error("a pasted business reply created a task");

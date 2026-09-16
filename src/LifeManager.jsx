@@ -2690,10 +2690,10 @@ const PACKET_HEAD = [
   "역할: 이 사용자의 목표·실행·기록을 점검하는 비서예요. 아래 데이터만 근거로 답해요.",
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
   "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
-  "3) 제안은 목표에 연결된 하루분량 실행만 가능해요 (난이도 E/D/C). 자격·시험 실행과 계약·단가·포트폴리오는 제안하지 않아요.",
+  "3) 제안은 목표에 연결된 하루분량 실행만 가능해요 (난이도 E/D/C). 제목에 독서·운동처럼 활동을 그대로 적어요. 자격·시험 실행과 계약·단가·포트폴리오는 제안하지 않아요.",
   "4) 답변 형식: ① 오늘 점검 요약 5줄 이내 ② 다음 단계 1개 ③ 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"tasks\": []).",
   "```json",
-  '{"tasks":[{"goal":"<목표 제목 그대로>","title":"...","diff":"E|D|C","type":"daily|once","due":"YYYY-MM-DD","kind":"book|fit"}],"note":"한 줄"}',
+  '{"tasks":[{"goal":"<목표 제목 그대로>","title":"...","diff":"E|D|C","type":"daily|once","due":"YYYY-MM-DD"}],"note":"한 줄"}',
   "```",
 ];
 
@@ -2776,8 +2776,9 @@ const parseAssistantReply = (text, state) => {
     const diff = ["E", "D", "C"].includes(t?.diff) ? t.diff : "D";
     const type = t?.type === "daily" ? "daily" : "once";
     const due = type === "once" && /^\d{4}-\d{2}-\d{2}$/.test(t?.due || "") ? t.due : undefined;
-    const dk = detectKind(title);
-    const kind = dk || (["book", "fit"].includes(t?.kind) ? t.kind : undefined);
+    // The title alone decides the activity kind; the reply's own `kind` field is never read. A title that does not
+    // name the activity is an appointment, and an appointment belongs to the `일정` tab, not to a goal (rules 17, 19).
+    const kind = detectKind(title) || undefined;
     let reject = null;
     if (certByTitle(title) || EXAMS.some((e) => title.includes(e.n)) || /취득$/.test(title)) reject = "자격·시험 실행은 목표의 KR에서만 등록돼요";
     else if (goal && open.some((q) => q.goalId === goal.id && q.title.trim() === title)) reject = "이미 등록된 실행이에요";
@@ -7004,14 +7005,17 @@ export default function LifeManager() {
     else s.journal = [{ id: uid(), date: today, text: "", ai: raw.slice(0, 4000), aiDate: today }, ...(s.journal || [])];
   };
   const importTasks = (list, raw) => {
+    // The title decides the kind here too: `parseAssistantReply` already refuses a proposal that names no
+    // activity, and a caller that skipped it must not be able to import one (rules 17, 19).
+    const kept = list.map((p) => ({ ...p, kind: detectKind(p.title) })).filter((p) => p.kind);
     setState((prev) => {
       const s = structuredClone(prev);
-      const made = list.map((p) => {
+      const made = kept.map((p) => {
         const goal = s.goals.find((g) => g.id === p.goalId);
         return {
           id: uid(), title: p.title, areaId: goal?.areaId || s.areas[0]?.id, goalId: p.goalId,
           diff: p.diff, pts: DIFFS[p.diff].pts, type: p.type, status: "todo", doneDates: [], createdAt: today,
-          ...(p.due ? { due: p.due } : {}), ...(p.kind ? { kind: p.kind } : {}),
+          ...(p.due ? { due: p.due } : {}), kind: p.kind,
         };
       });
       s.tasks = [...made, ...s.tasks];
@@ -7019,7 +7023,7 @@ export default function LifeManager() {
       return s;
     });
     setModal(null);
-    showToast({ msg: list.length ? `AI 제안 ${list.length}건 등록 · 일지에 답변 저장` : "AI 답변을 일지에 저장했어요 — 제안 실행 없음" });
+    showToast({ msg: kept.length ? `AI 제안 ${kept.length}건 등록 · 일지에 답변 저장` : "AI 답변을 일지에 저장했어요 — 제안 실행 없음" });
   };
   const storeReply = (raw, msg) => {
     if (raw) setState((prev) => { const s = structuredClone(prev); upsertReply(s, raw); return s; });

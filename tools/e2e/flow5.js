@@ -150,6 +150,8 @@ module.exports = async (h) => {
         { goal: "없는 목표", title: "아침 러닝 30분", diff: "E", type: "daily" },
         { goal: "하네스 설계 엔지니어 취업", title: "전기기사 취득", diff: "C", type: "once" },
         { goal: "하네스 설계 엔지니어 취업", title: "도면 기호 복습", diff: "D", type: "once" },
+        // A business errand the reply labels as reading — last of the five, since IMPORT_MAX drops a sixth.
+        { goal: "하네스 설계 엔지니어 취업", title: "견적서 송부", kind: "book" },
       ], note: "기한 지난 실행부터 처리해요." }),
       "```",
     ].join("\n");
@@ -160,6 +162,17 @@ module.exports = async (h) => {
     await expectText("목표 선택");
     await expectText("자격·시험 실행은");
     await expectText("활동 유형 없는 실행은");
+    // The refusal reason is already on screen for another row, so the errand is read on its own row: the kind
+    // the reply declared is ignored, the row states why, and its checkbox cannot be ticked.
+    const errand = await page.evaluate(() => {
+      const label = [...document.querySelectorAll(".fixed.inset-0 span")].find((s) => s.textContent.trim() === "견적서 송부")?.closest("label");
+      if (!label) return null;
+      const box = label.querySelector('input[type="checkbox"]');
+      return { text: label.innerText.replace(/\s+/g, " ").trim(), disabled: !!box?.disabled };
+    });
+    if (!errand) throw new Error("the proposal row for the errand titled with no activity is missing");
+    if (!errand.text.includes("활동 유형 없는 실행은 일정 탭에서 관리해요")) throw new Error("a reply-declared kind overrode the title check: " + errand.text);
+    if (!errand.disabled) throw new Error("the refused row can still be picked: " + errand.text);
   });
 
   await step("confirmed proposals become tasks; cert proposal is refused", async () => {
@@ -183,6 +196,7 @@ module.exports = async (h) => {
     if (!titles.includes("아침 러닝 30분")) throw new Error("goal-picked proposal not imported");
     if (st.tasks.filter((q) => q.title === "전기기사 취득").length !== certBefore) throw new Error("certification proposal was imported");
     if (titles.includes("도면 기호 복습")) throw new Error("kind-less proposal was imported");
+    if (titles.includes("견적서 송부")) throw new Error("a proposal whose declared kind its title does not carry was imported");
     const imported = st.tasks.find((q) => q.title === "기술 서적 30분 독서");
     if (imported.isCert || imported.isExam || imported.isStudy) throw new Error("imported task carries a milestone flag");
     if (!imported.goalId) throw new Error("imported task has no goalId");

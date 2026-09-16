@@ -60,7 +60,7 @@ Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CA
 Extracted from `RoleAdviceModal` so the briefing and the direction-advice screen compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
 ## The bridge — `buildAssistantPacket(state, today)`
-A text packet the user copies into an external chat. It opens with the role and the four rules the assistant must follow (facts and numbers only, `해요체`, no judging scores or difficulty, proposals limited to day-sized tasks under an existing goal — never a certification, an exam, or a business record — and a closing JSON block), then the data:
+A text packet the user copies into an external chat. It opens with the role and the four rules the assistant must follow (facts and numbers only, `해요체`, no judging scores or difficulty, proposals limited to day-sized tasks under an existing goal whose title names the activity (`제목에 독서·운동처럼 활동을 그대로 적어요.`) — never a certification, an exam, or a business record — and a closing JSON block whose template no longer offers a `kind` field), then the data:
 
 | Section | Content | Cap |
 |---|---|---|
@@ -87,7 +87,7 @@ Only a fenced ```` ```json ```` block is read, and only `tasks` (at most five) a
 | `goal` | matched against active goal titles exactly, then by substring either way; no match leaves `goalId` null and the row shows a `목표 선택` dropdown ([Rule 18](core-beliefs.md#rule-18)) |
 | `diff` | E, D or C — anything else becomes D. C is 60 points, below `EVIDENCE_MIN`, so an import can never bypass the evidence gate |
 | `type` | `daily` or `once`, defaulting to `once`; `due` is kept only for a `once` task with a `YYYY-MM-DD` date |
-| `kind` | `detectKind(title)` wins over the proposed kind; the proposed value must be `book` or `fit` — anything else, or nothing, is dropped |
+| `kind` | `detectKind(title)` only. The reply's own `kind` field is never read (since 2026-09-16): a title that does not name the activity is refused with `활동 유형 없는 실행은 일정 탭에서 관리해요`, whatever kind the reply declares. `importTasks` re-derives it from the title and drops any entry without one, so a caller that skipped the parser cannot import a mislabelled task either |
 
 A proposal is refused, greyed out with a reason, when the title matches a certification (`certByTitle`), contains an exam family name, or ends in `취득` — those exist only through the KR bridge ([Rule 19](core-beliefs.md#rule-19)) — when the same title is already open under that goal, or when it resolves to no `kind` at all (`활동 유형 없는 실행은 일정 탭에서 관리해요`) — a proposal can only carry the same book/fit kinds a goal accepts (Rule 19 amendment).
 
