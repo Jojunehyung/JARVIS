@@ -268,4 +268,142 @@ module.exports = async (h) => {
     if (packet.includes(title)) throw new Error("the assistant packet carries a meeting");
     await closeModal();
   });
+
+  // ── Task links (schema v24): a meeting names existing tasks; linking changes no task, and both sides show the link.
+  const LINK_MEETING = "할 일 연결 회의";
+  const linkTitle = (n) => `E2E 연결 ${String(n).padStart(2, "0")}`; // two digits, so no title is a substring of another
+  const linkId = (n) => `e2e-link-${String(n).padStart(2, "0")}`;
+  // Tick (or just read, with click=false) one row of the form's `할 일 연결` picker.
+  const pickerRow = (title, click = true) => page.evaluate((t, c) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll('button[role="checkbox"]')].find((x) => (x.innerText || "").includes(t));
+    if (!b) return null;
+    const out = { disabled: b.disabled, checked: b.getAttribute("aria-checked") === "true" };
+    if (c && !b.disabled) b.click();
+    return out;
+  }, title, click);
+  const tick = async (title) => {
+    const r = await pickerRow(title);
+    if (!r) throw new Error(`picker row not found: ${title}`);
+    if (r.disabled) throw new Error(`picker row disabled: ${title}`);
+    await sleep(120);
+  };
+  const linkMeeting = async () => ((await readState()).meetings || []).find((m) => m.title === LINK_MEETING);
+
+  await step("linking two tasks when writing a meeting stores their ids and changes no task", async () => {
+    // Plant twelve open tasks on an existing goal (or unlinked when none is active) — enough to reach the cap.
+    const due = await dstrIn(7);
+    await page.evaluate((k, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      const g = (st.goals || []).find((x) => x.status === "active");
+      const areaId = g ? g.areaId : st.areas[0].id;
+      for (let n = 1; n <= 12; n++) {
+        const nn = String(n).padStart(2, "0");
+        st.tasks.push({ id: `e2e-link-${nn}`, title: `E2E 연결 ${nn}`, areaId, ...(g ? { goalId: g.id } : {}), diff: "E",
+          type: "once", status: "todo", doneDates: [], createdAt: d, due: d });
+      }
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, due);
+    await h.reload();
+    const before = await readState();
+    await clickTab("미팅");
+    await openMeetingForm();
+    await expectText("할 일 연결");
+    await fillMeeting({ title: LINK_MEETING, summary: "연결 확인" });
+    await typeInto("할 일 검색", "E2E 연결");
+    await sleep(200);
+    await tick(linkTitle(1));
+    await tick(linkTitle(2));
+    await clickInModalExact("등록");
+    await sleep(500);
+    const after = await readState();
+    const m = (after.meetings || []).find((x) => x.title === LINK_MEETING);
+    if (!m) throw new Error("the linked meeting was not stored");
+    if (!Array.isArray(m.taskIds) || [...m.taskIds].sort().join(",") !== [linkId(1), linkId(2)].join(",")) throw new Error("stored taskIds: " + JSON.stringify(m.taskIds));
+    if (JSON.stringify(after.tasks) !== JSON.stringify(before.tasks)) throw new Error("linking a task changed the tasks");
+    assertBoundary(before, after, "linking tasks to a meeting");
+  });
+
+  await step("the meeting view lists the linked tasks and tapping one opens its task sheet", async () => {
+    await clickTab("미팅");
+    await openTodo(LINK_MEETING);
+    const view = await overlayText();
+    for (const t of ["연결된 할 일", linkTitle(1), linkTitle(2)]) if (!view.includes(t)) throw new Error(`the meeting view lacks "${t}": ` + view.slice(0, 300));
+    if (view.includes("삭제된 할 일")) throw new Error("the view states a deleted link that does not exist");
+    await clickInModal(linkTitle(1));
+    const sheet = await overlayText();
+    if (!sheet.includes("완료하기") || !sheet.includes(linkTitle(1))) throw new Error("tapping a linked task did not open its task sheet: " + sheet.slice(0, 300));
+    if ((await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length)) !== 1) throw new Error("the task sheet did not replace the meeting view");
+  });
+
+  await step("the task sheet lists the meeting under its related-minutes section and opens it", async () => {
+    const sheet = await overlayText();
+    if (!sheet.includes("관련 회의록") || !sheet.includes(LINK_MEETING)) throw new Error("the task sheet lacks its meeting: " + sheet.slice(0, 300));
+    const m = await linkMeeting();
+    if (!sheet.includes(`${m.date} ${LINK_MEETING}`)) throw new Error("the related meeting row is not `{date} {title}`: " + sheet.slice(0, 300));
+    await clickInModal(LINK_MEETING);
+    if (!(await overlayText()).includes("연결된 할 일")) throw new Error("tapping the related meeting did not open the meeting view");
+    await closeModal();
+    if (await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length)) throw new Error("a sheet was left open after closing");
+    // A task without links shows no section at all.
+    await clickTab("할 일");
+    await openTodo(linkTitle(3));
+    if ((await overlayText()).includes("관련 회의록")) throw new Error("an unlinked task sheet shows the related-minutes section");
+    await closeModal();
+  });
+
+  await step("a meeting links at most 10 tasks", async () => {
+    await clickTab("미팅");
+    await openTodo(LINK_MEETING);
+    await clickInModalExact("수정");
+    await expectText("회의록 수정");
+    await typeInto("할 일 검색", "E2E 연결");
+    await sleep(200);
+    for (let n = 3; n <= 10; n++) await tick(linkTitle(n));
+    if (!(await overlayText()).includes("할 일은 10개까지 연결돼요.")) throw new Error("the cap line is missing at 10 links");
+    const eleventh = await pickerRow(linkTitle(11), false);
+    if (!eleventh || !eleventh.disabled || eleventh.checked) throw new Error("the 11th task is not disabled at the cap: " + JSON.stringify(eleventh));
+    const tenth = await pickerRow(linkTitle(10), false);
+    if (!tenth || tenth.disabled || !tenth.checked) throw new Error("a linked task is not untickable at the cap: " + JSON.stringify(tenth));
+    await clickInModalExact("저장");
+    await sleep(500);
+    const m = await linkMeeting();
+    if ((m.taskIds || []).length !== 10 || m.taskIds.includes(linkId(11))) throw new Error("stored taskIds at the cap: " + JSON.stringify(m.taskIds));
+  });
+
+  await step("deleting a linked task removes its id from the meeting", async () => {
+    const before = await linkMeeting();
+    await clickTab("할 일");
+    await openTodo(linkTitle(1));
+    await clickInModalExact("삭제");
+    await sleep(500);
+    const st = await readState();
+    if ((st.tasks || []).some((q) => q.id === linkId(1))) throw new Error("the linked task survived its deletion");
+    const m = (st.meetings || []).find((x) => x.id === before.id);
+    if (!m || m.taskIds.includes(linkId(1)) || m.taskIds.length !== 9) throw new Error("the deleted task's id stayed on the meeting: " + JSON.stringify(m?.taskIds));
+    const { taskIds: a, ...restBefore } = before;
+    const { taskIds: b, ...restAfter } = m;
+    if (JSON.stringify(restBefore) !== JSON.stringify(restAfter)) throw new Error("deleting a task changed another meeting field");
+    // A link left dangling by an older save is skipped at render and counted.
+    await page.evaluate((k, id) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetings.find((x) => x.id === id).taskIds.push("e2e-gone-task");
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, before.id);
+    await h.reload();
+    await clickTab("미팅");
+    await openTodo(LINK_MEETING);
+    const view = await overlayText();
+    if (view.includes(linkTitle(1))) throw new Error("the view still lists the deleted task");
+    if (!view.includes("삭제된 할 일 1건")) throw new Error("the view does not count the dangling link: " + view.slice(0, 300));
+    await closeModal();
+    // Leave the save as flow4 expects it: no planted tasks, no link meeting.
+    await page.evaluate((k, id) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.tasks = s.tasks.filter((q) => !String(q.id).startsWith("e2e-link-"));
+      s.meetings = s.meetings.filter((x) => x.id !== id);
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, before.id);
+    await h.reload();
+  });
 };

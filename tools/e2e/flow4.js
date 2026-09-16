@@ -2,7 +2,7 @@
 module.exports = async (h) => {
   const { step, shot, clickText, clickTab, clickExact, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
   // The schema version every migrated fixture must end at — bumped with each new `migrate` block (rule 12).
-  const SCHEMA_V = 23;
+  const SCHEMA_V = 24;
   // Order-independent deep equality for plain JSON records read back from the save.
   const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.keys(v).sort().map((k) => [k, canon(v[k])]) : v);
   const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
@@ -437,6 +437,42 @@ module.exports = async (h) => {
     if (extra.length) throw new Error("v23 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("프로젝트가 없어요 — 프로젝트를 먼저 만들어요.");
+  });
+  await step("v23 save → v24 meeting task links", async () => {
+    // One meeting without taskIds must come back with taskIds: [] and every other field, and every other key, unchanged.
+    const now = await page.evaluate(() => { const d = new Date(); const p2 = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; });
+    const meeting = { id: "mz", projectId: "pz", date: "2026-01-05", title: "레거시 회의록", attendees: "담당자 A",
+      summary: "레거시 요약", decisions: "레거시 결정", actions: "레거시 후속", eventId: "ez", createdAt: "2026-01-05" };
+    const s23 = {
+      v: 23,
+      profile: { name: "v23 사용자", nick: "v23세이브", birth: "1996-03-02", email: "", phone: "", gender: "남성", status: "직장인 1~3년",
+        edus: [{ id: "ez1", school: "레거시대학교", degree: "ba", status: "grad" }], careers: [],
+        edu: "ba", career: "y13", certs: [], examsOwned: [], directions: [], look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
+      areas: [{ id: "az", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tz", title: "레거시 실행", areaId: "az", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [],
+      events: [{ id: "ez", title: "레거시 회의", kind: "appt", date: "2026-01-05", time: "10:00", createdAt: "2026-01-02" }],
+      folio: [], rates: [], deals: [],
+      meetingProjects: [{ id: "pz", name: "레거시 프로젝트", createdAt: "2026-01-02" }],
+      meetings: [meeting],
+      journal: [{ id: "jz", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [],
+      ui: { bizView: "deals" },
+      act: { streak: 1, lastActive: "2026-01-02", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
+      certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
+    };
+    const st = await migrateFixture(s23);
+    if ((st.meetings || []).length !== 1) throw new Error("v24 meetings: " + JSON.stringify(st.meetings));
+    if (!same(st.meetings[0], { ...meeting, taskIds: [] })) throw new Error("v24 meeting record: " + JSON.stringify(st.meetings[0]));
+    for (const k of Object.keys(s23)) {
+      if (k === "v" || k === "lastTick" || k === "meetings") continue;
+      if (!same(st[k], s23[k])) throw new Error(`v24 changed ${k}: ` + JSON.stringify(st[k]));
+    }
+    const extra = Object.keys(st).filter((k) => !(k in s23));
+    if (extra.length) throw new Error("v24 added keys it does not own: " + extra.join(", "));
+    await clickTab("미팅");
+    await expectText("레거시 회의록");
   });
   await shot("migrated");
 };

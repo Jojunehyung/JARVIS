@@ -114,7 +114,7 @@ module.exports = async (h) => {
     let data;
     try { data = JSON.parse(dump); } catch { throw new Error("backup is not valid JSON"); }
     if (data.app !== "life-manager") throw new Error("backup lacks its app marker");
-    if (data.state?.v !== 23) throw new Error("backup schema version " + data.state?.v + " (expected 23)");
+    if (data.state?.v !== 24) throw new Error("backup schema version " + data.state?.v + " (expected 24)");
     if (!Array.isArray(data.state?.tasks) || !data.state.tasks.length) throw new Error("backup carries no tasks");
     if (typeof data.images !== "object") throw new Error("backup carries no image map");
     await page.evaluate((d) => { window.__savedBackup = d; }, dump);

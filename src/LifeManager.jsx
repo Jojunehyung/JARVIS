@@ -3023,10 +3023,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
 
 /* ── State lifecycle ── */
 /**
- * @schema v23 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v24 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 23,
+ *   v: 24,
  *   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
  *              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
  *                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -3058,8 +3058,11 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *             paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
  *   meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
  *   meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?,       // trophy, goal or streak (rules 1, 18). A meeting's time lives
- *               summary, decisions?, actions?, eventId?, createdAt }],       // only in events; eventId (+ date) points at one occurrence and
- *                                                                           // nothing is copied from it. Order and storage use are derived.
+ *               summary, decisions?, actions?, eventId?, createdAt,           // only in events; eventId (+ date) points at one occurrence and
+ *               taskIds[] }],                                               // nothing is copied from it. Order and storage use are derived.
+ *                                                                           // taskIds (v24): ids of existing tasks the minutes refer to, at most
+ *                                                                           // 10; linking changes no task, and the task sheet's reverse list is
+ *                                                                           // derived at render. Deleting a task removes its id here.
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -3077,7 +3080,8 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  * contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
  * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
  * the displayed age (`ageText`) and the total months of practice (`careerMonths`), the calendar export file (`buildIcs`),
- * and the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`).
+ * the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`),
+ * and a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -3178,6 +3182,12 @@ const migrate = (s) => {
     // stores only its date and an optional eventId. Nothing existing is changed.
     s = { ...s, v: 23, meetingProjects: s.meetingProjects || [], meetings: s.meetings || [] };
   }
+  if (s.v < 24) {
+    // v24: meeting task links — meetings[].taskIds, the ids of existing tasks the minutes refer to. A link is a reference
+    // only: it pays nothing, completes nothing and moves no goal or streak (rules 1, 9, 18). Every meeting is backfilled
+    // with an empty list; no other field is changed.
+    s = { ...s, v: 24, meetings: (s.meetings || []).map((m) => ({ ...m, taskIds: Array.isArray(m.taskIds) ? m.taskIds : [] })) };
+  }
   return s;
 };
 
@@ -3189,7 +3199,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 23,
+  v: 24,
   profile: null,
   areas,
   tasks: [],
@@ -3298,14 +3308,17 @@ const demoState = () => {
   const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20) };
   const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6) };
   s.meetingProjects = [mp2, mp1];
+  // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
+  const linkedTaskIds = s.tasks.filter((q) => q.title === "이력서 초안 작성" || q.title === "CATIA·도면 연습 1시간").map((q) => q.id);
   s.meetings = [
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
-      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1) },
+      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [] },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
-      summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3) },
+      summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3),
+      taskIds: linkedTaskIds },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
-      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9) },
+      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9), taskIds: [] },
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -4995,9 +5008,10 @@ function TaskTab({ state, today, onOpenTask, onOpenEvent, onOpenBiz, onCatalog, 
    `onComplete`, which the root wires to `tryComplete` and nothing else, so the study, activity and evidence gates
    stay exactly where they were (rules 10, 11, 16, 17). A closed task (done today, or a finished once task) shows no
    completion control: the archive stays a record. The sheet reads the live task, so it disappears with it. ── */
-function TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, onViewEvidence }) {
+function TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, onViewEvidence, onOpenMeeting }) {
   const q = (state.tasks || []).find((x) => x.id === taskId);
   if (!q) return null;
+  const minutes = meetingsOfTask(state, q.id); // derived at render; the section is hidden when empty
   const daily = q.type === "daily";
   const doneToday = daily && (q.doneDates || []).includes(today);
   const closed = daily ? doneToday : q.status === "done";
@@ -5042,6 +5056,17 @@ function TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, 
             </CvFact>
           )}
         </div>
+        {minutes.length > 0 && (
+          <div>
+            <SectionLabel>관련 회의록</SectionLabel>
+            <div className="space-y-1.5">
+              {minutes.map((m) => (
+                <TodoRow key={m.id} lead={{ text: m.date, tone: "text-zinc-400 border-zinc-700" }} title={m.title}
+                  onOpen={() => onOpenMeeting(m.id)} />
+              ))}
+            </div>
+          </div>
+        )}
         {!closed && (
           <button onClick={() => onComplete(q)}
             className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 text-sm font-black active:translate-y-0.5">완료하기</button>
@@ -6642,8 +6667,13 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    per newline; a typical one (25 / 30 / 400 / 100 / 100) about 850. At three a working day (750 a year) typical minutes
    use 0.64 M chars a year — 52 % of the budget after three years, 87 % after five; full records reach 93 % after three.
    So the caps alone promise nothing, and two facts guard the rest: the tab always states the storage in use, and a
-   save that would cross the budget is refused with the form kept open (`meetingFits` in the root). */
-const MEETING_LIMITS = { title: 40, attendees: 80, summary: 800, decisions: 200, actions: 200 };
+   save that would cross the budget is refused with the form kept open (`meetingFits` in the root).
+   Task links (v24) add `,"taskIds":[]` = 13 chars to every record and 12 per linked id (a 10-char uid, two quotes,
+   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 1,642. `meetingFits` measures the
+   serialised record, `taskIds` included, so the same guard covers it. */
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 800, decisions: 200, actions: 200, tasks: 10 };
+const MEETING_TASK_PAST_DAYS = 30; // completed tasks this recent stay offered as link candidates
+const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
 const mbText = (chars) => (chars / 1048576).toFixed(1);
@@ -6655,6 +6685,31 @@ const meetingEventText = (state, m) => {
   const ev = (state.events || []).find((e) => e.id === m.eventId);
   return ev ? `${ev.time || "시간 미정"} ${ev.title}` : "연결된 일정이 삭제됐어요";
 };
+
+// Whether a task is closed today: a daily task ticked today, or a finished once task.
+const taskClosedOn = (q, today) => (q.type === "daily" ? (q.doneDates || []).includes(today) : q.status === "done");
+
+// Link candidates for the meeting form: open tasks in the to-do list's own order, then tasks completed in the last
+// `MEETING_TASK_PAST_DAYS` days, newest first. Each row carries the lead chip of its to-do row. Derived, never stored.
+const meetingTaskCandidates = (state, today) => {
+  const open = todoOf(state, today).groups
+    .flatMap((g) => g.rows)
+    .filter((r) => r.kind === "task" && !r.done && !taskClosedOn(r.task, today))
+    .map((r) => ({ q: r.task, lead: todoLeadOf(r, today), done: false }));
+  const seen = new Set(open.map((c) => c.q.id));
+  const since = shiftDay(today, -MEETING_TASK_PAST_DAYS);
+  const done = (state.tasks || [])
+    .filter((q) => !seen.has(q.id) && (lastDoneDate(q) || "") >= since)
+    .sort((a, b) => (lastDoneDate(b) || "").localeCompare(lastDoneDate(a) || "") || a.title.localeCompare(b.title))
+    .map((q) => ({ q, lead: todoLeadOf({ kind: "task", task: q, date: q.due || null }, today, true), done: true }));
+  return [...open, ...done];
+};
+
+// The minutes whose `taskIds` name a task, newest first — the task sheet's reverse list, computed at render (rule 9).
+const meetingsOfTask = (state, taskId) => (state.meetings || []).filter((m) => (m.taskIds || []).includes(taskId)).sort(meetingOrder);
+
+// One linked task as a to-do row: `완료` when closed, otherwise the to-do row's own lead chip.
+const linkedTaskLead = (q, today) => todoLeadOf({ kind: "task", task: q, date: q.due || null }, today);
 
 function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenMeeting }) {
   const [expanded, setExpanded] = useState({}); // which projects show every row — view state only, never stored (rule 9)
@@ -6795,8 +6850,29 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   const [decisions, setDecisions] = useState(meeting?.decisions || "");
   const [actions, setActions] = useState(meeting?.actions || "");
   const [eventId, setEventId] = useState(meeting?.eventId || null);
+  // Linked task ids. A link whose task was deleted before this edit is dropped here, so it never counts toward the cap.
+  const [taskIds, setTaskIds] = useState(() => (meeting?.taskIds || []).filter((id) => (state.tasks || []).some((q) => q.id === id)));
+  const [taskQuery, setTaskQuery] = useState(""); // the picker's text filter — view state only, never stored
   const [err, setErr] = useState("");
   const dayEvents = date ? eventsOn(state, date) : [];
+  const candidates = useMemo(() => meetingTaskCandidates(state, today), [state, today]);
+  // Rows offered: the filtered candidates, plus any linked task that is no longer a candidate (completed more than
+  // `MEETING_TASK_PAST_DAYS` days ago), so a selected link always stays in view and can be unticked.
+  const taskRows = useMemo(() => {
+    const qy = taskQuery.trim().toLowerCase();
+    const hit = (q) => !qy || q.title.toLowerCase().includes(qy);
+    const listed = new Set(candidates.map((c) => c.q.id));
+    const extra = (state.tasks || []).filter((q) => taskIds.includes(q.id) && !listed.has(q.id))
+      .map((q) => ({ q, lead: todoLeadOf({ kind: "task", task: q, date: q.due || null }, today, true), done: true }));
+    const all = [...candidates, ...extra].filter((c) => hit(c.q) || taskIds.includes(c.q.id));
+    const shown = all.slice(0, MEETING_TASK_ROWS);
+    for (const c of all.slice(MEETING_TASK_ROWS)) if (taskIds.includes(c.q.id)) shown.push(c);
+    return { shown, more: all.length - shown.length };
+  }, [candidates, state.tasks, taskIds, taskQuery, today]);
+  const atCap = taskIds.length >= MEETING_LIMITS.tasks;
+  const toggleTask = (id) => setTaskIds((cur) => (cur.includes(id)
+    ? cur.filter((x) => x !== id)
+    : cur.length >= MEETING_LIMITS.tasks ? cur : [...cur, id]));
 
   // A link is kept only while its event still has an occurrence on the chosen date.
   const pickDate = (d) => {
@@ -6822,6 +6898,8 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       ...(v.decisions ? { decisions: v.decisions } : {}),
       ...(v.actions ? { actions: v.actions } : {}),
       ...(eventId ? { eventId } : {}),
+      // Linking stores ids only and never changes a task (rules 1, 9, 18).
+      taskIds: taskIds.filter((id) => (state.tasks || []).some((q) => q.id === id)).slice(0, MEETING_LIMITS.tasks),
     };
     const refused = meeting ? onUpdate(meeting.id, next) : onAdd(next);
     if (refused) setErr(refused);
@@ -6859,6 +6937,41 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
             </div>
           )}
         </div>
+        <div>
+          <div className="flex items-baseline justify-between gap-2 mb-1.5">
+            <div className="text-xs font-bold tracking-widest text-zinc-500">할 일 연결</div>
+            <span className="text-xs font-mono text-zinc-500 shrink-0">{taskIds.length} / {MEETING_LIMITS.tasks}</span>
+          </div>
+          {candidates.length === 0 && taskRows.shown.length === 0 ? (
+            <p className="text-xs text-zinc-500">연결할 할 일이 없어요.</p>
+          ) : (
+            <>
+              <input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="할 일 검색"
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm" />
+              <div className="space-y-1 mt-1.5">
+                {taskRows.shown.map(({ q, lead, done }) => {
+                  const on = taskIds.includes(q.id);
+                  return (
+                    <button key={q.id} role="checkbox" aria-checked={on} onClick={() => toggleTask(q.id)} disabled={!on && atCap}
+                      className={`w-full text-left flex items-center gap-2 rounded-xl px-2.5 py-2 border disabled:opacity-30 ${
+                        on ? "border-cyan-700 bg-zinc-950" : "border-zinc-800 bg-zinc-950"}`}>
+                      <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? "bg-cyan-400 border-cyan-300 text-zinc-950" : "border-zinc-600"}`}>
+                        {on && <Check size={12} />}
+                      </span>
+                      {/* rose-300, not rose-400: inside a form rose-400 is reserved for the one validation line */}
+                      <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-0.5 bg-zinc-900 shrink-0 ${lead.tone.replace("text-rose-400", "text-rose-300")}`}>{lead.text}</span>
+                      <span className={`flex-1 min-w-0 text-sm truncate ${done ? "line-through text-zinc-500" : ""}`}>{q.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {taskRows.shown.length === 0 && <p className="text-xs text-zinc-500 mt-1.5">검색 결과가 없어요.</p>}
+              {taskRows.more > 0 && <p className="text-xs text-zinc-500 mt-1.5">할 일 {taskRows.more}건 더 있음 — 검색어로 좁혀요</p>}
+              {atCap && <p className="text-xs text-zinc-400 mt-1.5">할 일은 {MEETING_LIMITS.tasks}개까지 연결돼요.</p>}
+            </>
+          )}
+          <p className="text-xs text-zinc-600 mt-1.5">연결은 기록이에요 — 할 일의 상태·점수·목표는 바뀌지 않아요.</p>
+        </div>
         <p className="text-xs text-zinc-500">전체 녹취가 아니라 요약만 저장해요.</p>
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
@@ -6873,9 +6986,12 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
 }
 
 /* ── Meeting view — the full minutes, read from the live record ── */
-function MeetingViewModal({ state, meetingId, onClose, onEdit }) {
+function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask }) {
   const m = (state.meetings || []).find((x) => x.id === meetingId);
   if (!m) return null;
+  // A linked id whose task no longer exists is skipped and counted, never cleaned up from here.
+  const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean);
+  const missing = (m.taskIds || []).length - linked.length;
   const project = (state.meetingProjects || []).find((p) => p.id === m.projectId);
   const block = (label, text) => (
     <div>
@@ -6895,6 +7011,20 @@ function MeetingViewModal({ state, meetingId, onClose, onEdit }) {
         {block("요약", m.summary)}
         {block("결정 사항", m.decisions)}
         {block("후속 조치", m.actions)}
+        <div>
+          <SectionLabel>연결된 할 일</SectionLabel>
+          {linked.length === 0 && missing === 0 ? (
+            <p className="text-sm text-zinc-500">연결된 할 일이 없어요.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {linked.map((q) => (
+                <TodoRow key={q.id} lead={linkedTaskLead(q, today)} title={q.title} done={taskClosedOn(q, today)}
+                  onOpen={() => onOpenTask(q.id)} />
+              ))}
+            </div>
+          )}
+          {missing > 0 && <p className="text-xs text-zinc-500 mt-1.5">삭제된 할 일 {missing}건</p>}
+        </div>
         <button onClick={() => onEdit(m.id)}
           className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">수정</button>
       </div>
@@ -7049,7 +7179,13 @@ export default function LifeManager() {
     // Also clears the evidence photo keys (rule 16) — left behind they keep piling up in storage.
     store.del(`liferpg-img-ev-${id}`);
     for (let n = 1; n <= 2; n++) store.del(`liferpg-img-study-${id}-${n}`);
-    setState((prev) => ({ ...prev, tasks: prev.tasks.filter((q) => q.id !== id) }));
+    // The same update drops the id from every meeting's `taskIds`, so a link never outlives its task (v24).
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.tasks = s.tasks.filter((q) => q.id !== id);
+      for (const m of s.meetings || []) if ((m.taskIds || []).includes(id)) m.taskIds = m.taskIds.filter((x) => x !== id);
+      return s;
+    });
   };
 
   const applyMeasures = (ms) => {
@@ -7232,6 +7368,8 @@ export default function LifeManager() {
       const s = structuredClone(prev);
       s.goals = (s.goals || []).filter((x) => x.id !== id);
       s.tasks = (s.tasks || []).filter((q) => !dropIds.has(q.id));
+      // Dropped tasks leave no meeting link behind, the same as `removeTask` (v24).
+      for (const m of s.meetings || []) if ((m.taskIds || []).some((x) => dropIds.has(x))) m.taskIds = m.taskIds.filter((x) => !dropIds.has(x));
       return s;
     });
     showToast({ msg: `목표를 삭제했어요 · 미완료 실행 ${drop.length}건 삭제 · 완료 기록 ${kept}건 유지` });
@@ -7743,7 +7881,8 @@ export default function LifeManager() {
         <TaskDetailModal state={state} taskId={modal.taskId} today={today} onClose={() => setModal(null)}
           onComplete={tryComplete}
           onRemove={(id) => { removeTask(id); setModal(null); }}
-          onViewEvidence={(q) => setModal({ type: "evidenceView", task: q })} />
+          onViewEvidence={(q) => setModal({ type: "evidenceView", task: q })}
+          onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
       )}
       {modal?.type === "eventDetail" && (
         <EventDetailModal state={state} eventId={modal.eventId} date={modal.date} today={today} onClose={() => setModal(null)}
@@ -7796,8 +7935,9 @@ export default function LifeManager() {
           onClose={() => setModal(null)} onAdd={addMeeting} onUpdate={updateMeeting} onRemove={removeMeeting} />
       )}
       {modal?.type === "meetingView" && (
-        <MeetingViewModal state={state} meetingId={modal.meetingId} onClose={() => setModal(null)}
-          onEdit={(meetingId) => setModal({ type: "meeting", meetingId })} />
+        <MeetingViewModal state={state} meetingId={modal.meetingId} today={today} onClose={() => setModal(null)}
+          onEdit={(meetingId) => setModal({ type: "meeting", meetingId })}
+          onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })} />
       )}
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />

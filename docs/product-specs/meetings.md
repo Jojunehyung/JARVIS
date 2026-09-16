@@ -9,7 +9,7 @@ by project, in the user's own words, never generated, never sent anywhere, never
 A record of what was said, never a task and never an appointment:
 ```
 meetingProjects: [{ id, name, note?, createdAt }]
-meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?, summary, decisions?, actions?, eventId?, createdAt }]
+meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?, summary, decisions?, actions?, eventId?, createdAt, taskIds[] }]
 ```
 No time, place, repeat, reminder, status, goal, points or evidence field: **the time of a meeting lives only in
 `일정`** — this is the 2026-09-11 decision that removed the `meet` activity kind because a meeting overlaps the
@@ -19,6 +19,14 @@ optionally points at the `일정` event whose occurrence falls on `date` (for a 
 together identify the occurrence); the meeting copies nothing from that event and reads its time and title live,
 at render. Deleting the linked event never deletes the minutes: the view states the link is gone
 (`연결된 일정이 삭제됐어요`), it is never cleaned up automatically ([TD-46](../exec-plans/tech-debt-tracker.md)).
+
+`taskIds` (schema v24, 2026-09-16) holds the ids of existing tasks the minutes refer to, at most
+`MEETING_LIMITS.tasks` (10). The user asked, verbatim, `회의록 작성은 할일목록들과 매칭 가능하게 해줘`, and chose
+to link **existing** tasks only — a meeting never creates a task, because tasks are still created only inside a
+goal ([Rule 18](../design-docs/core-beliefs.md#rule-18), [Rule 19](../design-docs/core-beliefs.md#rule-19)) — and
+to show the link on both sides. A link is a reference: it pays nothing, completes nothing and moves no goal, KR or
+streak ([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 9](../design-docs/core-beliefs.md#rule-9)). The
+reverse list on the task sheet (`meetingsOfTask`) is computed at render, never stored.
 
 Full transcripts are not stored, by the user's own decision: `summary` is a hand-written or pasted minutes-style
 summary, not a recording or a verbatim transcript.
@@ -33,12 +41,19 @@ calendar file ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
 ## Caps and the storage arithmetic
 `MEETING_LIMITS = { title: 40, attendees: 80, summary: 800, decisions: 200, actions: 200 }`,
 `PROJECT_LIMITS = { name: 40, note: 200 }`. 800 Hangul characters is a page of key points, not a transcript.
+`MEETING_LIMITS.tasks = 10` caps the task links; `MEETING_TASK_PAST_DAYS = 30` and `MEETING_TASK_ROWS = 30` shape
+the picker (below).
 
 - Unit: `storageUsedBytes` counts string length, so the budget is `STORAGE_BUDGET` = 3.5 × 1,048,576 = 3,672,064
   chars, shared with the rest of the save and every thumbnail. `JSON.stringify` keeps Hangul as one char; a
   newline costs two (`\n`).
 - Overhead of an empty record (ten-char `uid`s, both dates, all keys, the comma), measured, is about 190 chars.
 - Largest record: 40 + 80 + 800 + 200 + 200 + 190 = **1,510 chars**, plus one per newline.
+- Task links (v24): `,"taskIds":[]` adds 13 chars to every record and each linked id 12 more (a ten-char `uid`,
+  two quotes, a comma, less one comma for the first), so ten links add 13 + 120 − 1 = **132 chars**: a full record
+  with ten links is about 1,642 chars, and the 3/day full-record row below moves from 93 % to about 101 % after
+  three years. `meetingFits` stringifies the whole record, `taskIds` included, so the same guard refuses a save
+  that would cross the budget; no new check was needed.
 - Typical record assumed: title 25, attendees 30, summary 400, decisions 100, actions 100 → 655 + 190 = **~850 chars**.
 - Frequency assumed: "several a day" = 3 meetings per working day × 250 days = **750 records a year** (2 a day = 500).
 
@@ -99,7 +114,18 @@ on one line (each nav `<span>` is `whitespace-nowrap`).
   으로 적어요` (`rows=8`), `결정 사항 (선택)`, `후속 조치 (선택)` (`rows=3` each); `일정 연결 (선택)` chips from
   `eventsOn(state, date)`: `연결 안 함` plus `{time || "시간 미정"} {title}` per occurrence that day, or the line
   `이 날짜에는 일정이 없어요.`; changing the date clears a link whose event no longer has an occurrence on the new
-  date. Note `전체 녹취가 아니라 요약만 저장해요.` Submit refuses, in order, with `프로젝트를 골라 주세요.`,
+  date. `할 일 연결` (v24): a header with the `{n} / 10` count, a text filter input `할 일 검색`, and one
+  `role="checkbox"` row per candidate from `meetingTaskCandidates(state, today)` — open tasks first in the `할 일`
+  list's own `todoOf` order, then tasks completed in the last 30 days, newest first. Each row shows a tick box, the
+  to-do row's lead chip (`todoLeadOf`; an archived-style `MM-DD` chip for a completed task; an overdue chip is
+  rose-300 here because rose-400 is reserved for the form's validation line) and the title, struck through and
+  dimmed when completed. A linked task that is no longer a candidate (completed more than 30 days ago) stays listed
+  so it can be unticked, and linked rows stay visible whatever the filter. At most 30 rows render; beyond that
+  `할 일 {n}건 더 있음 — 검색어로 좁혀요`. No match: `검색 결과가 없어요.`; no task at all: `연결할 할 일이 없어요.`
+  At 10 links every unticked row is disabled and the line `할 일은 10개까지 연결돼요.` shows. A caption states
+  `연결은 기록이에요 — 할 일의 상태·점수·목표는 바뀌지 않아요.` On an edit, an id whose task was deleted is dropped
+  from the initial selection, so it never counts toward the cap; saving writes `taskIds` (always an array,
+  possibly empty) with ids of live tasks only. Note `전체 녹취가 아니라 요약만 저장해요.` Submit refuses, in order, with `프로젝트를 골라 주세요.`,
   `날짜를 선택해 주세요.`, `회의 이름을 입력해 주세요.`, `회의 요약을 입력해 주세요.`, then the four
   `{field}은/는 {cap}자까지예요 — 지금 {n}자예요.` cap messages. The record is built with only non-empty optional
   fields — a cleared field disappears from the save on an edit. `onAdd` / `onUpdate` answer with an error string
@@ -107,12 +133,19 @@ on one line (each nav `<span>` is `whitespace-nowrap`).
   `저장 공간이 부족해요 — 현재 {mb}MB 사용 중이라 회의록을 저장하지 않았어요. 백업을 내보낸 뒤 오래된 회의록이나
   사진을 지워요.` and the form stays open with everything typed. Edit mode adds `삭제` →
   `window.confirm("{title} 회의록을 삭제해요. 계속할까요?")`.
-- **`MeetingViewModal({ state, meetingId, onClose, onEdit })`**, `modal: { type: "meetingView", meetingId }`,
+- **`MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask })`**, `modal: { type: "meetingView", meetingId }`,
   title the meeting's own title: `CvFact wrap` rows `프로젝트`, `날짜` (mono), `참석자` (or `기록 없음`), `일정`
   (`{time || "시간 미정"} {title}` read live from the linked event; `연결 없음` with none; `연결된 일정이
   삭제됐어요` when `eventId` matches no live event); then three blocks with a `SectionLabel` each — `요약`,
-  `결정 사항`, `후속 조치` — `<p className="whitespace-pre-wrap break-words">` (or `없음`); a full-width `수정`
-  button → `setModal({ type: "meeting", meetingId })`.
+  `결정 사항`, `후속 조치` — `<p className="whitespace-pre-wrap break-words">` (or `없음`); a `연결된 할 일`
+  block (v24) with one `TodoRow` per linked live task — lead `완료` when closed, otherwise the to-do row's own chip
+  (`linkedTaskLead`), struck through when closed — each tapping `onOpenTask(id)` →
+  `setModal({ type: "taskDetail", taskId })`, which replaces this sheet in the single modal slot; ids whose task no
+  longer exists are skipped and counted, `삭제된 할 일 {n}건`; none linked → `연결된 할 일이 없어요.`; a full-width
+  `수정` button → `setModal({ type: "meeting", meetingId })`.
+- **Reverse side**: `TaskDetailModal` shows `관련 회의록` — the meetings whose `taskIds` include the task, newest
+  first, each a `TodoRow` led by the full `date` and titled with the meeting title, opening `MeetingViewModal`. The
+  section is hidden when no meeting links the task ([tasks.md](tasks.md)).
 
 ## Root handlers and toasts
 Clone-pattern updates next to the business handlers, all reading and writing only `meetingProjects` and
@@ -126,19 +159,27 @@ Clone-pattern updates next to the business handlers, all reading and writing onl
 | `removeProject(id)` | refuses (toast only, no state change) when the project still has minutes; otherwise drops it | `프로젝트를 삭제했어요` |
 | `addMeeting(next)` | refused by `meetingFits` when it would cross the budget (returns the message, writes nothing); otherwise prepends `{ id: uid(), ...next, createdAt: today }` | `회의록을 등록했어요` |
 | `updateMeeting(id, next)` | refused the same way; otherwise replaces the record, keeping `id` and `createdAt` | `회의록을 수정했어요` |
-| `removeMeeting(id)` | confirms by name, then drops the record | `회의록을 삭제했어요` |
+| `removeMeeting(id)` | confirms by name, then drops the record; no task changes | `회의록을 삭제했어요` |
+
+Two task handlers write `meetings` since v24, and only to remove a link: `removeTask(id)` drops the id from every
+meeting's `taskIds` in the same clone update that removes the task, and `removeGoal(id)` does the same for the
+open tasks it deletes with an active goal. Links therefore never dangle going forward; a dangling id from an older
+or hand-edited save is still skipped and counted at render, never cleaned up by a read.
 
 `meetingFits(next, prevLen = 0)`: `storageUsedWith(state) + JSON.stringify(next).length - prevLen <=
 STORAGE_BUDGET` (`prevLen` is the stored length of the record being replaced, so editing a meeting is judged
 against the space it frees, not double-counted).
 
-## Backup, reset and migration (schema v23)
+## Backup, reset and migration (schema v23, v24)
 ```js
 if (s.v < 23) {
   s = { ...s, v: 23, meetingProjects: s.meetingProjects || [], meetings: s.meetings || [] };
 }
+if (s.v < 24) {
+  s = { ...s, v: 24, meetings: (s.meetings || []).map((m) => ({ ...m, taskIds: Array.isArray(m.taskIds) ? m.taskIds : [] })) };
+}
 ```
-`freshState`: `v: 23`, `meetingProjects: []`, `meetings: []`. `exportBackup` writes the whole `state`, so both
+`freshState`: `v: 24`, `meetingProjects: []`, `meetings: []`. `exportBackup` writes the whole `state`, so both
 arrays travel in the backup file with no code change of their own; `importBackup` runs the file's `state` through
 `migrate`, so an older backup gains the two empty arrays on import; `resetAll` deletes the state key, which
 removes every project and every meeting along with the rest of the save. See
@@ -146,10 +187,13 @@ removes every project and every meeting along with the rest of the save. See
 
 `demoState` carries two synthetic projects (`○○물산 재고 관리 자동화`, `△△테크 문서 검색 AI`) and three short
 synthetic minutes dated 9, 3 and 1 days before today, with no personal names (`담당자 A`, `담당자 B`) and no
-`eventId` link.
+`eventId` link. `유지보수 범위 협의` links two demo tasks (`이력서 초안 작성`, `CATIA·도면 연습 1시간`) so both
+sides of the task link show in the demo; the other two carry `taskIds: []`.
 
 ## What a meeting never does
 - No `goalId`, no difficulty, no points, no trophy, no achievement record, no streak effect, no evidence gate.
+- Linking a task never changes it: no status, due date, goal, KR count or completion moves, and the task sheet's
+  `관련 회의록` list is derived at render. A meeting never creates a task.
 - It never runs through `tryComplete`, `completeTask` or `needsEvidence` — there is no completion path for a
   meeting at all.
 - It is excluded from `agendaOf`, `todoOf`, `krProgress` and `goalProgress`; `할 일` never lists a meeting.

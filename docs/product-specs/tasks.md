@@ -108,7 +108,7 @@ for anything completed before today; today's own completions also stay struck th
 
 ## Detail sheets — where everything else, and the one completion path, live
 
-### `TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, onViewEvidence })`
+### `TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, onViewEvidence, onOpenMeeting })`
 `modal: { type: "taskDetail", taskId }`. Reads the live task (`state.tasks.find`) and returns `null` once it is
 gone, so a sheet left open across a delete disappears with its task. Title: the task title. Body, one `CvFact`
 row each (`CvFact` gained an optional `wrap` prop for this sheet — `break-words` instead of `truncate` for the
@@ -132,9 +132,17 @@ border-rose-800 text-rose-300`) → `onRemove(q.id)`. No completion control once
 record. Root wiring: `onComplete={tryComplete}` — plain tasks: `completeTask` already calls `setModal(null)`;
 gated tasks: `tryComplete` replaces this sheet with the study, activity or evidence modal, exactly as the old
 row's checkbox did ([Rules 10, 11, 16, 17](../design-docs/core-beliefs.md#rule-10)). `onRemove={(id) => {
-removeTask(id); setModal(null); }}` (`removeTask` unchanged — it asked nothing before either, tracked as
-[TD-47](../exec-plans/tech-debt-tracker.md)). `onViewEvidence={(q) => setModal({ type: "evidenceView", task: q
-})}`.
+removeTask(id); setModal(null); }}` (`removeTask` still asks nothing, tracked as
+[TD-47](../exec-plans/tech-debt-tracker.md); since schema v24 it also drops the id from every meeting's `taskIds`
+in the same clone update). `onViewEvidence={(q) => setModal({ type: "evidenceView", task: q })}`.
+
+`관련 회의록` (schema v24, 2026-09-16): between the fact rows and the actions, a `SectionLabel` and one `TodoRow` per
+meeting whose `taskIds` include this task (`meetingsOfTask(state, id)`, newest first by `meetingOrder`), led by the
+meeting's full `date` in a zinc chip and titled with the meeting title. Tapping one calls `onOpenMeeting(id)` →
+`setModal({ type: "meetingView", meetingId })`, which replaces this sheet in the single modal slot; closing that
+view returns to the list. The section is not rendered when no meeting links the task, so an unlinked task sheet is
+unchanged. The list is derived at render and nothing about the task changes when a meeting links it
+([Rule 9](../design-docs/core-beliefs.md#rule-9), [meetings.md](meetings.md)).
 
 ### `EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit })`
 `modal: { type: "eventDetail", eventId, date }`, title `일정 — {ev.title}`. Body: the existing `EventRow` for the

@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 23 |
+| State schema version (`freshState.v`) | 24 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v23 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v24 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 23,
+  v: 24,
   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -46,8 +46,11 @@
             paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
   meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
   meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?,       // trophy, goal or streak (rules 1, 18). A meeting's time lives
-              summary, decisions?, actions?, eventId?, createdAt }],       // only in events; eventId (+ date) points at one occurrence and
-                                                                          // nothing is copied from it. Order and storage use are derived.
+              summary, decisions?, actions?, eventId?, createdAt,           // only in events; eventId (+ date) points at one occurrence and
+              taskIds[] }],                                               // nothing is copied from it. Order and storage use are derived.
+                                                                          // taskIds (v24): ids of existing tasks the minutes refer to, at most
+                                                                          // 10; linking changes no task, and the task sheet's reverse list is
+                                                                          // derived at render. Deleting a task removes its id here.
   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -65,13 +68,14 @@ agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upco
 contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
 business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
 the displayed age (`ageText`) and the total months of practice (`careerMonths`), the calendar export file (`buildIcs`),
-and the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`).
+the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`),
+and a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`).
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 23,
+  v: 24,
   profile: null,
   areas,
   tasks: [],
@@ -180,14 +184,17 @@ const demoState = () => {
   const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20) };
   const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6) };
   s.meetingProjects = [mp2, mp1];
+  // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
+  const linkedTaskIds = s.tasks.filter((q) => q.title === "이력서 초안 작성" || q.title === "CATIA·도면 연습 1시간").map((q) => q.id);
   s.meetings = [
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
-      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1) },
+      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [] },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
-      summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3) },
+      summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3),
+      taskIds: linkedTaskIds },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
-      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9) },
+      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9), taskIds: [] },
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -225,25 +232,26 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v21 → v21 | v21: the CV — exact personal facts replace the vague chips. name, birth, email, phone and the two record arrays profile.edus / profile.careers are added empty; nothing is removed. age, edu, career, majorField and majorName stay exactly as the old save wrote them: edu and career are the frozen inputs of the one-time |
 | < v22 → v22 | v22: exam scores are recorded exactly as the score report states them — tasks[].score and exams.best[famId].score, both optional display strings; payout, grade and D stay band-based (rules 1, 2, 6). Nothing is backfilled: a save from before v22 simply has no score and shows its band label. The retired |
 | < v23 → v23 | v23: meeting minutes — meetingProjects[] and meetings[], hand-written records grouped by project. A record, never a task: no payout, no trophy, no goal, no streak (rules 1, 18). The time of a meeting stays a schedule event; a meeting stores only its date and an optional eventId. Nothing existing is changed. |
+| < v24 → v24 | v24: meeting task links — meetings[].taskIds, the ids of existing tasks the minutes refer to. A link is a reference only: it pays nothing, completes nothing and moves no goal or streak (rules 1, 9, 18). Every meeting is backfilled with an empty list; no other field is changed. |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 4618 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 4618 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 4618 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 6301 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 6534 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 6987 | App root |
-| `liferpg-img-${slot}` | 7027 | App root |
-| `liferpg-img-ev-${id}` | 7050 | App root |
-| `liferpg-img-ev-${q.id}` | 7229 | App root |
-| `liferpg-img-ev-${t.id}` | 7563 | App root |
-| `liferpg-img-study-${t.id}-1` | 7563 | App root |
-| `liferpg-img-study-${t.id}-2` | 7563 | App root |
-| `liferpg-img-folio-${f.id}` | 7569 | App root |
+| `liferpg-img-ev-${task.id}` | 4631 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 4631 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 4631 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 6326 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 6559 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 7117 | App root |
+| `liferpg-img-${slot}` | 7157 | App root |
+| `liferpg-img-ev-${id}` | 7180 | App root |
+| `liferpg-img-ev-${q.id}` | 7365 | App root |
+| `liferpg-img-ev-${t.id}` | 7701 | App root |
+| `liferpg-img-study-${t.id}-1` | 7701 | App root |
+| `liferpg-img-study-${t.id}-2` | 7701 | App root |
+| `liferpg-img-folio-${f.id}` | 7707 | App root |
 
 ## Demo data (`demoState`)
 
