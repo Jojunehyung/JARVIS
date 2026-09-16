@@ -39,8 +39,8 @@ read `meetingProjects` or `meetings` — nothing here reaches the to-do list, th
 calendar file ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
 
 ## Caps and the storage arithmetic
-`MEETING_LIMITS = { title: 40, attendees: 80, summary: 1000, decisions: 400, actions: 400 }` (widened 2026-09-16 at the user's request, from 800 / 200 / 200),
-`PROJECT_LIMITS = { name: 40, note: 200 }`. 1,000 Hangul characters is a page and a bit of key points, still not a transcript.
+`MEETING_LIMITS = { title: 40, attendees: 80, summary: 1500, decisions: 600, actions: 600 }` (widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16 and to 1500 / 600 / 600 on 2026-09-17),
+`PROJECT_LIMITS = { name: 40, note: 200 }`. 1,500 Hangul characters is about two pages of key points, still not a transcript.
 `MEETING_LIMITS.tasks = 10` caps the task links; `MEETING_TASK_ROWS = 30` shapes
 the picker (below).
 
@@ -48,10 +48,10 @@ the picker (below).
   chars, shared with the rest of the save and every thumbnail. `JSON.stringify` keeps Hangul as one char; a
   newline costs two (`\n`).
 - Overhead of an empty record (ten-char `uid`s, both dates, all keys, the comma), measured, is about 190 chars.
-- Largest record: 40 + 80 + 1,000 + 400 + 400 + 190 = **2,110 chars**, plus one per newline.
+- Largest record: 40 + 80 + 1,500 + 600 + 600 + 190 = **3,010 chars**, plus one per newline.
 - Task links (v24): `,"taskIds":[]` adds 13 chars to every record and each linked id 12 more (a ten-char `uid`,
   two quotes, a comma, less one comma for the first), so ten links add 13 + 120 − 1 = **132 chars**: a full record
-  with ten links is about 2,242 chars. `meetingFits` stringifies the whole record, `taskIds` included, so the same guard refuses a save
+  with ten links is about 3,142 chars. `meetingFits` stringifies the whole record, `taskIds` included, so the same guard refuses a save
   that would cross the budget; no new check was needed.
 - Typical record assumed: title 25, attendees 30, summary 400, decisions 100, actions 100 → 655 + 190 = **~850 chars**. Unchanged by the wider caps: a higher cap does not make minutes longer.
 - Frequency assumed: "several a day" = 3 meetings per working day × 250 days = **750 records a year** (2 a day = 500).
@@ -60,10 +60,10 @@ the picker (below).
 |---|---|---|---|
 | 3/day, typical (850) | 0.64 M chars | 1.91 M (52 %) | 3.19 M (87 %) |
 | 2/day, typical (850) | 0.43 M chars | 1.28 M (35 %) | 2.13 M (58 %) |
-| 3/day, every field full (2,110) | 1.58 M chars | exceeds (after about 2 years 4 months) | exceeds |
+| 3/day, every field full (3,010) | 2.26 M chars | exceeds (after about 1 year 7 months) | exceeds |
 
-Typical minutes fit three to five years at several a day; completely full records at three a day fit about two
-years and four months. The caps alone cannot promise more, so two facts guard the rest: (1) the tab always states its storage
+Typical minutes fit three to five years at several a day; completely full records at three a day fit about a
+year and seven months. The caps alone cannot promise more, so two facts guard the rest: (1) the tab always states its storage
 use, `저장 공간 {mb}MB / 3.5MB` (`storageUsedWith(state)`, memoised on `state`, not `storageUsedBytes()` alone —
 see below); (2) saving a meeting is refused, with the form kept open and nothing lost, when the record would push
 total usage over the budget. The backup file is the way out of a full budget (export, then delete old minutes).

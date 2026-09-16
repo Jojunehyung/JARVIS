@@ -6663,17 +6663,17 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    stored — only a hand-written or pasted summary, capped below.
    Storage arithmetic (the budget is counted in string length, like `storageUsedBytes`: 3.5 × 1,048,576 = 3,672,064
    chars shared with the rest of the save and every thumbnail). An empty record costs about 190 chars (ids, both
-   dates, keys, the comma); a record with every field full costs 40 + 80 + 1,000 + 400 + 400 + 190 = 2,110 chars plus one
-   per newline (caps widened 2026-09-16 at the user's request, from 800 / 200 / 200); a typical one (25 / 30 / 400 / 100 /
+   dates, keys, the comma); a record with every field full costs 40 + 80 + 1,500 + 600 + 600 + 190 = 3,010 chars plus one
+   per newline (caps widened at the user's request on 2026-09-16 and 2026-09-17, from 800 / 200 / 200); a typical one (25 / 30 / 400 / 100 /
    100) stays about 850, since a higher cap does not make minutes longer. At three a working day (750 a year) typical
    minutes use 0.64 M chars a year — 52 % of the budget after three years, 87 % after five; completely full records use
-   1.58 M a year and cross the budget in about two years and four months.
+   2.26 M a year and cross the budget in about a year and seven months.
    So the caps alone promise nothing, and two facts guard the rest: the tab always states the storage in use, and a
    save that would cross the budget is refused with the form kept open (`meetingFits` in the root).
    Task links (v24) add `,"taskIds":[]` = 13 chars to every record and 12 per linked id (a 10-char uid, two quotes,
-   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 2,242. `meetingFits` measures the
+   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 3,142. `meetingFits` measures the
    serialised record, `taskIds` included, so the same guard covers it. */
-const MEETING_LIMITS = { title: 40, attendees: 80, summary: 1000, decisions: 400, actions: 400, tasks: 10 };
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 1500, decisions: 600, actions: 600, tasks: 10 };
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
