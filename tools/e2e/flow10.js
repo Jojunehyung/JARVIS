@@ -86,10 +86,10 @@ module.exports = async (h) => {
     await clickInModalExact("등록");
     e = await modalError();
     if (e !== "회의 요약을 입력해 주세요.") throw new Error("missing summary gave: " + (e || "no error"));
-    await fillMeeting({ summary: "가".repeat(801) });
+    await fillMeeting({ summary: "가".repeat(1001) });
     await clickInModalExact("등록");
     e = await modalError();
-    if (e !== "회의 요약은 800자까지예요 — 지금 801자예요.") throw new Error("over-cap summary gave: " + (e || "no error"));
+    if (e !== "회의 요약은 1000자까지예요 — 지금 1001자예요.") throw new Error("over-cap summary gave: " + (e || "no error"));
     if (((await readState()).meetings || []).length) throw new Error("a refused meeting reached the save");
     await closeModal();
   });
