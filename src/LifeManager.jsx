@@ -2481,6 +2481,11 @@ const todoOf = (state, today) => {
   for (const q of agendaOf(state, today).all) {
     rows.push({ key: `t:${q.id}`, kind: "task", date: q.due || null, time: "", title: q.title, task: q });
   }
+  // Tasks completed today stay in their group, flagged done, so a completion does not look like a disappearance.
+  for (const q of state.tasks || []) {
+    if (!(q.type === "daily" ? q.doneDates?.includes(today) : q.status === "done" && q.doneAt === today)) continue;
+    rows.push({ key: `t:${q.id}`, kind: "task", date: q.due || null, time: "", title: q.title, task: q, done: true });
+  }
 
   // Schedule occurrences — records, never tasks: a row here completes nothing and pays nothing (rules 1, 10).
   const evRow = (o) => ({
@@ -2491,13 +2496,17 @@ const todoOf = (state, today) => {
   const ahead = upcomingEvents(state, today, EVENT_HORIZON_DAYS);
   const seenLater = new Set();
   for (const o of [...past, ...ahead]) {
-    if (o.done) continue; // a ticked occurrence is not to-do; un-ticking stays reachable from `오늘 완료` and the schedule tab
+    // A ticked occurrence before today is history and lives in the `완료` archive. From today on it stays in its
+    // date's group, flagged done; un-ticking stays reachable from its row's sheet and the schedule tab.
+    if (o.done && o.date < today) continue;
     const r = evRow(o);
     // `이후` collapses each event to its earliest occurrence (the later group collapses repeats itself): one weekly repeat would
     // otherwise add 12 rows over the 90-day horizon and a daily one 83. The near groups stay one row per occurrence.
+    // Open and ticked occurrences collapse separately, so a ticked first occurrence never hides the next open one.
     if (bucket(r) === "later") {
-      if (seenLater.has(o.ev.id)) continue;
-      seenLater.add(o.ev.id);
+      const k = `${o.ev.id}|${o.done ? 1 : 0}`;
+      if (seenLater.has(k)) continue;
+      seenLater.add(k);
     }
     rows.push(r);
   }
@@ -2525,25 +2534,32 @@ const todoOf = (state, today) => {
     });
   }
 
+  // A finished item is not overdue: a done daily task, a done task without a date and a done row that would land in
+  // `기한 지남` all sit in `오늘`. Business rows are never done.
+  const doneBucket = (r) => {
+    if (r.kind === "task" && (r.task?.type === "daily" || !r.date)) return "today";
+    const b = bucket(r);
+    return b === "overdue" ? "today" : b;
+  };
   const by = { overdue: [], today: [], tomorrow: [], week: [], later: [] };
-  for (const r of rows) by[bucket(r)].push(r);
-  // Today's completions, tasks and ticked occurrences together — business records are never "done".
-  const done = todoSort([
-    ...(state.tasks || [])
-      .filter((q) => (q.type === "daily" ? q.doneDates?.includes(today) : q.status === "done" && q.doneAt === today))
-      .map((q) => ({ key: `t:${q.id}`, kind: "task", date: q.due || null, time: "", title: q.title, task: q, done: true })),
-    ...eventsOn(state, today).filter((o) => o.done).map(evRow),
-  ]);
+  const openBy = { overdue: 0, today: 0, tomorrow: 0, week: 0, later: 0 };
+  for (const r of rows) {
+    const b = r.done ? doneBucket(r) : bucket(r);
+    by[b].push(r);
+    if (!r.done) openBy[b]++;
+  }
+  // Within a group, open rows first and done rows after them, each in `todoSort` order.
+  const groupRows = (list) => [...todoSort(list.filter((r) => !r.done)), ...todoSort(list.filter((r) => r.done))];
   return {
-    groups: TODO_GROUPS.map(([key, label]) => ({ key, label, rows: todoSort(by[key]) })),
-    done,
+    groups: TODO_GROUPS.map(([key, label]) => ({ key, label, rows: groupRows(by[key]) })),
+    // The counts state open rows only, so done rows left in a group never inflate them (rule 13).
     // `week` runs from today to Sunday, so it covers today and tomorrow too: it answers how much is left this
     // week, not how many rows sit in the group of the same name — the same semantics as the schedule tab's counts line.
     counts: {
-      overdue: by.overdue.length,
-      today: by.today.length,
-      week: by.today.length + by.tomorrow.length + by.week.length,
-      open: rows.length,
+      overdue: openBy.overdue,
+      today: openBy.today,
+      week: openBy.today + openBy.tomorrow + openBy.week,
+      open: openBy.overdue + openBy.today + openBy.tomorrow + openBy.week + openBy.later,
     },
   };
 };
@@ -2892,7 +2908,7 @@ const icsUid = (kind, id, date) => {
 
 /* What the file carries, as descriptors — no RFC text here. The window is `today` to `end`, the span
    `upcomingEvents(state, today, days)` covers. Reads `state.events`, `state.tasks` and `state.goals`, nothing else.
-   - Events: an occurrence the user ticked is left out, as `todoOf` leaves it out. A repeat the RFC rule states
+   - Events: an occurrence the user ticked is left out — it is no longer open work. A repeat the RFC rule states
      exactly (daily, weekly, monthly on day 1-28) is one entry with a rule, and its cancelled and ticked dates become
      exceptions. A monthly event on day 29-31 is written as the dates `occurrencesOf` returns, one entry each: a
      conforming calendar drops every month FREQ=MONTHLY cannot fit that day into, where the app clamps to the last day.
@@ -4826,7 +4842,7 @@ const LEAD_NONE = "text-zinc-500 border-zinc-700";
    row (`{ kind, date, time, task | ev, done }`); `archived` marks a row of the `완료` view. */
 const todoLeadOf = (r, today, archived = false) => {
   const q = r.kind === "task" ? r.task : null;
-  if (archived) return { text: (lastDoneDate(q) || "").slice(5) || "날짜 없음", tone: LEAD_DONE };
+  if (archived) return { text: ((q ? lastDoneDate(q) : r.date) || "").slice(5) || "날짜 없음", tone: LEAD_DONE };
   const doneToday = q ? (q.type === "daily" ? (q.doneDates || []).includes(today) : q.status === "done") : false;
   if (r.done || doneToday) return { text: "완료", tone: LEAD_DONE };
   // Today's group already names the day, so a timed appointment of today leads with its clock time instead.
@@ -4864,10 +4880,16 @@ function TaskTab({ state, today, onOpenTask, onOpenEvent, onOpenBiz, onCatalog, 
   const [view, setView] = useState("todo"); // open list or completed archive — a view preference, never stored (rule 9)
   const td = useMemo(() => todoOf(state, today), [state, today]);
   const biz = useMemo(() => bizSummary(state, today), [state, today]);
-  const doneTasks = useMemo(() => (state.tasks || [])
-    .filter((q) => (q.type === "daily" ? (q.doneDates || []).length : q.status === "done"))
-    .sort((a, b) => (lastDoneDate(b) || "").localeCompare(lastDoneDate(a) || "") || a.title.localeCompare(b.title)), [state.tasks]);
-  const doneShown = doneTasks.slice(0, TODO_DONE_MAX);
+  // The archive: completed tasks, dated by their last completion, and every ticked event occurrence, dated by the
+  // occurrence — one list, newest first. Derived at render, never stored (rule 9).
+  const doneAll = useMemo(() => [
+    ...(state.tasks || [])
+      .filter((q) => (q.type === "daily" ? (q.doneDates || []).length : q.status === "done"))
+      .map((q) => ({ key: `t:${q.id}`, kind: "task", date: lastDoneDate(q), title: q.title, task: q, done: true })),
+    ...(state.events || []).flatMap((ev) => (ev.doneDates || [])
+      .map((d) => ({ key: `e:${ev.id}-${d}`, kind: "event", date: d, title: ev.title || "", ev, done: true }))),
+  ].sort((a, b) => (b.date || "").localeCompare(a.date || "") || a.title.localeCompare(b.title)), [state.tasks, state.events]);
+  const doneShown = doneAll.slice(0, TODO_DONE_MAX);
   const activeGoals = (state.goals || []).filter((g) => g.status === "active");
   // A task row's marker: the goal marker when its goal is gone, otherwise a lock on an open gated task — tapping it
   // leads to an evidence gate, not a one-tap completion (rules 10, 16).
@@ -4888,7 +4910,7 @@ function TaskTab({ state, today, onOpenTask, onOpenEvent, onOpenBiz, onCatalog, 
     }
     return <TodoRow key={r.key} lead={lead} title={r.title} marker={NO_GOAL_MARKER} onOpen={() => onOpenBiz(r)} />;
   };
-  const onlyBiz = td.counts.open > 0 && td.groups.every((g) => g.rows.every((r) => r.kind === "biz"));
+  const onlyBiz = td.counts.open > 0 && td.groups.every((g) => g.rows.every((r) => r.done || r.kind === "biz"));
 
   return (
     <>
@@ -4949,22 +4971,19 @@ function TaskTab({ state, today, onOpenTask, onOpenEvent, onOpenBiz, onCatalog, 
           {/* Business rows complete nothing, so a list made only of them is not a list of open work */}
           {onlyBiz && <p className="text-xs text-zinc-500">완료할 실행·일정이 없어요 — 남은 항목은 사업 기록이에요.</p>}
 
-          {td.done.length > 0 && (
-            <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-              <SectionLabel tone="text-emerald-400">오늘 완료</SectionLabel>
-              <div className="space-y-1.5">{td.done.map(rowOf)}</div>
-            </section>
-          )}
         </>
       ) : (
-        /* The archive keeps `증거 보기` reachable (inside the task sheet) for anything completed before today; events stay in the `일정` tab */
+        /* The archive keeps `증거 보기` reachable (inside the task sheet) for anything completed before today; a ticked
+           event occurrence opens its event sheet for that date, which pays nothing and moves no goal (rule 1) */
         <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-          <p className="text-xs font-mono text-zinc-400">완료 {doneTasks.length}건 · 최근 {doneShown.length}건</p>
+          <p className="text-xs font-mono text-zinc-400">완료 {doneAll.length}건 · 최근 {doneShown.length}건</p>
           {doneShown.length === 0
             ? <p className="text-sm text-zinc-500 text-center py-3">완료한 항목이 없어요.</p>
-            : <div className="space-y-1.5 mt-2.5">{doneShown.map((q) => (
-              <TodoRow key={q.id} lead={todoLeadOf({ kind: "task", task: q }, today, true)} title={q.title} done
-                marker={taskMarker(q, true)} onOpen={() => onOpenTask(q.id)} />
+            : <div className="space-y-1.5 mt-2.5">{doneShown.map((r) => (r.kind === "task"
+              ? <TodoRow key={r.key} lead={todoLeadOf(r, today, true)} title={r.title} done
+                marker={taskMarker(r.task, true)} onOpen={() => onOpenTask(r.task.id)} />
+              : <TodoRow key={r.key} lead={todoLeadOf(r, today, true)} title={r.title} done
+                marker={NO_GOAL_MARKER} onOpen={() => onOpenEvent(r.ev.id, r.date)} />
             ))}</div>}
         </section>
       )}

@@ -288,17 +288,43 @@ module.exports = async (h) => {
       if (!sheet.includes(t)) throw new Error(`the event sheet does not state "${t}": ` + sheet.slice(0, 300));
     }
     if (sheet.includes("완료하기")) throw new Error("the event sheet offers the task completion button");
+    const countsOf = () => page.evaluate(() => [...document.querySelectorAll("main p")]
+      .map((p) => (p.innerText || "").replace(/\s+/g, " ").trim()).find((t) => /^기한 지남 \d+ · 오늘 \d+ · 이번 주 \d+$/.test(t)) || "");
+    const todayCount = (line) => Number((line.match(/· 오늘 (\d+) ·/) || [])[1]);
+    const beforeCounts = await countsOf();
     await clickInModalExact("완료 표시");
     await closeModal();
-    const done = (await todoRows("오늘 완료")) || [];
-    if (!done.some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence did not move into the done-today group: " + done.map((r) => r.title).join(" | "));
-    if (((await todoRows("오늘")) || []).some((r) => r.title === "서류 제출 마감")) throw new Error("the ticked occurrence is still listed as open");
-    await todoRows("오늘 완료", { title: "서류 제출 마감" });
+    // The ticked occurrence stays in `오늘`, struck through and led by `완료`; no done-today section exists and the
+    // counts drop by one, because they state open rows only.
+    if (((await todoRows("오늘 완료")) || []).length) throw new Error("the removed done-today section is back");
+    const ticked = ((await todoRows("오늘")) || []).find((r) => r.title === "서류 제출 마감");
+    if (!ticked) throw new Error("the ticked occurrence left the today group");
+    if (!ticked.text.startsWith("완료")) throw new Error("the ticked occurrence does not lead with the done chip: " + ticked.text);
+    const struck = await page.evaluate(() => [...document.querySelectorAll("main .text-sm.font-semibold")]
+      .some((n) => (n.innerText || "").trim() === "서류 제출 마감" && /line-through/.test(n.className)));
+    if (!struck) throw new Error("the ticked occurrence is not struck through");
+    const afterCounts = await countsOf();
+    if (todayCount(afterCounts) !== todayCount(beforeCounts) - 1) throw new Error(`the counts did not drop by one: ${beforeCounts} → ${afterCounts}`);
+    // The `완료` archive lists the ticked occurrence beside completed tasks.
+    await h.clickExact("완료");
+    await sleep(400);
+    const archived = await page.evaluate(() => {
+      const sec = [...document.querySelectorAll("main section")].find((x) => /^완료 \d+건 · 최근 \d+건/.test((x.innerText || "").trim()));
+      const node = sec && [...sec.querySelectorAll(".text-sm.font-semibold")].find((n) => (n.innerText || "").trim() === "서류 제출 마감");
+      const row = node && node.closest("button");
+      return row ? (row.innerText || "").replace(/\s+/g, " ").trim() : null;
+    });
+    if (!archived) throw new Error("the archive does not list the ticked occurrence");
+    if (!archived.includes("목표 기여 없음")) throw new Error("the archived event row hides that it serves no goal: " + archived);
+    // Back to the open list through the chip in `main` — the tab bar carries a button of the same name.
+    await page.evaluate(() => [...document.querySelectorAll("main button")].find((b) => (b.innerText || "").trim() === "할 일")?.click());
+    await sleep(400);
+    await todoRows("오늘", { title: "서류 제출 마감" });
     await sleep(500);
     await clickInModalExact("완료 취소");
     await closeModal();
-    const back = (await todoRows("오늘")) || [];
-    if (!back.some((r) => r.title === "서류 제출 마감")) throw new Error("un-ticking did not return the deadline to the today group: " + back.map((r) => r.title).join(" | "));
+    const back = ((await todoRows("오늘")) || []).find((r) => r.title === "서류 제출 마감");
+    if (!back || back.text.startsWith("완료")) throw new Error("un-ticking did not return the deadline to an open row in the today group: " + JSON.stringify(back));
   });
 
   /* Today's figure where it now lives: the removed home line counted `서류 제출 마감` twice (today's occurrence and a

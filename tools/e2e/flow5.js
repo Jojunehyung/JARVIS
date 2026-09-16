@@ -258,6 +258,12 @@ module.exports = async (h) => {
     await h.clickExact("완료");
     await sleep(400);
     const before = await readState();
+    // The count line states the real total: every task with a completion plus every ticked event occurrence.
+    const total = (before.tasks || []).filter((q) => (q.type === "daily" ? (q.doneDates || []).length : q.status === "done")).length
+      + (before.events || []).reduce((n, e) => n + (e.doneDates || []).length, 0);
+    const countLine = await page.evaluate(() => [...document.querySelectorAll("main p")]
+      .map((p) => (p.innerText || "").trim()).find((t) => /^완료 \d+건 · 최근 \d+건$/.test(t)) || "");
+    if (countLine !== `완료 ${total}건 · 최근 ${Math.min(total, 40)}건`) throw new Error(`the archive count line is "${countLine}", expected ${total} in total`);
     const seen = await page.evaluate((t) => {
       // The archive is the one section in `main` led by the `완료 {n}건 · 최근 {n}건` count line.
       const sec = [...document.querySelectorAll("main section")].find((x) => /^완료 \d+건 · 최근 \d+건/.test((x.innerText || "").trim()));

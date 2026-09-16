@@ -9,7 +9,7 @@ daysBetween(a, b) = whole days from a to b, both "YYYY-MM-DD", anchored at noon 
 mondayOf(date)    = the Monday of that date's week
 lastDoneDate(q)   = daily → last of doneDates · once → doneAt · otherwise null
 ```
-`doneTodayCount` was deleted 2026-09-15 with its only call site, the home profile card's `오늘 {n}건 완료` line — home is a CV now and states no date-scoped fact ([home.md](../product-specs/home.md)); today's completions are still visible in the `실행` tab's `오늘 완료` group and the briefing's `연속 기록` line.
+`doneTodayCount` was deleted 2026-09-15 with its only call site, the home profile card's `오늘 {n}건 완료` line — home is a CV now and states no date-scoped fact ([home.md](../product-specs/home.md)); today's completions are still visible in the `할 일` tab, where a row completed today stays in its own group struck through (since 2026-09-16; the separate `오늘 완료` group was removed), and in the briefing's `연속 기록` line.
 
 ## `agendaOf(state, today)`
 Open tasks are `daily` tasks not completed today plus `once` tasks that are not done. They fall into five disjoint buckets, and `all` is their concatenation in this order:

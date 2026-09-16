@@ -117,8 +117,10 @@ const typeExact = async (placeholder, value) => {
 // Tap the to-do row whose title includes `title`: find the `.text-sm.font-semibold` title node inside `main` and walk up
 // to the enclosing row button (`bg-zinc-950` + `rounded-xl`). Rows carry no controls of their own, so this opens the
 // item's detail sheet. Returns false when no row matched.
+// Rows completed today stay in their group, struck through, so an open row of that title is preferred over a done one.
 const tapTodoRow = (title) => page.evaluate((t) => {
-  const node = [...document.querySelectorAll("main .text-sm.font-semibold")].find((e) => (e.innerText || "").includes(t));
+  const hits = [...document.querySelectorAll("main .text-sm.font-semibold")].filter((e) => (e.innerText || "").includes(t));
+  const node = hits.find((e) => !/line-through/.test(e.className || "")) || hits[0];
   let row = node;
   while (row && !(row.tagName === "BUTTON" && /bg-zinc-950/.test(row.className || "") && /rounded-xl/.test(row.className || ""))) row = row.parentElement;
   if (!row) return false;

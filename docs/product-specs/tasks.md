@@ -26,14 +26,15 @@ Props: `state, today, onOpenTask, onOpenEvent, onOpenBiz, onCatalog, onGoGoals, 
 - Business line, a button → `onGoBiz` (switches to `사업` on `계약`), rendered only when `bizSummary(state, today).counts.unpaid > 0 || counts.quote > 0`: `사업 입금 미확인 {n}건 · 견적 대기 {n}건 ›`, the unpaid count in rose above zero. This is what keeps the `BIZ_ALERT_MAX` cap below, and the excluded stale quotes, honest — the full counts stay on screen even though the list itself shows at most three unpaid months and no quote at all.
 - Chip row (2026-09-15): `할 일` / `완료` view chips — component state (`useState`), never `state.ui` ([Rule 9](../design-docs/core-beliefs.md#rule-9)) — on the left, and on the right `브리핑 열기 ›` → `onBriefing` (`setModal({ type: "briefing" })`). This button is the manual way back into the daily briefing once its auto-open is dismissed, and through it the only way back to the journal, the weekly review and the assistant bridge; see [home.md](home.md), [daily-briefing.md](daily-briefing.md).
 
-### `todoOf(state, today)` — unchanged by the 2026-09-16 rewrite
+### `todoOf(state, today)`
 The single expansion this tab reads (`agendaOf` inside it). Pure — computed at render, never stored. Returns
-`{ groups, done, counts }`.
+`{ groups, counts }`. Since 2026-09-16 (done rows in place) an item completed today stays in its group, flagged
+`done: true`, instead of moving to a separate `오늘 완료` section, which is removed.
 
-- **Groups**, rendered only when non-empty, in this order: `기한 지남` (rose) · `오늘` (amber) · `내일` (zinc-400) · `이번 주` (zinc-400) · `이후` (zinc-500), then `오늘 완료` (emerald) last.
+- **Groups**, rendered only when non-empty, in this order: `기한 지남` (rose) · `오늘` (amber) · `내일` (zinc-400) · `이번 주` (zinc-400) · `이후` (zinc-500).
 - **Bucketing**, one rule for all three row kinds (`tomorrow = today + 1`; `weekEnd` = the coming Sunday): a task with no date is `오늘` when it is `daily`, otherwise `이후` (only a task can be undated); a dated row is `기한 지남` before today, `오늘` / `내일` on those dates, `이번 주` through `weekEnd`, else `이후`.
 - **Task rows** come from `agendaOf(state, today).all` — the one definition of "open" this tab and the briefing share; `date = task.due || null`.
-- **Event rows**: missed `마감` occurrences from the last `EVENT_PAST_DAYS` (30 days) plus every occurrence over the next `EVENT_HORIZON_DAYS` (90 days). A ticked occurrence is left out — un-ticking stays reachable from `오늘 완료` and from `일정`. Inside `이후` only, an event collapses to its earliest occurrence in the window, exactly the `ScheduleTab` rule, so one weekly repeat cannot add a dozen rows there; the near groups stay one row per occurrence.
+- **Event rows**: missed `마감` occurrences from the last `EVENT_PAST_DAYS` (30 days) plus every occurrence over the next `EVENT_HORIZON_DAYS` (90 days). A ticked occurrence dated before today is left out (it is history and lives in the `완료` archive); a ticked occurrence dated today or later stays in its date's group as a done row, and un-ticking stays reachable from its sheet and from `일정`. Inside `이후` only, an event collapses to its earliest occurrence in the window (open and ticked occurrences collapse separately), exactly the `ScheduleTab` rule, so one weekly repeat cannot add a dozen rows there; the near groups stay one row per occurrence.
 - **Business rows** — two dated facts, keyed to the month's closing day, never a stale quote:
 
   | Fact | Lands in | Row states |
@@ -43,8 +44,8 @@ The single expansion this tab reads (`agendaOf` inside it). Pure — computed at
 
   A stale quote has an age, not a date — there is no day its follow-up is due, so filing it under `기한 지남` (a claimed miss) or `오늘` (an invented deadline) would both be a false number under [Rule 13](../design-docs/core-beliefs.md#rule-13). It stays in the daily briefing and in `사업`'s `견적 대기` group; only its count reaches this tab, in the business line above. Business detail: [business.md](business.md).
 - **Sorting** inside a group: date first, then clock-timed rows in time order, then untimed rows task → event → business, ties by title — undated rows sort last, so in `오늘` the dated rows come before the daily tasks.
-- **`오늘 완료`**: today's completions — `daily` tasks whose `doneDates` includes today, `once` tasks done today, and ticked event occurrences — same sort. Business rows are never "done".
-- **`counts`**: `overdue` / `today` = the row counts of those two groups; `week` = `오늘` + `내일` + `이번 주` (how much is left this week); `open` = every open row across the five groups (`오늘 완료` excluded).
+- **Done rows** (`done: true`) stay in place: a `daily` task whose `doneDates` includes today sits in `오늘`; a `once` task with `doneAt === today` sits in the group its `due` puts it in, except that a finished item is not overdue — when that group would be `기한 지남`, or the task has no due date, it sits in `오늘`; a ticked event occurrence dated today or later sits in its date's group. Business rows are never done. Within a group, open rows come first and done rows after them, each in the sort order below.
+- **`counts`**: open rows only — done rows never inflate them. `overdue` / `today` = the open rows of those two groups; `week` = open rows of `오늘` + `내일` + `이번 주` (how much is left this week); `open` = every open row across the five groups.
 
 ## Rows — `TodoRow`, one shape for every item
 `TodoRow({ lead, title, done, marker, onOpen })`: a single full-width `<button>` (`bg-zinc-950 rounded-xl`, the
@@ -68,7 +69,7 @@ button, the event's own three buttons (they now live inside the event sheet), th
 
 ### Lead chip — `todoLeadOf(r, today, archived)`
 A pure helper, `{ text, tone }`, first match wins:
-1. `archived` (the `완료` view) → `{lastDoneDate(q).slice(5)}` (`MM-DD`), emerald; `날짜 없음` when there is no date.
+1. `archived` (the `완료` view) → `MM-DD` of `lastDoneDate(q)` for a task, of the occurrence date `r.date` for an event, emerald; `날짜 없음` when there is no date.
 2. A done row (`r.done`, or a task done today) → `완료`, emerald.
 3. An appointment (`약속`, not `마감`) dated today with a time → `{time}` (`HH:MM`), amber — the `오늘` group already says the day, so the time is what distinguishes today's appointments from each other.
 4. Any row with `r.date`: `r.date < today` → `기한 지남`, rose; `r.date === today` → `ddayStr(r.date)` (`D-DAY`), amber; later → `ddayStr(r.date)`, zinc-400. Business rows use their own `r.date` (the month-end date `todoOf` already assigns).
@@ -88,19 +89,22 @@ The `완료` archive (below) renders the same `TodoRow` with `archived` lead chi
 of its own — the sheet it opens has none either.
 
 ## Empty states
+The empty states look at open rows only; done rows left in a group do not suppress them.
 - No open row and no active goal: `EmptyQuestSvg` + `실행은 목표의 실행 단위입니다 — 목표가 먼저예요.` + button `목표 먼저 세우기 ›` → `onGoGoals`.
 - No open row with an active goal: `EmptyQuestSvg` + `예정된 항목이 없어요 — 실행·일정·사업 모두 0건이에요.`
-- Every open row is a business row: `완료할 실행·일정이 없어요 — 남은 항목은 사업 기록이에요.`
+- Every open row is a business row (done rows ignored): `완료할 실행·일정이 없어요 — 남은 항목은 사업 기록이에요.`
 
 ## `완료` view — the archive
-`state.tasks` filtered to any completion at all (`daily` with a non-empty `doneDates`, `once` with `status ===
-"done"`), sorted by `lastDoneDate` descending then title, capped at `TODO_DONE_MAX` (40, newest first — the
-count line still states the full total); count line `완료 {total}건 · 최근 {shown}건`; empty: `완료한 항목이
-없어요.` Rows are `TodoRow`s with `lead={todoLeadOf({ kind: "task", task: q }, today, true)}`, `done`, and the
-same marker rule as an open task row; tapping one opens `TaskDetailModal`, whose body carries no completion
-control while the task is closed — the archive stays a record, exactly as before the rewrite. This view is what
-keeps [Rule 16](../design-docs/core-beliefs.md#rule-16)'s `증거 보기` reachable (inside the sheet) for anything
-completed before today; today's own completions are already in `오늘 완료`.
+One list of two kinds, sorted newest first then by title, capped at `TODO_DONE_MAX` (40 — the count line still
+states the full total of both kinds): every task with any completion at all (`daily` with a non-empty
+`doneDates`, `once` with `status === "done"`), dated by `lastDoneDate`; and, since 2026-09-16, every ticked event
+occurrence (one row per date in `ev.doneDates`), dated by the occurrence. Count line `완료 {total}건 · 최근
+{shown}건`; empty: `완료한 항목이 없어요.` Rows are `TodoRow`s with `lead={todoLeadOf(r, today, true)}` and `done`. A
+task row uses the same marker rule as an open task row and opens `TaskDetailModal`, whose body carries no
+completion control while the task is closed — the archive stays a record. An event row carries `목표 기여 없음` and
+opens `EventDetailModal` for that occurrence date (its `완료 취소` is the schedule's own toggle, which pays nothing).
+This view is what keeps [Rule 16](../design-docs/core-beliefs.md#rule-16)'s `증거 보기` reachable (inside the sheet)
+for anything completed before today; today's own completions also stay struck through in their open-list group.
 
 ## Detail sheets — where everything else, and the one completion path, live
 
