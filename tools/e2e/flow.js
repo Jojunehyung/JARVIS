@@ -382,7 +382,15 @@ module.exports = async (h) => {
         await expectText("요구사항 정의서 v1");
         await expectText("◇◇스튜디오 예약 페이지 현황 메모");
       }
-      if (tab === "프로필") await expectText("TOEIC L&R 735");
+      if (tab === "프로필") {
+        await expectText("TOEIC L&R 735");
+        // v27: entering the demo opens nothing, so the daily reader is opened from the CV card's own button.
+        await clickText("오늘 읽을 것");
+        await sleep(400);
+        await expectText("오늘 읽을 것 —");
+        await expectText("어제 완료 · ○○물산 월 리포트 양식 회신");
+        await closeModal();
+      }
     }
   });
   await shot("demo");

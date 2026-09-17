@@ -1,6 +1,7 @@
-// Daily assistant — due dates, the `할 일` list's time-ordered groups, the briefing and the journal. The briefing
-// is opened from the `할 일` header since 2026-09-15, and the journal, the weekly review and the assistant bridge
-// are reached through it. The assistant bridge and the weekly review are appended in phase C.
+// Daily assistant — due dates, the `할 일` list's time-ordered groups, the briefing, the daily reader and the journal.
+// The briefing is opened from the `할 일` header since 2026-09-15 and from the daily reader since v27, which took over
+// the once-a-day auto-open; the journal, the weekly review and the assistant bridge are reached through the briefing.
+// The assistant bridge and the weekly review are appended in phase C.
 module.exports = async (h) => {
   const { step, clickText, clickInModal, clickInModalExact, clickTab, hasText, expectText, todoRows, typeInto, setValue, openTaskModalFor, closeModal, sleep, page, errors } = h;
   const readState = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
@@ -89,27 +90,76 @@ module.exports = async (h) => {
     if (st.act.briefingSeen !== today) throw new Error("briefingSeen not stamped: " + st.act.briefingSeen);
   });
 
-  await step("a new day opens the briefing on load", async () => {
-    await patchAct({ briefingSeen: await dstrIn(-1) });
+  // Since v27 the first load of a day opens the daily reader, not the briefing; the briefing is one tap away from it.
+  const READER_SECTIONS = (since) => ["오늘·내일 회의 준비", "오늘 업무", "기한 지난 후속 · 내 담당 미완료 후속", "최근 7일 결정 사항",
+    `${since} 이후 새로 들어온 것`, "계약·입금 미확인", "뒤처진 목표 페이스", "브리핑 ›"];
+
+  await step("a new day opens the reader on load with every section, and closing it stamps the day", async () => {
+    const yesterday = await dstrIn(-1), today = await dstrIn(0);
+    await patchAct({ briefingSeen: yesterday });
     await h.reload({}, { keepModal: true });
     await sleep(700);
-    const shown = await page.evaluate(() => document.body.innerText.includes("오늘 브리핑 —"));
-    if (!shown) throw new Error("the briefing did not open on a new day");
+    if (!(await hasText("오늘 읽을 것 —"))) throw new Error("the reader did not open on a new day");
+    if (await hasText("오늘 브리핑 —")) throw new Error("the briefing opened on its own on a new day");
+    const txt = await h.overlayText();
+    if (!txt.startsWith(`오늘 읽을 것 — ${today}`)) throw new Error("the reader title: " + txt.slice(0, 60));
+    let at = -1;
+    for (const t of READER_SECTIONS(yesterday)) {
+      const i = txt.indexOf(t, at + 1);
+      if (i < 0) throw new Error(`the reader lacks "${t}" after position ${at}: ` + txt.slice(0, 400));
+      at = i;
+    }
+    const inputs = await page.evaluate(() => [...document.querySelectorAll(".fixed.inset-0")].pop().querySelectorAll('input[type="checkbox"]').length);
+    if (inputs) throw new Error(`the reader renders ${inputs} checkbox(es)`);
     await closeModal();
+    await sleep(400);
+    const st = await readState();
+    if (st.act.briefingSeen !== today) throw new Error("closing the reader did not stamp the day: " + st.act.briefingSeen);
   });
 
   await step("the same day does not reopen it", async () => {
     await h.reload({}, { keepModal: true });
     await sleep(700);
     const open = await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length);
-    if (open) { await closeModal(); throw new Error("the briefing reopened on the same day"); }
+    const titles = [await hasText("오늘 읽을 것 —"), await hasText("오늘 브리핑 —")];
+    if (open || titles.some(Boolean)) { await closeModal(); throw new Error(`a screen reopened on the same day (overlays ${open}, reader ${titles[0]}, briefing ${titles[1]})`); }
   });
 
   await step("streak line states the risk", async () => {
     await patchAct({ briefingSeen: await dstrIn(-1), lastActive: await dstrIn(-1), streak: 3 });
     await h.reload({}, { keepModal: true });
     await sleep(700);
+    await clickInModalExact("브리핑 ›");
     await expectText("연속 3일이 끊겨요");
+    await closeModal();
+  });
+
+  await step("the reader opens from the profile card and from the briefing, and the briefing no longer opens on its own", async () => {
+    await clickTab("프로필");
+    await clickText("오늘 읽을 것");
+    await sleep(400);
+    await expectText("오늘 읽을 것 —");
+    await clickInModalExact("브리핑 ›");
+    await expectText("오늘 브리핑 —");
+    await clickInModalExact("오늘 읽을 것 ›");
+    await expectText("오늘 읽을 것 —");
+    const tapped = await page.evaluate(() => {
+      const b = [...document.querySelectorAll(".fixed.inset-0")].pop()?.querySelector('button[aria-label="계약·입금 미확인 열기"]');
+      if (!b) return false;
+      b.click(); return true;
+    });
+    if (!tapped) throw new Error("the reader has no open button for its business section");
+    await sleep(400);
+    const res = await page.evaluate(() => ({
+      open: document.querySelectorAll(".fixed.inset-0").length,
+      tab: [...document.querySelectorAll("nav button")].filter((b) => /text-cyan-300/.test(b.className)).map((b) => (b.innerText || "").trim()).join("·"),
+    }));
+    if (res.open) throw new Error(`${res.open} overlay(s) left after the section button`);
+    if (res.tab !== "사업") throw new Error("the business section button landed on: " + (res.tab || "none"));
+    await patchAct({ briefingSeen: await dstrIn(-1) });
+    await h.reload({}, { keepModal: true });
+    await sleep(700);
+    if (!(await hasText("오늘 읽을 것 —")) || (await hasText("오늘 브리핑 —"))) throw new Error("the new-day load did not open the reader alone");
     await closeModal();
   });
 

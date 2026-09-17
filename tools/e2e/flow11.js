@@ -972,6 +972,77 @@ module.exports = async (h) => {
     await h.reload();
   });
 
+  // The daily reader (v27, Phase 3, written, not run). It runs before the import-checks step, which writes a newer meeting
+  // on the project (so the card's last meeting would no longer carry `월 10시간`) and removes every plant.
+  const READER_WORK = { id: "e2e-reader-work", title: "E2E 오늘 읽을 업무", note: "E2E 읽을 메모" };
+  const READER_DONE = { id: "e2e-reader-done", title: "E2E 어제 완료", result: "E2E 처리 내용" };
+  const READER_FU = { id: "e2e-reader-fu", text: "E2E 읽을 후속" };
+  // The reader's section blocks, in order, each whitespace-normalised.
+  const readerSections = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    return ov ? [...ov.querySelectorAll(".bg-zinc-950.rounded-xl")].map((b) => b.innerText.replace(/\s+/g, " ").trim()) : [];
+  });
+
+  await step("the reader states the prep row with its checks and documents, today's work, the last week's decisions and what arrived since the last run", async () => {
+    const today = await dstrIn(0), yesterday = await dstrIn(-1), since = await dstrIn(-3), overdue = await dstrIn(-2);
+    const plain = await readState();
+    await page.evaluate((k, ids, t, y, s3, od) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.act.briefingSeen = s3;
+      st.work = [...(st.work || []),
+        { id: ids.work.id, date: t, title: ids.work.title, note: ids.work.note, done: false, source: "manual", createdAt: t },
+        { id: ids.done.id, date: y, title: ids.done.title, result: ids.done.result, done: true, source: "manual", createdAt: y }];
+      const pm = st.meetings.find((m) => m.id === ids.meeting);
+      pm.followUps = [...pm.followUps, { id: ids.fu.id, text: ids.fu.text, mine: true, due: od, done: false }];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, { work: READER_WORK, done: READER_DONE, fu: READER_FU, meeting: PM.id }, today, yesterday, since, overdue);
+    await h.reload({}, { keepModal: true });
+    await sleep(700);
+    const before = await readState();
+    const title = await overlayText();
+    if (!title.startsWith(`오늘 읽을 것 — ${today}`)) throw new Error("the reader did not open on load: " + title.slice(0, 80));
+    if (title.includes(TRANSCRIPT_SENTINEL)) throw new Error("the reader shows a transcript");
+    const secs = await readerSections();
+    const want = [
+      ["오늘·내일 회의 준비", [`오늘 10:00 · ${PE1.title} · ${PP.name}`, "확인할 것 3/3", `- ${CHECK_A}`, "결정: 월 10시간",
+        `후속 · 내 담당 · ${READER_FU.text} · 기한 ${overdue}`, "후속 · 타인 · E2E 준비 자료 송부 · 기한 없음", `문서: ${DOC_P.title}`]],
+      ["오늘 업무", [READER_WORK.title, `메모: ${READER_WORK.note}`, `어제 완료 · ${READER_DONE.title}`, `처리: ${READER_DONE.result}`]],
+      ["기한 지난 후속 · 내 담당 미완료 후속", [`${PM.title} · ${READER_FU.text} · 기한 ${overdue} (D+2)`]],
+      ["최근 7일 결정 사항", [`${PM.date} ${PM.title}`, "월 10시간"]],
+      [`${since} 이후 새로 들어온 것`, [`회의록 · ${PM.date} ${PM.title} · ${PP.name}`, `문서 · ${DOC_P.title} · ${PP.name}`]],
+      ["계약·입금 미확인", ["이번 달 계약 매출"]],
+      ["뒤처진 목표 페이스", []],
+    ];
+    if (secs.length !== want.length) throw new Error(`the reader has ${secs.length} section blocks: ` + secs.map((x) => x.slice(0, 20)).join(" | "));
+    want.forEach(([head, lines], i) => {
+      if (!secs[i].startsWith(head)) throw new Error(`section ${i + 1} starts: ${secs[i].slice(0, 60)}`);
+      for (const t of lines) if (!secs[i].includes(t)) throw new Error(`section ${i + 1} (${head}) lacks "${t}": ` + secs[i].slice(0, 400));
+    });
+    if (secs[2].includes("E2E 준비 자료 송부")) throw new Error("the follow-up section lists another person's item with no due date");
+    await closeModal();
+    await sleep(400);
+    const after = await readState();
+    for (const key of Object.keys({ ...before, ...after })) {
+      if (key === "lastTick") continue;
+      const strip = (v) => JSON.stringify(key === "act" ? { ...v, briefingSeen: null } : v);
+      if (strip(before[key]) !== strip(after[key])) throw new Error(`reading and closing the reader changed ${key}`);
+    }
+    if (after.act.briefingSeen !== today) throw new Error("closing the reader did not stamp the day: " + after.act.briefingSeen);
+    // Remove the reader's plants; the prep fixtures stay for the next step.
+    await page.evaluate((k, ids) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.work = (st.work || []).filter((w) => ![ids.work, ids.done].includes(w.id));
+      const pm = st.meetings.find((m) => m.id === ids.meeting);
+      pm.followUps = pm.followUps.filter((f) => f.id !== ids.fu);
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, { work: READER_WORK.id, done: READER_DONE.id, fu: READER_FU.id, meeting: PM.id });
+    await h.reload();
+    const back = await readState();
+    for (const key of ["work", "meetings", "events", "documents", "tasks", "goals"]) {
+      if (JSON.stringify(back[key] || []) !== JSON.stringify(plain[key] || [])) throw new Error(`the reader step left ${key} changed`);
+    }
+  });
+
   await step("the import-checks button copies the event's checks into a new meeting's follow-up rows without changing the event", async () => {
     const before = await readState();
     const checks = before.events.find((e) => e.id === PE1.id).checks;

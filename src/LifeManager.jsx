@@ -2747,6 +2747,107 @@ const buildBriefing = (state, today) => {
   return { sections };
 };
 
+// The daily reader (`오늘 읽을 것`): how far back and how much it states. Plain literals, so smoke-logic can lift them.
+const READER_DECISION_DAYS = 7;       // meetings whose decisions the reader restates, counted back from today
+const READER_SINCE_FALLBACK_DAYS = 7; // the `since` window when the save has never stamped `act.briefingSeen`
+const READER_LINES = 50;              // items per section before `{n}건 더`
+const READER_CLIP = 300;              // chars of a decision, a note, a result or a progress line
+
+// The date the reader's `{since} 이후 새로 들어온 것` section starts from, read from the one daily marker. Three cases:
+// a marker before today — the last run, so the first opening of the day sees everything since then; a marker equal to
+// today — the reader was already closed today (the marker is stamped at close), so a second opening falls back to
+// yesterday (TD-62, stated by the section title); no marker — a fresh or demo save, the last READER_SINCE_FALLBACK_DAYS.
+const readerSince = (act, today) => {
+  const seen = act?.briefingSeen || null;
+  if (!seen) return shiftDay(today, -READER_SINCE_FALLBACK_DAYS);
+  return seen < today ? seen : shiftDay(today, -1);
+};
+
+// The daily reader: the full content the saved state holds for today, section by section. Derived at render and stores
+// nothing (rule 9) — no tick, no confirm, no per-day record. Full content, never a count in place of a line; every
+// section states `없음` when it is empty and the number of lines past READER_LINES (rule 13). The briefing is one tap
+// away (`브리핑 ›`), not embedded; its `biz` and `goals` items are reused so the two screens state the same numbers.
+const buildReader = (state, today) => {
+  const since = readerSince(state.act, today);
+  const brief = buildBriefing(state, today);
+  const meetings = (state.meetings || []).slice().sort(meetingOrder);
+  const projectName = (id) => (state.meetingProjects || []).find((p) => p.id === id)?.name || "프로젝트 없음";
+  const sections = [];
+  const add = (key, title, items, action) => sections.push({
+    key, title, action,
+    items: items.length ? items.slice(0, READER_LINES) : [{ text: "없음" }],
+    more: Math.max(0, items.length - READER_LINES),
+  });
+
+  /* Meeting preparation today and tomorrow — every open check, the last decisions, every open follow-up, the documents */
+  add("prep", "오늘·내일 회의 준비", meetingPrepOf(state, today).map((r) => {
+    const checks = r.ev.checks || [];
+    const open = checks.filter((c) => !c.done);
+    const moreDocs = r.docs.length - PREP_DOCS;
+    return {
+      text: `${r.date === today ? "오늘" : "내일"} ${r.ev.time || "시간 미정"} · ${r.ev.title} · ${r.project.name}`,
+      sub: [
+        `확인할 것 ${open.length}/${checks.length}`,
+        ...open.map((c) => `- ${c.text}`),
+        r.last ? `결정: ${oneLineText(r.last.decisions, READER_CLIP) || "없음"}` : "이전 회의록 없음",
+        ...r.followUps.map((f) => `후속 · ${f.mine ? "내 담당" : "타인"} · ${f.text} · 기한 ${f.due || "없음"}`),
+        r.docs.length
+          ? `문서: ${r.docs.slice(0, PREP_DOCS).map((d) => d.title).join(" · ")}${moreDocs > 0 ? ` · ${moreDocs}건 더` : ""}`
+          : "문서 없음",
+      ],
+    };
+  }), { type: "work" });
+
+  /* Today's work — the open items (carried ones first), then what was finished yesterday and how */
+  const yesterday = shiftDay(today, -1);
+  add("work", "오늘 업무", [
+    ...workOn(state, today, today).filter((w) => !w.done).map((w) => ({
+      text: `${w.title}${w.date < today ? ` · 이월 ${daysBetween(w.date, today)}일` : ""}`,
+      sub: w.note ? [`메모: ${oneLineText(w.note, READER_CLIP)}`] : [],
+    })),
+    ...workOn(state, yesterday, today).filter((w) => w.done).map((w) => ({
+      text: `어제 완료 · ${w.title}`,
+      sub: w.result ? [`처리: ${oneLineText(w.result, READER_CLIP)}`] : [],
+    })),
+  ], { type: "work" });
+
+  /* Follow-ups — overdue ones across every meeting first, then the rest of the user's own open items */
+  const overdueFus = [];
+  const mineFus = [];
+  for (const m of meetings) {
+    for (const f of m.followUps || []) {
+      if (f.done) continue;
+      if (f.due && f.due < today) overdueFus.push({ text: `${m.title} · ${f.text} · 기한 ${f.due} (${ddayStr(f.due)})` });
+      else if (f.mine) mineFus.push({ text: `${m.title} · ${f.text} · 기한 ${f.due || "없음"}` });
+    }
+  }
+  add("followups", "기한 지난 후속 · 내 담당 미완료 후속", [...overdueFus, ...mineFus], { type: "meetings" });
+
+  /* Decisions of the last READER_DECISION_DAYS days */
+  const decisionFrom = shiftDay(today, -READER_DECISION_DAYS);
+  add("decisions", `최근 ${READER_DECISION_DAYS}일 결정 사항`, meetings
+    .filter((m) => m.date >= decisionFrom && String(m.decisions || "").trim())
+    .map((m) => ({ text: `${m.date} ${m.title}`, sub: [oneLineText(m.decisions, READER_CLIP)] })), { type: "meetings" });
+
+  /* What arrived since the last run — `>= since`, so a record dated on that day repeats rather than disappears */
+  add("since", `${since} 이후 새로 들어온 것`, [
+    ...meetings.filter((m) => (m.createdAt || m.date) >= since)
+      .map((m) => ({ text: `회의록 · ${m.date} ${m.title} · ${projectName(m.projectId)}` })),
+    ...(state.documents || []).filter((d) => d.addedAt >= since).sort(docOrder)
+      .map((d) => ({ text: `문서 · ${d.title} · ${projectName(d.projectId)}` })),
+    ...meetings.flatMap((m) => (m.progress || []).filter((e) => e.date >= since).map((e) => ({ e, m })))
+      .sort((a, b) => b.e.date.localeCompare(a.e.date))
+      .map(({ e, m }) => ({ text: `진행 · ${m.title} · ${oneLineText(e.text, READER_CLIP)}` })),
+  ], { type: "meetings" });
+
+  /* Contracts and payments, and goals behind pace — the briefing's own items, so both screens agree */
+  const briefItems = (key) => brief.sections.find((s) => s.key === key)?.items || [];
+  add("biz", "계약·입금 미확인", briefItems("biz").map((it) => ({ text: it.text })), { type: "biz" });
+  add("goals", "뒤처진 목표 페이스", briefItems("goals").filter((it) => it.severity === 3).map((it) => ({ text: it.text })), { type: "goals" });
+
+  return { since, sections };
+};
+
 /* ── Assistant bridge — the app writes a text packet, the user talks to an external chat, the reply comes back as text.
    No key, no network (rule 7 amendment). Two packets share the cap and the section shape: the daily check-in
    (`buildAssistantPacket`, whose reply can only propose plain tasks) and the work request (`buildWorkPacket`, 2026-09-17
@@ -4349,7 +4450,7 @@ function AreaGradeRow({ area: p, onPromote }) {
   );
 }
 
-function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleAdvice, onWall }) {
+function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleAdvice, onWall, onReader }) {
   const cv = cvSummaryOf(state.profile, today);
   const held = heldCertsOf(state);
   const bests = Object.entries(state.exams?.best || {})
@@ -4371,6 +4472,9 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
                 screen this opens, so the card only states facts and points at the screen that owns them. */}
             <button onClick={onProfile}
               className="bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium mt-2">프로필 편집</button>
+            {/* The daily reader, any time — it also opens by itself once a day */}
+            <button onClick={onReader}
+              className="bg-zinc-800 text-zinc-300 rounded-lg px-2.5 py-1.5 text-xs font-medium mt-2 ml-1.5">오늘 읽을 것 ›</button>
           </div>
           {/* Role model, backup and reset — set rarely, so they sit behind one icon in the corner of the card */}
           <button onClick={onSettings} aria-label="설정" title="설정"
@@ -4843,6 +4947,8 @@ function BriefingModal({ state, today, onClose, onAction }) {
             </div>
           </div>
         ))}
+        <button onClick={() => onAction({ type: "reader" })}
+          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">오늘 읽을 것 ›</button>
         <div className="flex gap-1.5">
           <button onClick={() => onAction({ type: "bridge", mode: "send" })}
             className="flex-1 py-2.5 rounded-xl bg-amber-400 text-zinc-950 font-black text-xs">AI에게 보내기</button>
@@ -4855,6 +4961,43 @@ function BriefingModal({ state, today, onClose, onAction }) {
           <button onClick={onClose}
             className="flex-1 py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs">닫기</button>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Daily reader — the full content of `buildReader`, one block per section. Nothing here is a checkbox, a toggle or
+   a store (the user declined a confirm feature, 2026-09-17); every close goes through `closeBriefing`, which stamps the
+   day. ── */
+function DailyReaderModal({ state, today, onClose, onAction }) {
+  const { sections } = useMemo(() => buildReader(state, today), [state, today]);
+  return (
+    <Modal title={`오늘 읽을 것 — ${today}`} onClose={onClose}>
+      <div className="space-y-3">
+        {sections.map((s) => (
+          <div key={s.key} className="bg-zinc-950 rounded-xl p-3">
+            <div className="flex items-start justify-between gap-2">
+              <SectionLabel tone="text-zinc-400">{s.title}</SectionLabel>
+              <button onClick={() => onAction(s.action)} aria-label={`${s.title} 열기`}
+                className="shrink-0 px-1 text-xs text-zinc-400 active:opacity-70">›</button>
+            </div>
+            <div className="space-y-1.5">
+              {s.items.map((it, n) => (
+                <div key={n}>
+                  <div className={`text-xs break-words ${it.text === "없음" && !it.sub ? "text-zinc-500" : "text-zinc-300"}`}>{it.text}</div>
+                  {(it.sub || []).map((line, k) => (
+                    <div key={k} className="pl-3 text-xs text-zinc-400 break-words">{line}</div>
+                  ))}
+                </div>
+              ))}
+              {s.more > 0 && <div className="text-xs text-zinc-500 font-mono">{s.more}건 더</div>}
+            </div>
+          </div>
+        ))}
+        <button onClick={() => onAction({ type: "briefing" })}
+          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">브리핑 ›</button>
+        <button onClick={onClose}
+          className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs">닫기</button>
       </div>
     </Modal>
   );
@@ -8580,7 +8723,8 @@ export default function LifeManager() {
       if (m) {
         setState(applyDailyTick(m));
         setPhase("main");
-        if (m.act?.briefingSeen !== dstr()) setModal({ type: "briefing" });
+        // The first load of a day opens the daily reader once; the briefing is reached from it (`브리핑 ›`).
+        if (m.act?.briefingSeen !== dstr()) setModal({ type: "reader" });
       }
       else setPhase("onboard");
       readyRef.current = true;
@@ -8598,12 +8742,12 @@ export default function LifeManager() {
     return () => { clearInterval(id); window.removeEventListener("visibilitychange", check); window.removeEventListener("focus", check); };
   }, []);
 
-  // A new day opens the briefing once, the same way boot does.
+  // A new day opens the daily reader once, the same way boot does; the briefing is reached from it.
   useEffect(() => {
     if (!dayRef.current) { dayRef.current = day; return; }
     if (dayRef.current === day) return;
     dayRef.current = day;
-    if (state && state.act?.briefingSeen !== day) setModal({ type: "briefing" });
+    if (state && state.act?.briefingSeen !== day) setModal({ type: "reader" });
   }, [day, state]);
 
   useEffect(() => {
@@ -9336,6 +9480,8 @@ export default function LifeManager() {
 
   /* Daily assistant */
   const markBriefingSeen = () => setState((prev) => (prev.act?.briefingSeen === today ? prev : { ...prev, act: { ...prev.act, briefingSeen: today } }));
+  // Also the daily reader's close and route path: `{ type: "reader" }` and `{ type: "briefing" }` fall through to
+  // `setModal({ type })`, so switching between the two screens stamps the day like closing either does.
   const closeBriefing = (next) => {
     markBriefingSeen();
     setModal(null);
@@ -9539,7 +9685,8 @@ export default function LifeManager() {
             onSettings={() => setModal({ type: "settings" })}
             onPromote={(area) => setModal({ type: "promote", area })}
             onRoleAdvice={() => setModal({ type: "roleAdvice" })}
-            onWall={() => setModal({ type: "wall" })} />
+            onWall={() => setModal({ type: "wall" })}
+            onReader={() => setModal({ type: "reader" })} />
         )}
         {tab === "goals" && (
           <GoalsTab state={state}
@@ -9717,6 +9864,9 @@ export default function LifeManager() {
       )}
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />
+      )}
+      {modal?.type === "reader" && (
+        <DailyReaderModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />
       )}
       {modal?.type === "journal" && (
         <JournalModal state={state} today={today} onClose={() => setModal(null)} onSave={saveJournal} />
