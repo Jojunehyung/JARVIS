@@ -3223,10 +3223,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
 
 /* ── State lifecycle ── */
 /**
- * @schema v26 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v27 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 26,
+ *   v: 27,
  *   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
  *              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
  *                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -3249,8 +3249,13 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   events: [{ id, title, kind("appt"|"due"), date("YYYY-MM-DD"), time?("HH:MM"), note?, place?,   // schedule records: appointments and deadlines —
  *              repeat?{ freq("daily"|"weekly"|"monthly"), until? },                                // never tasks, never paid, never a metric source
  *              skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt,                           // occurrences are expanded at render, not stored
- *              projectId? }],                                                                     // projectId (v26, optional): the meeting project this event
+ *              projectId?,                                                                        // projectId (v26, optional): the meeting project this event
  *                                                                                                  // belongs to — read by the prep card, never by the export
+ *              checks?[{ id, text, done, source("manual"|"ai") }] }],                             // checks (v27, optional, no backfill): `확인할 것` for that
+ *                                                                                                  // event, at most 30 of 200 chars; edited on the prep card and
+ *                                                                                                  // the event sheet, imported from the prep packet's reply; never
+ *                                                                                                  // read by the export or the daily packet; a repeating event
+ *                                                                                                  // carries one list for every occurrence (TD-61)
  *   folio: [{ id, title, summary?, role?, stack?[string],                       // business records: what was built, what it sells for,
  *             period?{ from("YYYY-MM"), to("YYYY-MM") },                        // and what is contracted — records, never tasks: no payout,
  *             links[{ label, url }], createdAt }],                              // no trophy, no goal, no streak (rules 1, 18).
@@ -3281,6 +3286,11 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *            source("manual"|"ai"|"meeting"), createdAt }],                 // a stored fact; the day view, the past-undone list and the link
  *                                                                           // label are derived. followUpId (v26): the follow-up this item
  *                                                                           // mirrors, on a `meeting` link only.
+ *   documents: [{ id, projectId(string | null), title, source?, summary, addedAt("YYYY-MM-DD") }],   // document summaries (v27): what a file says, in the
+ *                                                                           // user's words — a record, never a task (rules 1, 18); no file is stored,
+ *                                                                           // `source` is a file name or link as text; projectId null = no project,
+ *                                                                           // listed under `프로젝트 없음 · 긴급 메모`. Read by the meetings tab, the
+ *                                                                           // prep card, the prep packet (title + summary only) and the daily reader.
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -3302,8 +3312,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  * a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`),
  * the work tab's day view with the carried undone items and link labels (`workOn` with `today`/`workLinkText`),
  * the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitFollowUpText`), the minutes row's
- * `후속 {open}/{total}` marker, the memo group of the meetings tab and a transcript's `{n}자` length, and the work packet
- * (`buildWorkPacket`).
+ * `후속 {open}/{total}` marker, the memo group of the meetings tab and a transcript's `{n}자` length, the work packet
+ * (`buildWorkPacket`), the document rows and counts of the meetings tab (`docOrder`), the event → project match
+ * (`eventProjectOf`), the prep packet (`buildPrepPacket`), the same-client contracts (`dealsOfProject`), and the daily
+ * reader (`buildReader`, `readerSince`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -3425,6 +3437,12 @@ const migrate = (s) => {
     // items gain nothing here. Every existing field and key passes through untouched.
     s = { ...s, v: 26, meetings: (s.meetings || []).map((m) => ({ ...m, followUps: Array.isArray(m.followUps) ? m.followUps : [] })) };
   }
+  if (s.v < 27) {
+    // v27: document summaries — documents[], records of what a file says, attached to a meeting project or to none
+    // (projectId null). A document is a record, never a task: no payout, trophy, goal or streak (rules 1, 18). Events
+    // gain an optional checks[] that nothing backfills (like projectId at v26). Every existing field passes through untouched.
+    s = { ...s, v: 27, documents: Array.isArray(s.documents) ? s.documents : [] };
+  }
   return s;
 };
 
@@ -3436,7 +3454,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 26,
+  v: 27,
   profile: null,
   areas,
   tasks: [],
@@ -3448,6 +3466,7 @@ const freshState = (areas) => applyDailyTick({
   meetingProjects: [],
   meetings: [],
   work: [],
+  documents: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
@@ -3584,6 +3603,13 @@ const demoState = () => {
   // appended here, not in the schedule list above, because `mp1` is declared after that list.
   s.events = [...s.events,
     { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2) }];
+  // Two document summaries (v27): one on the search project, one with no project — synthetic file names, no personal data.
+  s.documents = [
+    { id: uid(), projectId: mp2.id, title: "요구사항 정의서 v1", source: "requirements-v1.pdf", addedAt: shiftDay(today, -1),
+      summary: "검색 대상: 사내 PDF 1,200건, 위키는 2차.\n권한: 부서별 열람 범위가 다름 — 관리자·일반 2단계.\n응답 형식: 답변 + 원문 위치(파일명·페이지).\n비기능: 응답 3초 이내, 동시 사용자 50명.\n미결: 스캔 PDF(OCR) 포함 여부, 검색 로그 보존 기간." },
+    { id: uid(), projectId: null, title: "◇◇스튜디오 예약 페이지 현황 메모", addedAt: today,
+      summary: "현재 예약 폼은 이름·연락처·날짜 3개 필드, 결제는 별도 링크.\n모바일에서 예약 버튼 터치 영역이 작음(약 32px).\n월 예약 건수 약 120건 — 기존 데이터 이관 필수." },
+  ];
   // Three work items for today: one typed by hand and open, one proposed by the assistant and done (schema v25), and one
   // registered from the mine follow-up above, linked both ways (schema v26).
   // Records, never tasks — none pays, moves a goal or touches the streak.
@@ -3595,6 +3621,10 @@ const demoState = () => {
       link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today },
     { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today },
     workFromFollowUp,
+    // A done item dated yesterday with a result, so the reader's `오늘 업무` section states a `처리:` line; not in
+    // today's view, so the demo counts line is unchanged.
+    { id: uid(), date: shiftDay(today, -1), title: "○○물산 월 리포트 양식 회신", done: true, result: "양식 v2 확정본을 메일로 송부 — 다음 달부터 적용",
+      link: { kind: "project", id: mp1.id }, source: "manual", createdAt: shiftDay(today, -1) },
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -7012,12 +7042,22 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    one on every one of three meetings a working day turns the v26 horizon (1,810 each, 37 % a year) into ≈ 4,350 × 750
    ≈ 3.26 M a year (89 %), about 1 year 1 month before `recordFits` refuses. `recordFits` already measures the whole
    record, transcript included, and the tab's storage line already counts it; `clearTranscript` (`녹취록 지우기`) is
-   the in-app way to reclaim it. */
+   the in-app way to reclaim it.
+   Documents (v27) add `,"documents":[]` = 15 chars once. One document is
+   `{"id":"…","projectId":"…","title":"","summary":"","addedAt":"YYYY-MM-DD"}` ≈ 91 chars + title + summary (+ 1 comma);
+   `,"source":""` adds 12 + the source and `"projectId":null` is 8 chars smaller. A full document (60 + 120 + 5,000) ≈
+   5,283 chars (+ 1 per line break in the summary); a typical one (title 20, source 30, summary 600) ≈ 753. Two a week ≈
+   100 a year ≈ 75 k chars (2 % of the budget a year); one full document every working day ≈ 250 × 5,283 ≈ 1.32 M (36 %
+   a year). Checks (v27) on an event: one item `{"id":"…","text":"","done":false,"source":"manual"}` ≈ 60 chars + text,
+   and `,"checks":[]` adds 12 the first time; a typical 40-char check ≈ 100, thirty full 200-char checks ≈ 30 × 260 + 29 ≈
+   7,829 chars on one event, ten such events ≈ 78 k (2 %). `recordFits` measures a document record whole, and a check
+   write measures the event as it will be written against the stored one, so ticking or deleting never trips the guard. */
 const MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200, transcript: 30000 };
 const MEETING_PROGRESS_MAX = 30;   // progress entries per meeting before `진행사항은 30건까지예요.`
 const MEETING_FOLLOWUPS_MAX = 30;  // follow-up items per meeting before `후속 항목은 30건까지예요.`
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
+const DOC_LIMITS = { title: 60, source: 120, summary: 5000 };
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
 // The meeting-prep card (`오늘 회의 준비`): the window and how much of the last meeting it states.
 const PREP_DAYS = 2;             // today and tomorrow
@@ -7027,6 +7067,8 @@ const PREP_TASKS = 5;            // linked task lines
 const PREP_DECISION_CLIP = 200;  // chars of the last meeting's decisions
 const mbText = (chars) => (chars / 1048576).toFixed(1);
 const meetingOrder = (a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || "");
+// Documents newest first; a stable sort keeps the handler's prepend order within one day.
+const docOrder = (a, b) => b.addedAt.localeCompare(a.addedAt);
 
 // Candidate follow-up items split out of the free-text `actions`, on demand only — the text itself is never rewritten
 // (rule 12). Splits on newlines, on ` / `, before every circled number and before ` 1) ` / ` 1. `; strips one leading
@@ -7151,27 +7193,40 @@ const meetingRowMarker = (m) => {
   return parts.length ? <span className="text-xs text-zinc-500 shrink-0">{parts.join(" · ")}</span> : null;
 };
 
-function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenMeeting }) {
+function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenMeeting, onAddDocument, onOpenDocument }) {
   const [expanded, setExpanded] = useState({}); // which projects show every row — view state only, never stored (rule 9)
   const projects = state.meetingProjects || [];
   const meetings = state.meetings || [];
+  const documents = state.documents || [];
   const used = useMemo(() => storageUsedWith(state), [state]);
   // Projects by their newest minutes; projects without minutes last, newest first. Derived at render (rule 9).
   const groups = useMemo(() => {
     const by = new Map(projects.map((p) => [p.id, []]));
     for (const m of meetings) by.get(m.projectId)?.push(m);
-    const list = projects.map((p) => ({ p, rows: (by.get(p.id) || []).slice().sort(meetingOrder) }));
+    const list = projects.map((p) => ({ p, rows: (by.get(p.id) || []).slice().sort(meetingOrder),
+      docs: documents.filter((d) => d.projectId === p.id).sort(docOrder) }));
     return list.sort((a, b) => {
       const da = a.rows[0]?.date, db = b.rows[0]?.date;
       if (da && db) return db.localeCompare(da) || (b.p.createdAt || "").localeCompare(a.p.createdAt || "");
       if (da || db) return da ? -1 : 1;
       return (b.p.createdAt || "").localeCompare(a.p.createdAt || "");
     });
-  }, [projects, meetings]);
+  }, [projects, meetings, documents]);
   // Project-less minutes (`projectId: null`, 2026-09-17): the urgent memos, one group after every project section.
   const memos = useMemo(() => meetings.filter((m) => m.projectId == null).sort(meetingOrder), [meetings]);
-  // One group's rows — the first MEETING_ROWS_SHOWN, the rest behind `{n}건 더 보기` / `접기` — for a project and the memo group.
-  const rowsBlock = (key, rows, emptyText) => {
+  // Project-less documents (v27), listed in the same group after the memo rows.
+  const memoDocs = useMemo(() => documents.filter((d) => d.projectId == null).sort(docOrder), [documents]);
+  const meetingRow = (m) => (
+    <TodoRow key={m.id} lead={{ text: m.date.slice(2), tone: "text-zinc-400 border-zinc-700" }} title={m.title}
+      marker={meetingRowMarker(m)} onOpen={() => onOpenMeeting(m.id)} />
+  );
+  const docRow = (d) => (
+    <TodoRow key={d.id} lead={{ text: "문서", tone: "text-violet-300 border-violet-700" }} title={d.title}
+      marker={<span className="text-xs font-mono text-zinc-500 shrink-0">{d.addedAt.slice(2)}</span>} onOpen={() => onOpenDocument(d.id)} />
+  );
+  // One group's rows — the first MEETING_ROWS_SHOWN, the rest behind `{n}건 더 보기` / `접기` — for a project and the memo
+  // group; `rowOf` renders one row (minutes by default, documents for the documents block).
+  const rowsBlock = (key, rows, emptyText, rowOf = meetingRow) => {
     const open = !!expanded[key];
     const shown = open ? rows : rows.slice(0, MEETING_ROWS_SHOWN);
     return (
@@ -7180,10 +7235,7 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
           <p className="text-sm text-zinc-500 mt-3">{emptyText}</p>
         ) : (
           <div className="space-y-1.5 mt-3">
-            {shown.map((m) => (
-              <TodoRow key={m.id} lead={{ text: m.date.slice(2), tone: "text-zinc-400 border-zinc-700" }} title={m.title}
-                marker={meetingRowMarker(m)} onOpen={() => onOpenMeeting(m.id)} />
-            ))}
+            {shown.map(rowOf)}
           </div>
         )}
         {rows.length > MEETING_ROWS_SHOWN && (
@@ -7196,6 +7248,24 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
     );
   };
 
+  // A group's documents under its minutes rows, only when there is one — the head's `문서 {n}건` states a zero.
+  const docsBlock = (key, docs) => docs.length > 0 && (
+    <>
+      <div className="text-xs font-bold text-zinc-500 mt-3">문서 {docs.length}건</div>
+      {rowsBlock(key, docs, "", docRow)}
+    </>
+  );
+  const groupHead = (name, rowCount, docCount) => (
+    <div className="flex items-baseline gap-2">
+      <div className="flex-1 min-w-0 text-sm font-bold truncate">{name}</div>
+      <span className="text-xs font-mono text-zinc-500 shrink-0">회의록 {rowCount}건 · 문서 {docCount}건</span>
+    </div>
+  );
+  const smallBtn = (label, onClick) => (
+    <button onClick={onClick}
+      className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">{label}</button>
+  );
+
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
@@ -7206,11 +7276,12 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
             <Plus size={14} /> 프로젝트 추가
           </button>
         </div>
-        <p className="text-xs text-zinc-600 mt-0.5">회의 시간은 일정 탭에, 회의에서 나온 내용은 여기에 적어요. 회의록은 목표·실행·점수에 반영되지 않아요.</p>
+        <p className="text-xs text-zinc-600 mt-0.5">회의 시간은 일정 탭에, 회의에서 나온 내용은 여기에 적어요. 회의록은 목표·실행·점수에 반영되지 않아요. 문서는 요약 글만 저장돼요 — 파일은 저장되지 않아요.</p>
         {/* Fragments are nowrap so a 390 px line breaks only between them */}
         <p className="text-xs font-mono text-zinc-400 mt-2">
           <span className="whitespace-nowrap">프로젝트 {projects.length}개</span>{" · "}
           <span className="whitespace-nowrap">회의록 {meetings.length}건</span>{" · "}
+          <span className="whitespace-nowrap">문서 {documents.length}건</span>{" · "}
           <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / 3.5MB</span>
         </p>
       </section>
@@ -7221,41 +7292,37 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
         </section>
       )}
 
-      {groups.map(({ p, rows }) => (
+      {groups.map(({ p, rows, docs }) => (
         <section key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-          <div className="flex items-baseline gap-2">
-            <div className="flex-1 min-w-0 text-sm font-bold truncate">{p.name}</div>
-            <span className="text-xs font-mono text-zinc-500 shrink-0">회의록 {rows.length}건</span>
-          </div>
+          {groupHead(p.name, rows.length, docs.length)}
           <div className="flex gap-1.5 mt-2">
-            <button onClick={() => onEditProject(p.id)}
-              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">프로젝트 수정</button>
-            <button onClick={() => onAddMeeting(p.id)}
-              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">회의록 추가</button>
+            {smallBtn("프로젝트 수정", () => onEditProject(p.id))}
+            {smallBtn("회의록 추가", () => onAddMeeting(p.id))}
+            {smallBtn("문서 추가", () => onAddDocument(p.id))}
           </div>
           {rowsBlock(p.id, rows, "회의록이 없어요.")}
+          {docsBlock("doc:" + p.id, docs)}
         </section>
       ))}
       {/* Urgent memos — minutes with no project. Always rendered, after every project section: its `긴급 메모 추가` is
           the one way to start a memo (a project's `회의록 추가` preselects that project). */}
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-        <div className="flex items-baseline gap-2">
-          <div className="flex-1 min-w-0 text-sm font-bold truncate">프로젝트 없음 · 긴급 메모</div>
-          <span className="text-xs font-mono text-zinc-500 shrink-0">회의록 {memos.length}건</span>
-        </div>
+        {groupHead("프로젝트 없음 · 긴급 메모", memos.length, memoDocs.length)}
         <p className="text-xs text-zinc-600 mt-0.5">프로젝트 없이 적은 회의록이에요 — 나중에 수정에서 프로젝트를 고르면 그 프로젝트로 옮겨져요.</p>
         <div className="flex gap-1.5 mt-2">
-          <button onClick={() => onAddMeeting(null)}
-            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">긴급 메모 추가</button>
+          {smallBtn("긴급 메모 추가", () => onAddMeeting(null))}
+          {smallBtn("문서 추가", () => onAddDocument(null))}
         </div>
         {rowsBlock("none", memos, "긴급 메모가 없어요.")}
+        {docsBlock("doc:none", memoDocs)}
       </section>
     </>
   );
 }
 
-/* ── Project form. Deleting is offered only for a project without minutes: nothing is lost, so nothing is asked. ── */
-function ProjectModal({ project, meetingCount, onClose, onAdd, onUpdate, onRemove }) {
+/* ── Project form. Deleting is offered only for a project without minutes or documents: nothing is lost, so nothing is
+   asked. ── */
+function ProjectModal({ project, meetingCount, documentCount, onClose, onAdd, onUpdate, onRemove }) {
   const [name, setName] = useState(project?.name || "");
   const [note, setNote] = useState(project?.note || "");
   const [err, setErr] = useState("");
@@ -7278,9 +7345,10 @@ function ProjectModal({ project, meetingCount, onClose, onAdd, onUpdate, onRemov
         </button>
         {project && (
           <>
-            <button onClick={() => onRemove(project.id)} disabled={meetingCount > 0}
+            <button onClick={() => onRemove(project.id)} disabled={meetingCount > 0 || documentCount > 0}
               className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs disabled:opacity-30">삭제</button>
             {meetingCount > 0 && <p className="text-xs text-zinc-500">회의록 {meetingCount}건이 있어 삭제할 수 없어요 — 회의록을 먼저 지워요.</p>}
+            {meetingCount === 0 && documentCount > 0 && <p className="text-xs text-zinc-500">문서 {documentCount}건이 있어 삭제할 수 없어요 — 문서를 먼저 지워요.</p>}
           </>
         )}
       </div>
@@ -7297,6 +7365,74 @@ function MeetingText({ value, onChange, placeholder, rows, cap }) {
         className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
       <div className={`text-xs font-mono text-right ${value.trim().length > cap ? "text-rose-300" : "text-zinc-600"}`}>{value.trim().length} / {cap}</div>
     </div>
+  );
+}
+
+// The `프로젝트` chip row of the meeting and document forms: `없음 (긴급 메모)` first, then one chip per project. `note`
+// is the caption shown while no project is chosen, when the form has one.
+function ProjectPicker({ projects, pid, onPick, note }) {
+  return (
+    <div>
+      <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">프로젝트</div>
+      <div className="flex flex-wrap gap-1.5">
+        <Chip on={pid === null} onClick={() => onPick(null)}>없음 (긴급 메모)</Chip>
+        {projects.map((p) => <Chip key={p.id} on={pid === p.id} onClick={() => onPick(p.id)}>{p.name}</Chip>)}
+      </div>
+      {pid === null && note && <p className="text-xs text-zinc-600 mt-1.5">{note}</p>}
+    </div>
+  );
+}
+
+/* ── Document form (v27) — view and edit in one sheet. A document is a record of what a file says, in the user's words:
+   no file is stored, `source` is text only, and nothing here pays, completes or moves a goal (rules 1, 18). `onAdd` /
+   `onUpdate` answer with an error string ("" = saved), so the storage refusal keeps the form open. ── */
+function DocumentModal({ state, doc, projectId, onClose, onAdd, onUpdate, onRemove }) {
+  const projects = state.meetingProjects || [];
+  // An explicit null (the memo group's button) is a document with no project.
+  const [pid, setPid] = useState(doc?.projectId ?? projectId ?? null);
+  const [title, setTitle] = useState(doc?.title || "");
+  const [source, setSource] = useState(doc?.source || "");
+  const [summary, setSummary] = useState(doc?.summary || "");
+  const [err, setErr] = useState("");
+  const project = doc ? projects.find((p) => p.id === doc.projectId) : null;
+  const submit = () => {
+    const v = { title: title.trim(), source: source.trim(), summary: summary.trim() };
+    if (pid !== null && !projects.some((p) => p.id === pid)) { setErr("프로젝트를 골라 주세요."); return; }
+    if (!v.title) { setErr("문서 제목을 입력해 주세요."); return; }
+    if (!v.summary) { setErr("문서 요약을 입력해 주세요."); return; }
+    const names = { title: "문서 제목은", source: "출처는", summary: "문서 요약은" };
+    for (const k of Object.keys(names)) {
+      if (v[k].length > DOC_LIMITS[k]) { setErr(`${names[k]} ${DOC_LIMITS[k]}자까지예요 — 지금 ${v[k].length}자예요.`); return; }
+    }
+    // Only the ends are trimmed; a cleared source disappears from the record.
+    const next = { projectId: pid, title: v.title, ...(v.source ? { source: v.source } : {}), summary: v.summary };
+    const refused = doc ? onUpdate(doc.id, next) : onAdd(next);
+    if (refused) setErr(refused);
+  };
+  return (
+    <Modal title={doc ? "문서" : "문서 추가"} onClose={onClose}>
+      <div className="space-y-3">
+        {doc && (
+          <div className="space-y-1">
+            <CvFact label="프로젝트">{project?.name || "없음 (긴급 메모)"}</CvFact>
+            <CvFact label="추가일"><span className="font-mono">{doc.addedAt}</span></CvFact>
+          </div>
+        )}
+        <ProjectPicker projects={projects} pid={pid} onPick={(id) => { setPid(id); setErr(""); }} />
+        <BizField value={title} onChange={setTitle} placeholder="문서 제목 — 예: 요구사항 정의서 v2" />
+        <BizField value={source} onChange={setSource} placeholder="출처 (선택) — 파일 이름이나 링크" />
+        <MeetingText value={summary} onChange={setSummary} placeholder="문서 요약 — 핵심 내용을 요점으로 적어요" rows={8} cap={DOC_LIMITS.summary} />
+        <p className="text-xs text-zinc-600">파일은 저장되지 않아요 — 요약 글만 저장돼요. 문서는 목표·실행·점수에 반영되지 않아요.</p>
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          {doc ? "저장" : "등록"}
+        </button>
+        {doc && (
+          <button onClick={() => { if (window.confirm(`${doc.title} 문서를 삭제해요. 계속할까요?`)) onRemove(doc.id); }}
+            className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs">삭제</button>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -7396,14 +7532,8 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   return (
     <Modal title={meeting ? "회의록 수정" : "새 회의록"} onClose={onClose}>
       <div className="space-y-3">
-        <div>
-          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">프로젝트</div>
-          <div className="flex flex-wrap gap-1.5">
-            <Chip on={pid === null} onClick={() => { setPid(null); setErr(""); }}>없음 (긴급 메모)</Chip>
-            {projects.map((p) => <Chip key={p.id} on={pid === p.id} onClick={() => { setPid(p.id); setErr(""); }}>{p.name}</Chip>)}
-          </div>
-          {pid === null && <p className="text-xs text-zinc-600 mt-1.5">프로젝트 없이 저장돼요 — 미팅 탭의 '프로젝트 없음 · 긴급 메모'에 실려요.</p>}
-        </div>
+        <ProjectPicker projects={projects} pid={pid} onPick={(id) => { setPid(id); setErr(""); }}
+          note="프로젝트 없이 저장돼요 — 미팅 탭의 '프로젝트 없음 · 긴급 메모'에 실려요." />
         <div>
           <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">날짜</div>
           <input type="date" value={date} onChange={(e) => pickDate(e.target.value)}
@@ -8626,6 +8756,8 @@ export default function LifeManager() {
     const n = (state.meetings || []).filter((m) => m.projectId === id).length;
     // Refused here too, not only by the disabled button: deleting a project must never orphan or take minutes with it.
     if (n > 0) { showToast({ msg: `회의록 ${n}건이 있어 삭제할 수 없어요 — 회의록을 먼저 지워요.` }); return; }
+    const d = (state.documents || []).filter((x) => x.projectId === id).length;
+    if (d > 0) { showToast({ msg: "문서 " + d + "건이 있어 삭제할 수 없어요 — 문서를 먼저 지워요." }); return; }
     setState((prev) => ({ ...prev, meetingProjects: (prev.meetingProjects || []).filter((p) => p.id !== id) }));
     setModal(null);
     showToast({ msg: "프로젝트를 삭제했어요" });
@@ -8748,6 +8880,35 @@ export default function LifeManager() {
     const { transcript, ...rest } = cur;
     putMeeting(rest);
     showToast({ msg: "녹취록을 지웠어요" });
+  };
+
+  /* Documents (v27) — records of what a file says; a record, never a task (rules 1, 18). These handlers write `documents`
+     and nothing else. */
+  const addDocument = (next) => {
+    const rec = { id: uid(), ...next, addedAt: today };
+    const refused = recordFits(rec, 0, "문서를");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, documents: [rec, ...(prev.documents || [])] }));
+    setModal(null);
+    showToast({ msg: "문서를 등록했어요" });
+    return "";
+  };
+  const updateDocument = (id, next) => {
+    const cur = (state.documents || []).find((d) => d.id === id);
+    if (!cur) return "";
+    const rec = { id: cur.id, ...next, addedAt: cur.addedAt }; // the form replaces the record; a cleared source disappears
+    const refused = recordFits(rec, JSON.stringify(cur).length, "문서를");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, documents: (prev.documents || []).map((d) => (d.id === id ? rec : d)) }));
+    setModal(null);
+    showToast({ msg: "문서를 수정했어요" });
+    return "";
+  };
+  // Confirmed in the sheet by title.
+  const removeDocument = (id) => {
+    setState((prev) => ({ ...prev, documents: (prev.documents || []).filter((d) => d.id !== id) }));
+    setModal(null);
+    showToast({ msg: "문서를 삭제했어요" });
   };
 
   /* Daily work — dated work items (v25). A record, never a task: these handlers write `work`, plus the `done` state or
@@ -9092,7 +9253,9 @@ export default function LifeManager() {
             onAddProject={() => setModal({ type: "project" })}
             onEditProject={(projectId) => setModal({ type: "project", projectId })}
             onAddMeeting={(projectId) => setModal({ type: "meeting", projectId })}
-            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
+            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })}
+            onAddDocument={(projectId) => setModal({ type: "document", projectId })}
+            onOpenDocument={(docId) => setModal({ type: "document", docId })} />
         )}
         {tab === "biz" && (
           <BizTab state={state} today={today}
@@ -9191,6 +9354,7 @@ export default function LifeManager() {
       {modal?.type === "project" && (
         <ProjectModal project={(state.meetingProjects || []).find((p) => p.id === modal.projectId)}
           meetingCount={(state.meetings || []).filter((m) => m.projectId === modal.projectId).length}
+          documentCount={(state.documents || []).filter((d) => d.projectId === modal.projectId).length}
           onClose={() => setModal(null)} onAdd={addProject} onUpdate={updateProject} onRemove={removeProject} />
       )}
       {modal?.type === "meeting" && (
@@ -9205,6 +9369,10 @@ export default function LifeManager() {
           onAddProgress={addProgress} onRemoveProgress={removeProgress}
           onToggleFollowUp={toggleFollowUp} onSetFollowUpMine={setFollowUpMine} onAppendFollowUps={appendFollowUps}
           onClearTranscript={clearTranscript} />
+      )}
+      {modal?.type === "document" && (
+        <DocumentModal state={state} projectId={modal.projectId} doc={(state.documents || []).find((d) => d.id === modal.docId)}
+          onClose={() => setModal(null)} onAdd={addDocument} onUpdate={updateDocument} onRemove={removeDocument} />
       )}
       {/* Work items — records outside the goal ladder: no payout, no goal, no streak (rules 1, 9, 18) */}
       {modal?.type === "work" && (

@@ -2,7 +2,7 @@
 module.exports = async (h) => {
   const { step, shot, clickText, clickTab, clickExact, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
   // The schema version every migrated fixture must end at — bumped with each new `migrate` block (rule 12).
-  const SCHEMA_V = 26;
+  const SCHEMA_V = 27;
   // Order-independent deep equality for plain JSON records read back from the save.
   const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.keys(v).sort().map((k) => [k, canon(v[k])]) : v);
   const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
@@ -439,7 +439,7 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick") continue;
       if (!same(st[k], s22[k])) throw new Error(`v23 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s22) && k !== "meetingProjects" && k !== "meetings" && k !== "work"); // work: added by v25 on the same load
+    const extra = Object.keys(st).filter((k) => !(k in s22) && k !== "meetingProjects" && k !== "meetings" && k !== "work" && k !== "documents"); // work: v25, documents: v27 on the same load
     if (extra.length) throw new Error("v23 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("프로젝트가 없어요 — 프로젝트를 먼저 만들어요.");
@@ -476,7 +476,7 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s23[k])) throw new Error(`v24 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s23) && k !== "work"); // work: added by v25 on the same load
+    const extra = Object.keys(st).filter((k) => !(k in s23) && k !== "work" && k !== "documents"); // work: v25, documents: v27 on the same load
     if (extra.length) throw new Error("v24 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("레거시 회의록");
@@ -513,7 +513,7 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s24[k])) throw new Error(`v25 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s24) && k !== "work");
+    const extra = Object.keys(st).filter((k) => !(k in s24) && k !== "work" && k !== "documents"); // documents: v27 on the same load
     if (extra.length) throw new Error("v25 added keys it does not own: " + extra.join(", "));
     await clickTab("업무");
     await expectText("오늘 업무가 없어요.");
@@ -553,10 +553,50 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s25[k])) throw new Error(`v26 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s25));
+    const extra = Object.keys(st).filter((k) => !(k in s25) && k !== "documents"); // documents: v27 on the same load
     if (extra.length) throw new Error("v26 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("레거시 프로젝트");
+  });
+  await step("v26 save → v27 documents", async () => {
+    // A v26 save has no `documents` key and its events carry no `checks`. After the migration the save gains
+    // `documents: []` only; meetings, work and events come back exactly as planted (no event gains `checks` — it is
+    // optional and never backfilled), and no other key is added. (Written 2026-09-17 under the standing instruction; not run.)
+    const meeting = { id: "mu", projectId: "pu", title: "레거시 문서 회의", date: "2026-01-08", attendees: "담당자 D", taskIds: [],
+      summary: "레거시 요약", decisions: "레거시 결정", eventId: "eu", createdAt: "2026-01-08",
+      progress: [], aiHidden: false, followUps: [] };
+    const now = await localToday();
+    const s26 = {
+      v: 26,
+      profile: legacyProfile("v26", "eu1"),
+      areas: [{ id: "au", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tu", title: "레거시 실행", areaId: "au", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [{ id: "gu", title: "레거시 목표", areaId: "au", status: "active", createdAt: "2026-01-01", krs: [] }],
+      events: [{ id: "eu", title: "레거시 회의", kind: "appt", date: "2026-01-08", time: "10:00", projectId: "pu", createdAt: "2026-01-02" }],
+      folio: [], rates: [], deals: [],
+      meetingProjects: [{ id: "pu", name: "레거시 프로젝트", createdAt: "2026-01-02" }],
+      meetings: [meeting],
+      work: [{ id: "w2", date: "2026-01-08", title: "레거시 업무", done: false, source: "manual", createdAt: "2026-01-08" }],
+      journal: [{ id: "ju", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [],
+      ui: { bizView: "deals" },
+      act: { streak: 2, lastActive: "2026-01-08", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-08", dModel: "1.3",
+    };
+    const st = await migrateFixture(s26);
+    if (st.v !== 27) throw new Error("v27 schema version " + st.v);
+    if (!same(st.documents, [])) throw new Error("v27 documents: " + JSON.stringify(st.documents));
+    if (!same(st.meetings, s26.meetings)) throw new Error("v27 meetings: " + JSON.stringify(st.meetings));
+    if (!same(st.events, s26.events) || st.events.some((e) => "checks" in e)) throw new Error("v27 events: " + JSON.stringify(st.events));
+    for (const k of Object.keys(s26)) {
+      if (k === "v" || k === "lastTick") continue;
+      if (!same(st[k], s26[k])) throw new Error(`v27 changed ${k}: ` + JSON.stringify(st[k]));
+    }
+    const extra = Object.keys(st).filter((k) => !(k in s26));
+    if (!same(extra, ["documents"])) throw new Error("v27 added keys: " + extra.join(", "));
+    await clickTab("미팅");
+    await expectText("레거시 프로젝트");
+    await expectText("문서 0건");
   });
   await shot("migrated");
 };

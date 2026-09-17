@@ -497,7 +497,7 @@ module.exports = async (h) => {
     const dl = await captureDownload(() => h.clickInModal("백업 내보내기"));
     if (!dl || !dl.text) throw new Error("no backup blob was produced");
     const data = JSON.parse(dl.text);
-    if (data.state?.v !== 26) throw new Error("backup schema version " + data.state?.v + " (expected 26)");
+    if (data.state?.v !== 27) throw new Error("backup schema version " + data.state?.v + " (expected 27)");
     if (JSON.stringify(data.state?.work) !== JSON.stringify(st.work)) throw new Error("backup work items differ: " + JSON.stringify(data.state?.work));
     const m = (data.state?.meetings || []).find((x) => x.id === MEETING_ID);
     if (!m || (m.progress || []).length !== 1 || m.aiHidden !== false) throw new Error("the backup lacks the meeting's progress entry or flag: " + JSON.stringify(m));

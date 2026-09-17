@@ -58,7 +58,7 @@ module.exports = async (h) => {
     await expectText("미팅 — 프로젝트별 회의록");
     await expectText("프로젝트가 없어요 — 프로젝트를 먼저 만들어요.");
     const line = await countsLine();
-    if (!/^프로젝트 0개 · 회의록 0건 · 저장 공간 \d+\.\dMB \/ 3\.5MB$/.test(line)) throw new Error("meetings counts line: " + JSON.stringify(line));
+    if (!/^프로젝트 0개 · 회의록 0건 · 문서 0건 · 저장 공간 \d+\.\dMB \/ 3\.5MB$/.test(line)) throw new Error("meetings counts line: " + JSON.stringify(line));
   });
 
   await step("the project form refuses an empty name, then registers", async () => {
@@ -826,5 +826,185 @@ module.exports = async (h) => {
       localStorage.setItem(k, JSON.stringify(s));
     }, KEY, MEMO_TITLE);
     await h.reload();
+  });
+
+  // ── Documents (schema v27): a record of what a file says, attached to a project or to none, listed in the meetings tab
+  // under its minutes rows, opened in its own sheet and deleted after a confirm by title. Written 2026-09-17 under the
+  // standing instruction that the suite is not run.
+  const DOC_TITLE = "E2E 요구사항 문서", DOC_MEMO_TITLE = "E2E 메모 문서", DOC_SENTINEL = "E2E-DOC-SENTINEL-7b1c";
+  const DOC_TITLE_SEL = '.fixed.inset-0 input[placeholder^="문서 제목"]';
+  const DOC_SOURCE_SEL = '.fixed.inset-0 input[placeholder^="출처"]';
+  const DOC_SUMMARY_SEL = '.fixed.inset-0 textarea[placeholder^="문서 요약"]';
+  const docByTitle = async (t) => ((await readState()).documents || []).find((d) => d.title === t);
+  // Tap a button by its exact label inside one meetings-tab section.
+  const clickInSection = async (name, label) => {
+    const ok = await page.evaluate((n, l) => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.querySelector(".font-bold.truncate")?.innerText || "").trim() === n);
+      const b = sec && [...sec.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
+      if (!b) return false;
+      b.scrollIntoView({ block: "center" }); b.click(); return true;
+    }, name, label);
+    if (!ok) throw new Error(`no "${label}" button in the section ${name}`);
+    await sleep(400);
+  };
+  // One section's head count span (`회의록 {n}건 · 문서 {d}건`), or null.
+  const sectionCount = (name) => page.evaluate((n) => {
+    const sec = [...document.querySelectorAll("main section")].find((s) => (s.querySelector(".font-bold.truncate")?.innerText || "").trim() === n);
+    return sec ? (sec.querySelector(".font-bold.truncate")?.parentElement?.querySelector(".font-mono")?.innerText || "").trim() : null;
+  }, name);
+  // Whether the chip of that exact label in the open sheet is on (`bg-cyan-400`), or null when absent.
+  const chipOn = (label) => page.evaluate((l) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
+    return b ? /bg-cyan-400/.test(b.className || "") : null;
+  }, label);
+  // The disabled state of the open sheet's `삭제` button, or null when absent.
+  const deleteDisabled = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "삭제");
+    return b ? b.disabled : null;
+  });
+  let docsBeforeCount = 0;
+
+  await step("a document registers under a project with its title, source and summary, and lists in that project's section", async () => {
+    const today = await dstrIn(0);
+    const before = await readState();
+    docsBeforeCount = (before.documents || []).length;
+    const pid = (before.meetingProjects || []).find((p) => p.name === PROJECT)?.id;
+    if (!pid) throw new Error("the project is missing from the save");
+    await clickTab("미팅");
+    await clickInSection(PROJECT, "문서 추가");
+    await expectText("문서 추가");
+    if ((await chipOn(PROJECT)) !== true) throw new Error("the project chip is not preselected");
+    const summary = "첫 줄 " + DOC_SENTINEL + NL + "둘째 줄";
+    await setValue(DOC_TITLE_SEL, DOC_TITLE);
+    await setValue(DOC_SOURCE_SEL, "spec-v1.pdf");
+    await setValue(DOC_SUMMARY_SEL, summary);
+    await clickInModalExact("등록");
+    await expectText("문서를 등록했어요");
+    await sleep(300);
+    const after = await readState();
+    if ((after.documents || []).length !== docsBeforeCount + 1) throw new Error("documents length: " + (after.documents || []).length);
+    const d = after.documents.find((x) => x.title === DOC_TITLE);
+    if (!d || d.projectId !== pid || d.source !== "spec-v1.pdf" || d.summary !== summary || d.addedAt !== today) throw new Error("the document record: " + JSON.stringify(d));
+    const keys = Object.keys(d).sort().join(",");
+    if (keys !== ["id", "projectId", "title", "source", "summary", "addedAt"].sort().join(",")) throw new Error("the document keys: " + keys);
+    assertBoundary(before, after, "adding a document");
+    for (const k of ["meetings", "work"]) if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) throw new Error("adding a document changed " + k);
+    const head = await sectionCount(PROJECT);
+    if (!head || !head.endsWith("문서 1건")) throw new Error("the project head: " + JSON.stringify(head));
+    const list = await projectRows(PROJECT);
+    if (!list || !list.some((r) => r.title === DOC_TITLE && r.lead === "문서")) throw new Error("the project rows: " + JSON.stringify(list));
+    const line = await countsLine();
+    if (!line.includes(`문서 ${docsBeforeCount + 1}건`)) throw new Error("meetings counts line: " + JSON.stringify(line));
+  });
+
+  await step("the document sheet states the facts, an edit clears the source, and the caps refuse with the count", async () => {
+    const today = await dstrIn(0);
+    await clickTab("미팅");
+    await openTodo(DOC_TITLE);
+    const sheet = await overlayText();
+    for (const t of ["프로젝트", PROJECT, "추가일", today]) if (!sheet.includes(t)) throw new Error(`the document sheet lacks "${t}": ` + sheet.slice(0, 300));
+    // The source and the summary are field values, not text nodes.
+    const fields = await page.evaluate((a, b) => [document.querySelector(a)?.value, document.querySelector(b)?.value], DOC_SOURCE_SEL, DOC_SUMMARY_SEL);
+    if (fields[0] !== "spec-v1.pdf" || !String(fields[1]).includes(DOC_SENTINEL)) throw new Error("the document sheet fields: " + JSON.stringify(fields));
+    const before = await readState();
+    const cur = before.documents.find((x) => x.title === DOC_TITLE);
+    await setValue(DOC_SOURCE_SEL, "");
+    await setValue(DOC_TITLE_SEL, "가".repeat(61));
+    await clickInModalExact("저장");
+    let e = await modalError();
+    if (e !== "문서 제목은 60자까지예요 — 지금 61자예요.") throw new Error("the title cap refusal: " + e);
+    await setValue(DOC_TITLE_SEL, DOC_TITLE);
+    await setValue(DOC_SUMMARY_SEL, "가".repeat(5001));
+    await clickInModalExact("저장");
+    e = await modalError();
+    if (e !== "문서 요약은 5000자까지예요 — 지금 5001자예요.") throw new Error("the summary cap refusal: " + e);
+    await setValue(DOC_SUMMARY_SEL, "요약 수정");
+    await clickInModalExact("저장");
+    await expectText("문서를 수정했어요");
+    await sleep(300);
+    const after = await readState();
+    const d = await docByTitle(DOC_TITLE);
+    if (!d || "source" in d || d.summary !== "요약 수정" || d.addedAt !== cur.addedAt || d.id !== cur.id) throw new Error("the edited document: " + JSON.stringify(d));
+    assertBoundary(before, after, "editing a document");
+  });
+
+  await step("a document with no project lists in the memo group and moves into a project from its sheet", async () => {
+    const pid = ((await readState()).meetingProjects || []).find((p) => p.name === PROJECT)?.id;
+    await clickTab("미팅");
+    await clickInSection(MEMO_GROUP, "문서 추가");
+    if ((await chipOn("없음 (긴급 메모)")) !== true) throw new Error("the memo chip is not preselected");
+    await setValue(DOC_TITLE_SEL, DOC_MEMO_TITLE);
+    await setValue(DOC_SUMMARY_SEL, "메모 문서");
+    await clickInModalExact("등록");
+    await expectText("문서를 등록했어요");
+    await sleep(300);
+    let d = await docByTitle(DOC_MEMO_TITLE);
+    if (!d || !("projectId" in d) || d.projectId !== null) throw new Error("the memo document's projectId: " + JSON.stringify(d));
+    let inGroup = await projectRows(MEMO_GROUP);
+    if (!inGroup || !inGroup.some((r) => r.title === DOC_MEMO_TITLE)) throw new Error("the memo group rows: " + JSON.stringify(inGroup));
+    await openTodo(DOC_MEMO_TITLE);
+    await clickInModalExact(PROJECT);
+    await clickInModalExact("저장");
+    await expectText("문서를 수정했어요");
+    await sleep(300);
+    d = await docByTitle(DOC_MEMO_TITLE);
+    if (d?.projectId !== pid) throw new Error("the document did not move into the project: " + JSON.stringify(d));
+    const inProject = await projectRows(PROJECT);
+    if (!inProject || !inProject.some((r) => r.title === DOC_MEMO_TITLE)) throw new Error("the project section does not list the moved document: " + JSON.stringify(inProject));
+    await openTodo(DOC_MEMO_TITLE);
+    await clickInModalExact("없음 (긴급 메모)");
+    await clickInModalExact("저장");
+    await expectText("문서를 수정했어요");
+    await sleep(300);
+    d = await docByTitle(DOC_MEMO_TITLE);
+    if (!d || d.projectId !== null) throw new Error("the document did not return to the memo group: " + JSON.stringify(d));
+    inGroup = await projectRows(MEMO_GROUP);
+    if (!inGroup || !inGroup.some((r) => r.title === DOC_MEMO_TITLE)) throw new Error("the memo group does not list the document again: " + JSON.stringify(inGroup));
+  });
+
+  await step("deleting a project with documents is refused, and deleting the documents by title clears the way", async () => {
+    const PD = "E2E 문서 프로젝트", PD_DOC = "E2E 삭제 문서";
+    const today = await dstrIn(0);
+    await page.evaluate((k, name, title, d) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetingProjects = [{ id: "e2e-doc-project", name, createdAt: d }, ...(s.meetingProjects || [])];
+      s.documents = [{ id: "e2e-doc-planted", projectId: "e2e-doc-project", title, summary: "삭제할 문서", addedAt: d }, ...(s.documents || [])];
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, PD, PD_DOC, today);
+    await h.reload();
+    await clickTab("미팅");
+    await clickInSection(PD, "프로젝트 수정");
+    if ((await deleteDisabled()) !== true) throw new Error("the project delete button is not disabled with a document on it");
+    if (!(await overlayText()).includes("문서 1건이 있어 삭제할 수 없어요 — 문서를 먼저 지워요.")) throw new Error("the sheet does not state the documents refusal");
+    await closeModal();
+    await page.evaluate(() => { window.__confirms = []; window.confirm = (m) => { window.__confirms.push(m); return true; }; });
+    const before = await readState();
+    await openTodo(PD_DOC);
+    await clickInModalExact("삭제");
+    await expectText("문서를 삭제했어요");
+    await sleep(300);
+    const after = await readState();
+    if ((after.documents || []).some((d) => d.id === "e2e-doc-planted")) throw new Error("the planted document survived");
+    if (!(after.meetingProjects || []).some((p) => p.id === "e2e-doc-project")) throw new Error("deleting the document removed its project");
+    assertBoundary(before, after, "deleting a document");
+    await clickInSection(PD, "프로젝트 수정");
+    if ((await deleteDisabled()) !== false) throw new Error("the project delete button is still disabled with no documents");
+    await clickInModalExact("삭제");
+    await expectText("프로젝트를 삭제했어요");
+    await sleep(300);
+    for (const t of [DOC_TITLE, DOC_MEMO_TITLE]) {
+      await openTodo(t);
+      await clickInModalExact("삭제");
+      await expectText("문서를 삭제했어요");
+      await sleep(300);
+    }
+    const confirms = await page.evaluate(() => window.__confirms);
+    const want = [PD_DOC, DOC_TITLE, DOC_MEMO_TITLE].map((t) => `${t} 문서를 삭제해요. 계속할까요?`);
+    if (JSON.stringify(confirms) !== JSON.stringify(want)) throw new Error("the delete confirms: " + JSON.stringify(confirms));
+    const end = await readState();
+    if ((end.documents || []).length !== docsBeforeCount) throw new Error("documents after the cleanup: " + (end.documents || []).length);
+    if ((end.meetingProjects || []).some((p) => p.id === "e2e-doc-project")) throw new Error("the planted project survived");
   });
 };
