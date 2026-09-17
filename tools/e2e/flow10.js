@@ -406,4 +406,229 @@ module.exports = async (h) => {
     }, KEY, before.id);
     await h.reload();
   });
+
+  // ── Follow-up items (schema v26): structured follow-ups on a meeting; a mine item is mirrored as a work item with a
+  // two-way link, and only `done` mirrors. Written 2026-09-17 under the standing instruction that the suite is not run.
+  const FU_MEETING = "E2E 후속 회의";
+  const SPLIT_ID = "e2e-split-mtg", SPLIT_TITLE = "E2E 나누기 회의";
+  const CAP_ID = "e2e-cap-mtg", CAP_TITLE = "E2E 후속 한도 회의";
+  const SPLIT_ACTIONS = "- 샘플 문서 전달" + NL + "• 권한 목록 회신 / 일정 확정";
+  const fuMeeting = async () => ((await readState()).meetings || []).find((m) => m.title === FU_MEETING);
+  // The marker span of a minutes row (or the lead chip of a work row) whose title is exactly `title`, or null.
+  const rowSpan = (title, which) => page.evaluate((t, w) => {
+    const node = [...document.querySelectorAll("main .text-sm.font-semibold")].find((e) => (e.innerText || "").trim() === t);
+    const spans = node?.closest("button") ? [...node.closest("button").querySelectorAll("span")] : [];
+    const span = w === "lead" ? spans[0] : spans.length > 1 ? spans[spans.length - 1] : null;
+    return span ? (span.innerText || "").trim() : null;
+  }, title, which);
+  // Taps the nth (0-based) button labelled exactly `label` in the open overlay.
+  const clickNthInModal = async (label, n) => {
+    const ok = await page.evaluate((l, i) => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = ov && [...ov.querySelectorAll("button")].filter((x) => (x.innerText || "").trim() === l)[i];
+      if (!b) return false;
+      b.click(); return true;
+    }, label, n);
+    if (!ok) throw new Error(`button #${n} not found in the sheet: ${label}`);
+    await sleep(250);
+  };
+  // One follow-up row of the open meeting view, found by its text: `done` ticks its checkbox, `mine` taps its owner chip.
+  const fuRowTap = async (text, what) => {
+    const ok = await page.evaluate((t, w) => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const box = ov && [...ov.querySelectorAll('input[aria-label="후속 완료"]')]
+        .find((b) => (b.parentElement?.querySelector("p")?.innerText || "").trim() === t);
+      if (!box) return false;
+      if (w === "done") { box.click(); return true; }
+      const chip = [...box.parentElement.querySelectorAll("button")].find((b) => (b.innerText || "").trim() === "내 담당");
+      if (!chip) return false;
+      chip.click(); return true;
+    }, text, what);
+    if (!ok) throw new Error(`follow-up row control not found: ${text} (${what})`);
+    await sleep(500);
+  };
+  // Opens the follow-up meeting's view, taps one control of its first row, waits for the toast, and answers the save
+  // and that meeting. The view stays open.
+  const tapInFuView = async (what, toast) => {
+    await clickTab("미팅");
+    await openTodo(FU_MEETING);
+    await fuRowTap("견적서 송부", what);
+    await expectText(toast);
+    const st = await readState();
+    return { st, m: (st.meetings || []).find((x) => x.title === FU_MEETING) };
+  };
+  // One candidate row of the split panel: answers `{ checked, disabled }`; `tick` clicks its checkbox, `mine` its chip.
+  const splitRow = (text, what = null) => page.evaluate((t, w) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const panel = ov && ov.querySelector(".border-cyan-800");
+    const row = panel && [...panel.querySelectorAll('input[type="checkbox"]')].map((b) => b.parentElement)
+      .find((r) => (r.querySelector("span")?.innerText || "").trim().startsWith(t));
+    if (!row) return null;
+    const box = row.querySelector('input[type="checkbox"]');
+    const out = { checked: box.checked, disabled: box.disabled };
+    if (w === "tick") box.click();
+    if (w === "mine") [...row.querySelectorAll("button")].find((b) => (b.innerText || "").trim() === "내 담당")?.click();
+    return out;
+  }, text, what);
+  const plantMeetingRecord = async (rec) => {
+    await page.evaluate((k, r) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      const p = (s.meetingProjects || [])[0];
+      s.meetings = [{ ...r, projectId: p.id }, ...(s.meetings || []).filter((m) => m.id !== r.id)];
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, rec);
+    await h.reload();
+  };
+
+  await step("the meeting form registers follow-up items and a mine item becomes a work item dated the meeting day", async () => {
+    const today = await dstrIn(0), due = await dstrIn(2);
+    const before = await readState();
+    await clickTab("미팅");
+    await openMeetingForm();
+    await fillMeeting({ title: FU_MEETING, summary: "후속 항목 확인" });
+    await clickInModalExact("항목 추가");
+    await clickInModalExact("항목 추가");
+    await setValue('.fixed.inset-0 input[placeholder^="후속 항목"]', "견적서 송부", 0);
+    await setValue('.fixed.inset-0 input[placeholder^="후속 항목"]', "단가표 회신", 1);
+    await clickNthInModal("내 담당", 0);
+    await setValue('.fixed.inset-0 input[aria-label="후속 기한"]', due, 0);
+    await clickInModalExact("등록");
+    await expectText("회의록을 등록했어요 · 업무 1건 등록");
+    const after = await readState();
+    const m = (after.meetings || []).find((x) => x.title === FU_MEETING);
+    if (!m || (m.followUps || []).length !== 2) throw new Error("stored follow-ups: " + JSON.stringify(m?.followUps));
+    const [f1, f2] = m.followUps;
+    if (f1.text !== "견적서 송부" || f1.mine !== true || f1.due !== due || f1.done !== false || !f1.workId) throw new Error("the first follow-up: " + JSON.stringify(f1));
+    if (f2.text !== "단가표 회신" || f2.mine !== false || "due" in f2 || f2.done !== false || "workId" in f2) throw new Error("the second follow-up: " + JSON.stringify(f2));
+    const made = (after.work || []).filter((w) => !(before.work || []).some((x) => x.id === w.id));
+    if (made.length !== 1) throw new Error("work items created: " + JSON.stringify(made));
+    const w = made[0];
+    if (w.id !== f1.workId || w.source !== "meeting" || w.date !== today || w.done !== false || w.title !== "견적서 송부") throw new Error("the mirrored work item: " + JSON.stringify(w));
+    if (!w.link || w.link.kind !== "meeting" || w.link.id !== m.id || w.link.followUpId !== f1.id) throw new Error("the mirrored item's link: " + JSON.stringify(w.link));
+    assertBoundary(before, after, "registering follow-ups");
+    const marker = await rowSpan(FU_MEETING, "marker");
+    if (marker !== "후속 2/2") throw new Error("the minutes row marker: " + JSON.stringify(marker));
+    await clickTab("업무");
+    const lead = await rowSpan("견적서 송부", "lead");
+    if (lead !== "회의") throw new Error("the work row lead: " + JSON.stringify(lead));
+  });
+
+  await step("a follow-up ticked done in the meeting view marks its work item done, and un-ticking from the work sheet marks it open again", async () => {
+    const before = await readState();
+    let { m, st } = await tapInFuView("done", "후속 항목을 완료로 표시했어요");
+    if (m.followUps[0].done !== true) throw new Error("the follow-up was not stored done: " + JSON.stringify(m.followUps[0]));
+    if ((st.work || []).find((w) => w.id === m.followUps[0].workId)?.done !== true) throw new Error("the linked work item was not marked done");
+    await closeModal();
+    const marker = await rowSpan(FU_MEETING, "marker");
+    if (marker !== "후속 1/2") throw new Error("the minutes row marker after done: " + JSON.stringify(marker));
+    await clickTab("업무");
+    await openTodo("견적서 송부");
+    const sheet = await overlayText();
+    for (const t of ["회의 후속", "연결은 회의록의 후속 항목을 따라요.", `회의록 · ${m.date} ${FU_MEETING}`]) if (!sheet.includes(t)) throw new Error(`the work sheet lacks "${t}": ` + sheet.slice(0, 300));
+    await clickInModalExact("완료 취소");
+    await sleep(500);
+    m = await fuMeeting();
+    st = await readState();
+    if (m.followUps[0].done !== false) throw new Error("un-ticking the work item did not reopen the follow-up: " + JSON.stringify(m.followUps[0]));
+    if ((st.work || []).find((w) => w.id === m.followUps[0].workId)?.done !== false) throw new Error("the work item stayed done");
+    assertBoundary(before, st, "mirroring done");
+  });
+
+  await step("turning the mine flag off removes the undone work item and turning it on registers a new one", async () => {
+    const oldId = (await fuMeeting()).followUps[0].workId;
+    let { m, st } = await tapInFuView("mine", "내 담당을 해제했어요 · 미완료 업무 삭제");
+    if ((st.work || []).some((w) => w.id === oldId)) throw new Error("the undone work item survived turning the mine flag off");
+    if (m.followUps[0].mine !== false || "workId" in m.followUps[0]) throw new Error("the follow-up after turning the mine flag off: " + JSON.stringify(m.followUps[0]));
+    await fuRowTap("견적서 송부", "mine");
+    await expectText("내 담당으로 표시했어요 · 업무 등록");
+    m = await fuMeeting();
+    st = await readState();
+    const fu = m.followUps[0];
+    const w = (st.work || []).find((x) => x.id === fu.workId);
+    if (fu.mine !== true || !w || w.id === oldId || w.source !== "meeting" || w.link?.followUpId !== fu.id) throw new Error("the re-registered work item: " + JSON.stringify({ fu, w }));
+    await closeModal();
+  });
+
+  await step("deleting the work item leaves the follow-up on the meeting, unlinked", async () => {
+    await page.evaluate(() => { window.confirm = () => true; });
+    await clickTab("업무");
+    await openTodo("견적서 송부");
+    await clickInModalExact("삭제");
+    await sleep(500);
+    const m = await fuMeeting();
+    const fu = (m.followUps || []).find((f) => f.text === "견적서 송부");
+    if (!fu || fu.mine !== true || "workId" in fu) throw new Error("the follow-up after its work item was deleted: " + JSON.stringify(fu));
+    if (((await readState()).work || []).some((w) => w.link?.followUpId === fu.id)) throw new Error("a work item still mirrors the follow-up");
+    await clickTab("미팅");
+    await openTodo(FU_MEETING);
+    if (!(await overlayText()).includes("업무 삭제됨")) throw new Error("the view does not state the deleted work item: " + (await overlayText()).slice(0, 300));
+    await closeModal();
+  });
+
+  await step("the split button turns the free-text follow-ups into ticked candidates and appends the ticked ones without touching the text", async () => {
+    const today = await dstrIn(0);
+    await plantMeetingRecord({ id: SPLIT_ID, date: today, title: SPLIT_TITLE, summary: "나누기 확인", actions: SPLIT_ACTIONS,
+      createdAt: today, taskIds: [], progress: [], aiHidden: false, followUps: [] });
+    const before = await readState();
+    await clickTab("미팅");
+    await openTodo(SPLIT_TITLE);
+    await clickInModalExact("항목으로 나누기");
+    if (!(await overlayText()).includes("후속 조치에서 항목 나누기 — 3건")) throw new Error("the split panel title: " + (await overlayText()).slice(0, 300));
+    for (const t of ["샘플 문서 전달", "권한 목록 회신", "일정 확정"]) {
+      const r = await splitRow(t);
+      if (!r || !r.checked || r.disabled) throw new Error(`candidate "${t}" does not start ticked: ` + JSON.stringify(r));
+    }
+    await splitRow("일정 확정", "tick");
+    await sleep(150);
+    await splitRow("샘플 문서 전달", "mine");
+    await sleep(150);
+    await clickInModalExact("추가");
+    await expectText("후속 항목 2건을 추가했어요 · 업무 1건 등록");
+    const st = await readState();
+    const m = (st.meetings || []).find((x) => x.id === SPLIT_ID);
+    if ((m.followUps || []).length !== 2 || m.followUps.map((f) => f.text).join("|") !== "샘플 문서 전달|권한 목록 회신") throw new Error("appended follow-ups: " + JSON.stringify(m.followUps));
+    if (m.actions !== SPLIT_ACTIONS) throw new Error("the split rewrote actions: " + JSON.stringify(m.actions));
+    const made = (st.work || []).filter((w) => !(before.work || []).some((x) => x.id === w.id));
+    if (made.length !== 1 || made[0].source !== "meeting" || made[0].title !== "샘플 문서 전달" || made[0].id !== m.followUps[0].workId) throw new Error("the split's work item: " + JSON.stringify(made));
+    if (!(await overlayText()).includes("항목으로 나누기")) throw new Error("the split button left the view after the append");
+    await closeModal();
+  });
+
+  await step("the split tool refuses beyond thirty items", async () => {
+    const today = await dstrIn(0);
+    const pad = (n) => String(n).padStart(2, "0");
+    const fus = Array.from({ length: 29 }, (_, i) => ({ id: `e2e-cap-fu-${pad(i + 1)}`, text: `E2E 후속 ${pad(i + 1)}`, mine: false, done: false }));
+    await plantMeetingRecord({ id: CAP_ID, date: today, title: CAP_TITLE, summary: "한도 확인", actions: "a / b / c",
+      createdAt: today, taskIds: [], progress: [], aiHidden: false, followUps: fus });
+    await clickTab("미팅");
+    await openTodo(CAP_TITLE);
+    await clickInModalExact("항목으로 나누기");
+    const a = await splitRow("a"), b = await splitRow("b"), c = await splitRow("c");
+    if (!a || !a.checked || a.disabled) throw new Error("the first candidate is not ticked: " + JSON.stringify(a));
+    if (!c || c.checked || !c.disabled || !b || b.checked || !b.disabled) throw new Error("candidates past the room are not disabled: " + JSON.stringify({ b, c }));
+    if (!(await overlayText()).includes("후속 항목은 30건까지예요 — 1건만 추가할 수 있어요.")) throw new Error("the room line is missing: " + (await overlayText()).slice(0, 300));
+    await clickInModalExact("추가");
+    await expectText("후속 항목 1건을 추가했어요");
+    const m = ((await readState()).meetings || []).find((x) => x.id === CAP_ID);
+    if ((m.followUps || []).length !== 30) throw new Error("follow-ups at the cap: " + (m.followUps || []).length);
+    await clickInModalExact("수정");
+    await expectText("회의록 수정");
+    const addDisabled = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const btn = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "항목 추가");
+      return btn ? btn.disabled : null;
+    });
+    if (addDisabled !== true) throw new Error("the form's add-row button is not disabled at 30 items: " + addDisabled);
+    if (!(await overlayText()).includes("후속 항목은 30건까지예요.")) throw new Error("the form does not state the follow-up cap");
+    await closeModal();
+    // Leave the save as flow11 expects it: the planted and form-made meetings gone, with every work item they created.
+    await page.evaluate((k, ids, title) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      const gone = new Set(s.meetings.filter((x) => ids.includes(x.id) || x.title === title).map((x) => x.id));
+      s.meetings = s.meetings.filter((x) => !gone.has(x.id));
+      s.work = (s.work || []).filter((w) => !(w.link?.kind === "meeting" && gone.has(w.link.id)));
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, [SPLIT_ID, CAP_ID], FU_MEETING);
+    await h.reload();
+  });
 };

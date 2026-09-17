@@ -69,7 +69,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version and CV records", async () => {
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
-    if (st?.v !== 25) throw new Error("fresh save schema v" + st?.v + " (expected 25)");
+    if (st?.v !== 26) throw new Error("fresh save schema v" + st?.v + " (expected 26)");
     const p = st.profile || {};
     if (p.name !== "E2E테스터" || p.nick !== "E2E닉" || p.birth !== "1998-05-14") throw new Error("personal facts not stored: " + JSON.stringify({ name: p.name, nick: p.nick, birth: p.birth }));
     const e0 = (p.edus || [])[0] || {};
@@ -370,8 +370,9 @@ module.exports = async (h) => {
     for (const tab of ["할 일", "업무", "목표", "일정", "미팅", "사업", "프로필"]) {
       await clickTab(tab);
       // The demo reproduces the two 2026-09-16 features: synthetic minutes, and an exact exam score on the CV —
-      // and the 2026-09-17 work tab: one manual item open, one assistant-proposed item done.
-      if (tab === "업무") await expectText("남음 1건 · 완료 1건 · AI 제안 1건");
+      // and the 2026-09-17 work tab: one manual item open, one assistant-proposed item done, and (v26) one open item
+      // registered from a meeting follow-up.
+      if (tab === "업무") await expectText("남음 2건 · 완료 1건 · AI 제안 1건");
       if (tab === "미팅") await expectText("프로젝트 2개 · 회의록 3건");
       if (tab === "프로필") await expectText("TOEIC L&R 735");
     }

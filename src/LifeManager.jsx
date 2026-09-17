@@ -3184,10 +3184,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
 
 /* ── State lifecycle ── */
 /**
- * @schema v25 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v26 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 25,
+ *   v: 26,
  *   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
  *              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
  *                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -3209,7 +3209,9 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *                 | { id, type:"cert",   title, certName, done? }] }],
  *   events: [{ id, title, kind("appt"|"due"), date("YYYY-MM-DD"), time?("HH:MM"), note?, place?,   // schedule records: appointments and deadlines —
  *              repeat?{ freq("daily"|"weekly"|"monthly"), until? },                                // never tasks, never paid, never a metric source
- *              skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt }],                        // occurrences are expanded at render, not stored
+ *              skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt,                           // occurrences are expanded at render, not stored
+ *              projectId? }],                                                                     // projectId (v26, optional): the meeting project this event
+ *                                                                                                  // belongs to — read by the prep card, never by the export
  *   folio: [{ id, title, summary?, role?, stack?[string],                       // business records: what was built, what it sells for,
  *             period?{ from("YYYY-MM"), to("YYYY-MM") },                        // and what is contracted — records, never tasks: no payout,
  *             links[{ label, url }], createdAt }],                              // no trophy, no goal, no streak (rules 1, 18).
@@ -3224,13 +3226,17 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *                                                                           // taskIds (v24): ids of existing tasks the minutes refer to, at most
  *                                                                           // 10; linking changes no task, and the task sheet's reverse list is
  *                                                                           // derived at render. Deleting a task removes its id here.
- *               progress: [{ id, date("YYYY-MM-DD"), text }], aiHidden }], // progress (v25): the work that followed the meeting, dated entries,
+ *               progress: [{ id, date("YYYY-MM-DD"), text }], aiHidden,   // progress (v25): the work that followed the meeting, dated entries,
  *                                                                           // at most 30 of 300 chars; aiHidden (v25): true = excluded from the
  *                                                                           // work packet body (its date and title still appear).
+ *               followUps: [{ id, text, mine, due?("YYYY-MM-DD"), done,    // follow-up items (v26): `mine` = the user's own; a mine item is
+ *                             workId? }] }],                               // mirrored as a `source: "meeting"` work item named by `workId`;
+ *                                                                           // only `done` mirrors, both ways; at most 30 of 200 chars.
  *   work: [{ id, date("YYYY-MM-DD"), title, note?, done,                   // daily work items (v25): records outside the goal ladder — no
- *            link?{ kind("goal"|"meeting"|"project"), id },                 // payout, trophy, goal, KR or streak (rules 1, 7, 9, 18); `done` is
- *            source("manual"|"ai"), createdAt }],                           // a stored fact; the day view, the past-undone list and the link
- *                                                                           // label are derived.
+ *            link?{ kind("goal"|"meeting"|"project"), id, followUpId? },    // payout, trophy, goal, KR or streak (rules 1, 7, 9, 18); `done` is
+ *            source("manual"|"ai"|"meeting"), createdAt }],                 // a stored fact; the day view, the past-undone list and the link
+ *                                                                           // label are derived. followUpId (v26): the follow-up this item
+ *                                                                           // mirrors, on a `meeting` link only.
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -3250,8 +3256,9 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  * the displayed age (`ageText`) and the total months of practice (`careerMonths`), the calendar export file (`buildIcs`),
  * the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`),
  * a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`),
- * the work tab's day view, past-undone list and link labels (`workOn`/`workPastOpen`/`workLinkText`),
- * and the work packet (`buildWorkPacket`).
+ * the work tab's day view with the carried undone items and link labels (`workOn` with `today`/`workLinkText`),
+ * the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitFollowUpText`), the minutes row's
+ * `후속 {open}/{total}` marker, and the work packet (`buildWorkPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -3366,6 +3373,13 @@ const migrate = (s) => {
     s = { ...s, v: 25, work: Array.isArray(s.work) ? s.work : [],
       meetings: (s.meetings || []).map((m) => ({ ...m, progress: Array.isArray(m.progress) ? m.progress : [], aiHidden: m.aiHidden === true })) };
   }
+  if (s.v < 26) {
+    // v26: meeting follow-up items — meetings[].followUps, structured follow-ups next to the free-text `actions`, which
+    // is never rewritten (rule 12). A follow-up is a record on the meeting; a mine item is mirrored as a work item, a
+    // record outside the goal ladder (rules 1, 9, 18). Events gain an optional projectId that nothing backfills; work
+    // items gain nothing here. Every existing field and key passes through untouched.
+    s = { ...s, v: 26, meetings: (s.meetings || []).map((m) => ({ ...m, followUps: Array.isArray(m.followUps) ? m.followUps : [] })) };
+  }
   return s;
 };
 
@@ -3377,7 +3391,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 25,
+  v: 26,
   profile: null,
   areas,
   tasks: [],
@@ -3490,25 +3504,44 @@ const demoState = () => {
   // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
   const linkedTaskIds = s.tasks.filter((q) => q.title === "이력서 초안 작성" || q.title === "CATIA·도면 연습 1시간").map((q) => q.id);
   // The newest meeting is flagged `aiHidden` and the second carries one progress entry, so the demo shows both v25 fields.
+  // The second meeting also carries three follow-up items (schema v26): one mine and mirrored as today's work item (its
+  // `workId` is set below, once that item exists), one owned by someone else, and one done — so its minutes row states
+  // two open of three. Its id is a const so both sides of the link can name it.
+  const mtgUpkeepId = uid();
+  const fuA = { id: uid(), text: "긴급 대응 기준 초안 공유", mine: true, due: shiftDay(today, 2), done: false };
   s.meetings = [
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
       decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [],
-      progress: [], aiHidden: true },
-    { id: uid(), projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
+      progress: [], aiHidden: true, followUps: [] },
+    { id: mtgUpkeepId, projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
       summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3),
       taskIds: linkedTaskIds,
-      progress: [{ id: uid(), date: shiftDay(today, -2), text: "월 10시간 한도를 반영한 유지보수 견적서 초안 작성" }], aiHidden: false },
+      progress: [{ id: uid(), date: shiftDay(today, -2), text: "월 10시간 한도를 반영한 유지보수 견적서 초안 작성" }], aiHidden: false,
+      followUps: [
+        fuA,
+        { id: uid(), text: "초과분 시간 단가표 회신", mine: false, due: shiftDay(today, 5), done: false },
+        { id: uid(), text: "월 리포트 양식 확정", mine: false, done: true },
+      ] },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
       summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9), taskIds: [],
-      progress: [], aiHidden: false },
+      progress: [], aiHidden: false, followUps: [] },
   ];
-  // Two work items for today (schema v25): one typed by hand and open, one proposed by the assistant and done.
-  // Records, never tasks — neither pays, moves a goal or touches the streak.
+  // One demo event names its meeting project (schema v26), so the prep card has a project-linked event tomorrow. It is
+  // appended here, not in the schedule list above, because `mp1` is declared after that list.
+  s.events = [...s.events,
+    { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2) }];
+  // Three work items for today: one typed by hand and open, one proposed by the assistant and done (schema v25), and one
+  // registered from the mine follow-up above, linked both ways (schema v26).
+  // Records, never tasks — none pays, moves a goal or touches the streak.
+  const workFromFollowUp = { id: uid(), date: today, title: fuA.text, done: false,
+    link: { kind: "meeting", id: mtgUpkeepId, followUpId: fuA.id }, source: "meeting", createdAt: today };
+  fuA.workId = workFromFollowUp.id;
   s.work = [
     { id: uid(), date: today, title: "○○물산 유지보수 견적서 송부", note: "월 10시간 · 초과분 시간 단가", done: false,
       link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today },
     { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today },
+    workFromFollowUp,
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -6884,14 +6917,80 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    80-char entry ≈ 125, a full 300-char entry ≈ 345, and thirty full entries ≈ 10,380 — so a completely full meeting
    with ten links and thirty full entries ≈ 6,642 + 31 + 10,380 ≈ 17,050 chars. Typical minutes with three typical
    entries ≈ 850 + 31 + 375 ≈ 1,260 chars; three a working day ≈ 0.95 M chars a year (26 % of the budget a year,
-   about 3 years 10 months before the guard applies). `recordFits` measures the whole record, `progress` included. */
-const MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300 };
+   about 3 years 10 months before the guard applies). `recordFits` measures the whole record, `progress` included.
+   Follow-up items (v26) add `,"followUps":[]` = 15 chars to every record. One item is
+   `{"id":"…","text":"","mine":false,"done":false}` ≈ 50 chars + its text (+ 1 comma); `,"due":"YYYY-MM-DD"` adds 19 and
+   `,"workId":"…"` adds 22, so a fully-keyed item is ≈ 92 chars + text: a typical 40-char item ≈ 90 without a due date,
+   ≈ 132 with a due date and a work link; a full 200-char item with both ≈ 292, and thirty of them ≈ 8,760. A completely
+   full meeting with thirty full follow-ups ≈ 17,050 + 15 + 8,760 ≈ 25,825 chars. Typical minutes with three typical
+   progress entries and four typical follow-ups ≈ 850 + 375 + 31 + 15 + 520 ≈ 1,810 chars; three a working day ≈ 1.36 M
+   chars a year (37 % of the budget a year, about 2 years 8 months before `recordFits` refuses). Each mine follow-up
+   also creates a work item — the v25 overhead (~100) + title (≤ 60) + a meeting link with `followUpId` (≈ 66) ≈ 210
+   chars for a 40-char text; a text over 60 chars is copied whole into `note` (≤ 200), so the largest such item ≈ 436.
+   `commitMeeting` measures the meeting record plus every work item the reconcile creates before either is written. */
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200 };
 const MEETING_PROGRESS_MAX = 30;   // progress entries per meeting before `진행사항은 30건까지예요.`
+const MEETING_FOLLOWUPS_MAX = 30;  // follow-up items per meeting before `후속 항목은 30건까지예요.`
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
 const mbText = (chars) => (chars / 1048576).toFixed(1);
 const meetingOrder = (a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || "");
+
+// Candidate follow-up items split out of the free-text `actions`, on demand only — the text itself is never rewritten
+// (rule 12). Splits on newlines, on ` / `, before every circled number and before ` 1) ` / ` 1. `; strips one leading
+// list marker per piece; trims, drops empties, clips to the item cap and drops exact duplicates (the first is kept).
+// A number not followed by `)` or `.` is not a marker, and a decimal (`1.5`) is not one either.
+const splitFollowUpText = (text) => {
+  const seen = new Set();
+  return String(text || "").replace(/\r\n?/g, "\n")
+    .replace(/[①-⑳]/g, "\n$&")
+    .replace(/ (?=\d{1,2}[.)] )/g, "\n")
+    .split(/\n| \/ /)
+    .map((t) => t.replace(/^\s*(?:[-•*·]|[①-⑳]|\(\d{1,2}\)|\d{1,2}[.)](?!\d))/, "").trim().slice(0, MEETING_LIMITS.followUp))
+    .filter((t) => t && !seen.has(t) && seen.add(t));
+};
+// The date of the work item a mine follow-up registers: the meeting's date when it is today or later, otherwise today.
+const followUpWorkDate = (meetingDate, today) => (meetingDate >= today ? meetingDate : today);
+// The work item mirroring a mine follow-up: a record with no goal, difficulty or points (rule 18); only `done` mirrors.
+const followUpWorkItem = (fu, m, today) => ({
+  id: uid(), date: followUpWorkDate(m.date, today), title: fu.text.slice(0, WORK_LIMITS.title),
+  ...(fu.text.length > WORK_LIMITS.title ? { note: fu.text.slice(0, WORK_LIMITS.note) } : {}),
+  done: fu.done === true, link: { kind: "meeting", id: m.id, followUpId: fu.id }, source: "meeting", createdAt: today,
+});
+// Reconciles the work items with a meeting record about to be written (`prev` = the stored record, or null). Pure:
+// answers `{ work, meeting }` and writes nothing. Per follow-up, in order: a `workId` naming no live item is dropped; a
+// mine item without a live item is registered only when it is new or was not mine before (an item the user deleted is
+// never re-created by a later save); an item no longer mine loses its undone work item (a done one stays linked); a
+// live item takes the follow-up's `done` — the meeting side wins, since this runs on meeting writes. A follow-up
+// removed from the record takes its undone work item with it; a done one stays (TD-54).
+const reconcileFollowUps = (work, rec, prev, today) => {
+  let out = work.slice();
+  const live = (id) => (id ? out.find((w) => w.id === id) : undefined);
+  const drop = (id) => { out = out.filter((w) => w.id !== id); };
+  const before = new Map((prev?.followUps || []).map((f) => [f.id, f]));
+  const followUps = (rec.followUps || []).map((f) => {
+    const fu = { ...f };
+    let item = live(fu.workId);
+    if (!item) delete fu.workId;
+    const old = before.get(fu.id);
+    if (fu.mine && !item && (!old || !old.mine)) {
+      item = followUpWorkItem(fu, rec, today);
+      out.push(item);
+      fu.workId = item.id;
+    }
+    if (!fu.mine && item && !item.done) { drop(item.id); delete fu.workId; item = null; }
+    const done = fu.done === true;
+    if (item && item.done !== done) out = out.map((w) => (w.id === item.id ? { ...w, done } : w));
+    return fu;
+  });
+  const kept = new Set(followUps.map((f) => f.id));
+  for (const f of prev?.followUps || []) {
+    const item = kept.has(f.id) ? null : live(f.workId);
+    if (item && !item.done) drop(item.id);
+  }
+  return { work: out, meeting: { ...rec, followUps } };
+};
 
 // The event line of a meeting, read live: a link to an event that no longer exists is stated, never cleaned up.
 const meetingEventText = (state, m) => {
@@ -6924,6 +7023,16 @@ const meetingsOfTask = (state, taskId) => (state.meetings || []).filter((m) => (
 
 // One linked task as a to-do row: `완료` when closed, otherwise the to-do row's own lead chip.
 const linkedTaskLead = (q, today) => todoLeadOf({ kind: "task", task: q, date: q.due || null }, today);
+
+// A minutes row's marker: `진행 {n}건` and `후속 {open}/{total}`, each only when its total is above zero. Derived (rule 9).
+const meetingRowMarker = (m) => {
+  const fus = m.followUps || [];
+  const parts = [
+    m.progress?.length ? `진행 ${m.progress.length}건` : "",
+    fus.length ? `후속 ${fus.filter((f) => !f.done).length}/${fus.length}` : "",
+  ].filter(Boolean);
+  return parts.length ? <span className="text-xs text-zinc-500 shrink-0">{parts.join(" · ")}</span> : null;
+};
 
 function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenMeeting }) {
   const [expanded, setExpanded] = useState({}); // which projects show every row — view state only, never stored (rule 9)
@@ -6989,8 +7098,7 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
               <div className="space-y-1.5 mt-3">
                 {shown.map((m) => (
                   <TodoRow key={m.id} lead={{ text: m.date.slice(2), tone: "text-zinc-400 border-zinc-700" }} title={m.title}
-                    marker={m.progress?.length ? <span className="text-xs text-zinc-500 shrink-0">진행 {m.progress.length}건</span> : null}
-                    onOpen={() => onOpenMeeting(m.id)} />
+                    marker={meetingRowMarker(m)} onOpen={() => onOpenMeeting(m.id)} />
                 ))}
               </div>
             )}
@@ -7069,6 +7177,10 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   // Linked task ids. A link whose task was deleted before this edit is dropped here, so it never counts toward the cap.
   const [taskIds, setTaskIds] = useState(() => (meeting?.taskIds || []).filter((id) => (state.tasks || []).some((q) => q.id === id)));
   const [taskQuery, setTaskQuery] = useState(""); // the picker's text filter — view state only, never stored
+  // Follow-up rows (v26), shallow copies: `done` and `workId` pass through untouched — the form never edits them.
+  const [followUps, setFollowUps] = useState(() => (meeting?.followUps || []).map((f) => ({ ...f })));
+  const fuAtCap = followUps.length >= MEETING_FOLLOWUPS_MAX;
+  const editFollowUp = (id, patch) => setFollowUps((cur) => cur.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const [err, setErr] = useState("");
   const dayEvents = date ? eventsOn(state, date) : [];
   const candidates = useMemo(() => meetingTaskCandidates(state, today), [state, today]);
@@ -7106,6 +7218,14 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
     for (const k of Object.keys(names)) {
       if (v[k].length > MEETING_LIMITS[k]) { setErr(`${names[k]} ${MEETING_LIMITS[k]}자까지예요 — 지금 ${v[k].length}자예요.`); return; }
     }
+    // Follow-up rows: trimmed; an empty row is dropped; the position in the refusal is the row as shown (1-based).
+    const over = followUps.findIndex((r) => r.text.trim().length > MEETING_LIMITS.followUp);
+    if (over >= 0) {
+      setErr(`후속 항목은 ${MEETING_LIMITS.followUp}자까지예요 — ${over + 1}번째 항목이 지금 ${followUps[over].text.trim().length}자예요.`);
+      return;
+    }
+    const fuRows = followUps.map((r) => ({ ...r, text: r.text.trim() })).filter((r) => r.text)
+      .map(({ id, text, mine, due, done, workId }) => ({ id, text, mine: !!mine, ...(due ? { due } : {}), done: done === true, ...(workId ? { workId } : {}) }));
     // Only non-empty optional fields are written, so a cleared field disappears from the save.
     const next = {
       projectId: pid, date, title: v.title,
@@ -7119,6 +7239,8 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       // The form never edits progress entries (the view owns them); the flag is always written as a boolean (v25).
       progress: meeting?.progress || [],
       aiHidden,
+      // Always an array (v26); the root reconciles the mirrored work items when it writes the record.
+      followUps: fuRows,
     };
     const refused = meeting ? onUpdate(meeting.id, next) : onAdd(next);
     if (refused) setErr(refused);
@@ -7180,6 +7302,38 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
         <MeetingText value={summary} onChange={setSummary} placeholder="회의 요약 — 논의한 내용을 요점으로 적어요" rows={8} cap={MEETING_LIMITS.summary} />
         <MeetingText value={decisions} onChange={setDecisions} placeholder="결정 사항 (선택)" rows={3} cap={MEETING_LIMITS.decisions} />
         <MeetingText value={actions} onChange={setActions} placeholder="후속 조치 (선택)" rows={3} cap={MEETING_LIMITS.actions} />
+        {/* Follow-up items (v26): two lines per row, so the text, the owner chip and the due date fit 390 px */}
+        <div>
+          <div className="flex items-baseline justify-between gap-2 mb-1.5">
+            <div className="text-xs font-bold tracking-widest text-zinc-500">후속 항목</div>
+            <span className="text-xs font-mono text-zinc-500 shrink-0">{followUps.length} / {MEETING_FOLLOWUPS_MAX}</span>
+          </div>
+          {followUps.length > 0 && (
+            <div className="space-y-1.5 mb-1.5">
+              {followUps.map((r) => (
+                <div key={r.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <input value={r.text} onChange={(e) => editFollowUp(r.id, { text: e.target.value })} placeholder="후속 항목 — 예: 견적서 송부"
+                      className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
+                    <button aria-label="후속 항목 삭제" onClick={() => setFollowUps((cur) => cur.filter((x) => x.id !== r.id))}
+                      className="text-zinc-500 shrink-0 active:opacity-70"><X size={14} /></button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="shrink-0"><Chip on={!!r.mine} onClick={() => editFollowUp(r.id, { mine: !r.mine })}>내 담당</Chip></div>
+                    <input type="date" aria-label="후속 기한" value={r.due || ""} onChange={(e) => editFollowUp(r.id, { due: e.target.value })}
+                      className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-sm font-mono" />
+                    {r.done && <span className="text-xs font-mono text-emerald-400 shrink-0">완료</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <button onClick={() => setFollowUps((cur) => (cur.length >= MEETING_FOLLOWUPS_MAX ? cur : [...cur, { id: uid(), text: "", mine: false, done: false }]))}
+            disabled={fuAtCap}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">항목 추가</button>
+          {fuAtCap && <p className="text-xs text-zinc-400 mt-1.5">후속 항목은 {MEETING_FOLLOWUPS_MAX}건까지예요.</p>}
+          <p className="text-xs text-zinc-600 mt-1.5">내 담당을 켜면 업무 탭에 등록돼요 — 회의 날짜가 지났으면 오늘 업무로요.</p>
+        </div>
         <div>
           <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">일정 연결 (선택)</div>
           {dayEvents.length === 0 ? (
@@ -7215,11 +7369,44 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
 
 /* ── Meeting view — the full minutes, read from the live record. The progress log (v25) is added and deleted only
    here: `onAddProgress(meetingId, text)` answers with an error string ("" = saved) like the meeting form's handlers. ── */
-function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress }) {
+function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress,
+  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps }) {
   const [entry, setEntry] = useState(""); // the progress textarea — view state only, never stored
   const [err, setErr] = useState("");
+  // The split panel's candidates `[{ text, on, mine, dup, blocked }]`, or null when closed — component state only.
+  const [split, setSplit] = useState(null);
+  const [splitErr, setSplitErr] = useState("");
   const m = (state.meetings || []).find((x) => x.id === meetingId);
   if (!m) return null;
+  const fus = m.followUps || [];
+  const fuOpen = fus.filter((f) => !f.done).length;
+  const fuRoom = Math.max(0, MEETING_FOLLOWUPS_MAX - fus.length);
+  // Candidates from the free text: a text already on the meeting starts unticked; past the remaining room a candidate
+  // starts unticked and disabled. The text in `actions` is never changed (rule 12).
+  const openSplit = () => {
+    const have = new Set(fus.map((f) => f.text));
+    let room = fuRoom;
+    setSplit(splitFollowUpText(m.actions).map((text) => {
+      const dup = have.has(text);
+      const blocked = !dup && room <= 0;
+      if (!dup && !blocked) room -= 1;
+      return { text, on: !dup && !blocked, mine: false, dup, blocked };
+    }));
+    setSplitErr("");
+  };
+  const editSplit = (i, patch) => setSplit((cur) => cur.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  const ticked = (split || []).filter((c) => c.on && !c.blocked);
+  const appendSplit = () => {
+    const refused = onAppendFollowUps(m.id, ticked.map((c) => ({ text: c.text, mine: c.mine })));
+    if (refused) { setSplitErr(refused); return; }
+    setSplit(null); setSplitErr("");
+  };
+  // The work state of one follow-up: stated for a mine item or a live link, nothing otherwise.
+  const fuWorkText = (fu) => {
+    const w = fu.workId ? (state.work || []).find((x) => x.id === fu.workId) : null;
+    if (w) return w.done ? "업무 완료" : "업무 미완료";
+    return fu.mine ? "업무 삭제됨" : "";
+  };
   // A linked id whose task no longer exists is skipped and counted, never cleaned up from here.
   const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean);
   const missing = (m.taskIds || []).length - linked.length;
@@ -7258,6 +7445,72 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
         {block("요약", m.summary)}
         {block("결정 사항", m.decisions)}
         {block("후속 조치", m.actions)}
+        <div>
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <SectionLabel>후속 항목</SectionLabel>
+              <span className="text-xs font-mono text-zinc-500 shrink-0">{fuOpen}/{fus.length}</span>
+            </div>
+            {String(m.actions || "").trim() && (
+              <button onClick={openSplit}
+                className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">항목으로 나누기</button>
+            )}
+          </div>
+          {split && (
+            <div className="border border-cyan-800 rounded-xl p-3 space-y-2 mb-2 mt-1">
+              <div className="text-sm font-bold">후속 조치에서 항목 나누기 — {split.length}건</div>
+              {split.length === 0 ? (
+                <p className="text-xs text-zinc-500">나눌 항목이 없어요.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {split.map((c, i) => (
+                    <div key={i} className={`flex items-center gap-2 bg-zinc-950 rounded-xl px-2.5 py-2 ${c.blocked ? "opacity-50" : ""}`}>
+                      <input type="checkbox" checked={c.on} disabled={c.blocked} onChange={(e) => editSplit(i, { on: e.target.checked })} className="shrink-0" />
+                      <span className="flex-1 min-w-0 text-sm break-words">
+                        {c.text}{c.dup && <span className="ml-1.5 text-xs text-zinc-500 whitespace-nowrap">이미 있어요</span>}
+                      </span>
+                      <div className="shrink-0"><Chip on={c.mine} disabled={c.blocked} onClick={() => editSplit(i, { mine: !c.mine })}>내 담당</Chip></div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {split.some((c) => c.blocked) && (
+                <p className="text-xs text-zinc-400">후속 항목은 {MEETING_FOLLOWUPS_MAX}건까지예요 — {fuRoom}건만 추가할 수 있어요.</p>
+              )}
+              {splitErr && <p className="text-xs text-rose-400">{splitErr}</p>}
+              <div className="flex gap-1.5">
+                <button onClick={appendSplit} disabled={!ticked.length}
+                  className="flex-1 py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm disabled:opacity-30 active:translate-y-0.5">추가</button>
+                <button onClick={() => { setSplit(null); setSplitErr(""); }}
+                  className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">취소</button>
+              </div>
+            </div>
+          )}
+          {fus.length === 0 ? (
+            <p className="text-sm text-zinc-500">후속 항목이 없어요.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {fus.map((fu) => {
+                const late = fu.due && fu.due < today && !fu.done;
+                const work = fuWorkText(fu);
+                return (
+                  <div key={fu.id} className="bg-zinc-950 rounded-xl px-3 py-2 flex items-start gap-2">
+                    <input type="checkbox" aria-label="후속 완료" checked={fu.done === true} onChange={() => onToggleFollowUp(m.id, fu.id)} className="mt-1 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm break-words ${fu.done ? "line-through text-zinc-500" : "text-zinc-200"}`}>{fu.text}</p>
+                      <p className="text-xs font-mono text-zinc-500">
+                        <span className={fu.mine ? "text-cyan-300" : "text-zinc-500"}>{fu.mine ? "내 담당" : "타인"}</span>
+                        {" · "}<span className={late ? "text-rose-400" : ""}>{fu.due ? `기한 ${fu.due}` : "기한 없음"}</span>
+                        {work && <>{" · "}{work}</>}
+                      </p>
+                    </div>
+                    <div className="shrink-0"><Chip on={!!fu.mine} onClick={() => onSetFollowUpMine(m.id, fu.id, !fu.mine)}>내 담당</Chip></div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <div>
           <div className="flex items-baseline justify-between gap-2">
             <SectionLabel>진행사항</SectionLabel>
@@ -7330,6 +7583,14 @@ const normWorkTitle = (t) => String(t || "").trim().replace(/\s+/g, "").toLowerC
 // The day's items: `createdAt` ascending, then stored order (a stable sort keeps a done item in its place).
 const workOn = (state, date) => (state.work || []).filter((w) => w.date === date)
   .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+// The lead chip of one work row: an item dated before today states its age in the overdue tone; otherwise its source —
+// the assistant (violet), a meeting follow-up (cyan, v26) or the user's own hand (zinc). One builder for the tab.
+const workLeadOf = (w, today) => {
+  if (w.date < today) return { text: `이월 ${daysBetween(w.date, today)}일`, tone: `${TODO_TONE.overdue} border-zinc-700` };
+  if (w.source === "ai") return { text: "AI", tone: "text-violet-300 border-violet-700" };
+  if (w.source === "meeting") return { text: "회의", tone: "text-cyan-300 border-cyan-800" };
+  return { text: "수기", tone: "text-zinc-400 border-zinc-700" };
+};
 // Undone items dated before today, newest date first — the `지난 미완료` list.
 const workPastOpen = (state, today) => (state.work || []).filter((w) => !w.done && w.date < today)
   .sort((a, b) => b.date.localeCompare(a.date));
@@ -7367,9 +7628,6 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge, onRemoveMany }
   const marker = (w) => (WORK_KIND_WORD[w.link?.kind]
     ? <span className="text-xs text-zinc-600 shrink-0">{WORK_KIND_WORD[w.link.kind]}</span>
     : null);
-  const sourceLead = (w) => (w.source === "ai"
-    ? { text: "AI", tone: "text-violet-300 border-violet-700" }
-    : { text: "수기", tone: "text-zinc-400 border-zinc-700" });
   const pager = "w-8 h-8 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5";
   const chip = "shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5";
   const selectable = [...past, ...items];
@@ -7447,7 +7705,8 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge, onRemoveMany }
           <p className="text-sm text-zinc-500">{isToday ? "오늘 업무가 없어요." : "이 날짜에는 업무가 없어요."}</p>
         ) : (
           <div className="space-y-1.5">
-            {items.map((w) => row(w, sourceLead(w), w.done))}
+            {/* The shown day, not today: an item on its own past day keeps its source chip; only the today view carries age */}
+            {items.map((w) => row(w, workLeadOf(w, viewDate), w.done))}
           </div>
         )}
       </section>
@@ -7484,22 +7743,27 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
         {work && (
           <div className="space-y-1.5">
             <CvFact label="날짜"><span className="font-mono">{work.date}</span></CvFact>
-            <CvFact label="출처">{work.source === "ai" ? "AI 제안" : "수기"}</CvFact>
+            <CvFact label="출처">{work.source === "ai" ? "AI 제안" : work.source === "meeting" ? "회의 후속" : "수기"}</CvFact>
             <CvFact label="상태">{work.done ? "완료" : "미완료"}</CvFact>
             <CvFact label="연결" wrap>{workLinkText(state, work) || "연결 없음"}</CvFact>
           </div>
         )}
         <BizField value={title} onChange={setTitle} placeholder="업무 제목 — 예: 견적서 송부" />
         <MeetingText value={note} onChange={setNote} placeholder="메모 (선택)" rows={3} cap={WORK_LIMITS.note} />
-        <div>
-          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">연결 (선택)</div>
-          <select value={link} onChange={(e) => setLink(e.target.value)}
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm">
-            <option value="">연결 안 함</option>
-            {stale && <option value={stale}>연결 대상이 삭제됐어요</option>}
-            {options.map((o) => <option key={linkKey(o)} value={linkKey(o)}>{o.label}</option>)}
-          </select>
-        </div>
+        {work?.source === "meeting" ? (
+          // A follow-up's item: the link is owned by the follow-up, so the sheet offers no picker (v26).
+          <p className="text-xs text-zinc-500">연결은 회의록의 후속 항목을 따라요.</p>
+        ) : (
+          <div>
+            <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">연결 (선택)</div>
+            <select value={link} onChange={(e) => setLink(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm">
+              <option value="">연결 안 함</option>
+              {stale && <option value={stale}>연결 대상이 삭제됐어요</option>}
+              {options.map((o) => <option key={linkKey(o)} value={linkKey(o)}>{o.label}</option>)}
+            </select>
+          </div>
+        )}
         <p className="text-xs text-zinc-600">업무는 기록이에요 — 목표·실행·점수에 반영되지 않아요.</p>
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
@@ -8051,8 +8315,9 @@ export default function LifeManager() {
   // The chosen business view is a preference, not derived data: only the string is stored (schema v20).
   const setBizView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), bizView: v } }));
 
-  /* Meetings — project minutes. A record, never a task: these handlers write `meetingProjects` and `meetings` and
-     nothing else — no act, tasks, goals, areas, room, exams, events or work (rules 1, 18). */
+  /* Meetings — project minutes. A record, never a task: these handlers write `meetingProjects` and `meetings`, plus the
+     `work` items a mine follow-up mirrors (v26), and nothing else — no act, tasks, goals, areas, room, exams or events
+     (rules 1, 18). */
   // Whether a record (minutes, a progress entry, a work item) still fits the storage budget, counted in string length
   // like `storageUsedBytes`: the storage in use with the current state, plus the record, minus the record it replaces
   // when editing. `noun` is the object-marked word of the refusal (`회의록을` / `진행사항을` / `업무를`) — no grammar here.
@@ -8099,28 +8364,87 @@ export default function LifeManager() {
     setModal(null);
     showToast({ msg: "프로젝트를 삭제했어요" });
   };
-  const addMeeting = (next) => {
-    const rec = { id: uid(), ...next, createdAt: today };
-    const refused = recordFits(rec);
-    if (refused) return refused;
-    setState((prev) => {
-      const s = structuredClone(prev);
-      s.meetings = [rec, ...(s.meetings || [])];
+  // Writes a meeting record (`prev` = the stored one, or null for a new record) together with the work items its
+  // follow-ups mirror (v26), in one clone update. The reconcile runs against the render's `state.work` — for a
+  // user-driven write it is the same object the updater's `prev.work` would be, the pattern `addMeeting` already used
+  // to build its record (TD-56). The budget check covers the record plus every work item created. Answers
+  // `{ refused, created, removed }`; nothing is written when `refused` is non-empty.
+  const commitMeeting = (rec, prev) => {
+    const cur = state.work || [];
+    const { work, meeting } = reconcileFollowUps(cur, rec, prev, today);
+    const created = work.filter((w) => !cur.some((x) => x.id === w.id));
+    const removed = cur.filter((x) => !work.some((w) => w.id === x.id)).length;
+    const refused = recordFits([meeting, ...created], prev ? JSON.stringify(prev).length : 0, "회의록을");
+    if (refused) return { refused, created: 0, removed: 0 };
+    setState((p) => {
+      const s = structuredClone(p);
+      if (prev) {
+        const i = (s.meetings || []).findIndex((m) => m.id === meeting.id);
+        if (i < 0) return p;
+        s.meetings[i] = meeting;
+      } else {
+        s.meetings = [meeting, ...(s.meetings || [])];
+      }
+      s.work = work;
       return s;
     });
+    return { refused: "", created: created.length, removed };
+  };
+  const workMadeText = (n) => (n > 0 ? ` · 업무 ${n}건 등록` : "");
+  const addMeeting = (next) => {
+    const r = commitMeeting({ id: uid(), ...next, createdAt: today }, null);
+    if (r.refused) return r.refused;
     setModal(null);
-    showToast({ msg: "회의록을 등록했어요" });
+    showToast({ msg: `회의록을 등록했어요${workMadeText(r.created)}` });
     return "";
   };
   const updateMeeting = (id, next) => {
     const cur = (state.meetings || []).find((m) => m.id === id);
     if (!cur) return "";
-    const rec = { id: cur.id, ...next, createdAt: cur.createdAt }; // the form replaces the record, keeping id and createdAt
-    const refused = recordFits(rec, JSON.stringify(cur).length);
-    if (refused) return refused;
-    putMeeting(rec);
+    // The form replaces the record, keeping id and createdAt.
+    const r = commitMeeting({ id: cur.id, ...next, createdAt: cur.createdAt }, cur);
+    if (r.refused) return r.refused;
     setModal(null);
-    showToast({ msg: "회의록을 수정했어요" });
+    showToast({ msg: `회의록을 수정했어요${workMadeText(r.created)}` });
+    return "";
+  };
+  // Follow-up items (v26), from the meeting view; the view stays open. Only `done` mirrors to the linked work item.
+  const toggleFollowUp = (meetingId, fuId) => {
+    const fu = ((state.meetings || []).find((m) => m.id === meetingId)?.followUps || []).find((f) => f.id === fuId);
+    if (!fu) return;
+    const done = fu.done !== true;
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const f = ((s.meetings || []).find((m) => m.id === meetingId)?.followUps || []).find((x) => x.id === fuId);
+      if (!f) return prev;
+      f.done = done;
+      const w = f.workId ? (s.work || []).find((x) => x.id === f.workId) : null;
+      if (w) w.done = done;
+      return s;
+    });
+    showToast({ msg: done ? "후속 항목을 완료로 표시했어요" : "후속 항목 완료를 취소했어요" });
+  };
+  const setFollowUpMine = (meetingId, fuId, mine) => {
+    const cur = (state.meetings || []).find((m) => m.id === meetingId);
+    if (!cur) return;
+    const r = commitMeeting({ ...cur, followUps: (cur.followUps || []).map((f) => (f.id === fuId ? { ...f, mine } : f)) }, cur);
+    if (r.refused) { showToast({ msg: r.refused }); return; }
+    showToast({ msg: mine
+      ? `내 담당으로 표시했어요${r.created > 0 ? " · 업무 등록" : ""}`
+      : `내 담당을 해제했어요${r.removed > 0 ? " · 미완료 업무 삭제" : ""}` });
+  };
+  // Appends split candidates (`[{ text, mine }]`, trimmed and non-empty); answers a refusal string or "" when saved.
+  const appendFollowUps = (meetingId, items) => {
+    const cur = (state.meetings || []).find((m) => m.id === meetingId);
+    if (!cur) return "";
+    const have = (cur.followUps || []).length;
+    if (have + items.length > MEETING_FOLLOWUPS_MAX) {
+      return `후속 항목은 ${MEETING_FOLLOWUPS_MAX}건까지예요 — ${Math.max(0, MEETING_FOLLOWUPS_MAX - have)}건만 추가할 수 있어요.`;
+    }
+    const added = items.map((t) => ({ id: uid(), text: t.text, mine: !!t.mine, done: false }));
+    const r = commitMeeting({ ...cur, followUps: [...(cur.followUps || []), ...added] }, cur);
+    if (r.refused) return r.refused;
+    showToast({ msg: `후속 항목 ${added.length}건을 추가했어요${workMadeText(r.created)}` });
     return "";
   };
   const removeMeeting = (id) => {
@@ -8151,8 +8475,9 @@ export default function LifeManager() {
     showToast({ msg: "진행사항을 삭제했어요" });
   };
 
-  /* Daily work — dated work items (v25). A record, never a task: these handlers write `work` and nothing else — no
-     act, tasks, goals, areas, room, exams, events or meetings (rules 1, 9, 18). No streak, no trophy, no KR. */
+  /* Daily work — dated work items (v25). A record, never a task: these handlers write `work`, plus the `done` state or
+     the `workId` of the follow-up an item mirrors (v26), and nothing else — no act, tasks, goals, areas, room, exams or
+     events (rules 1, 9, 18). No streak, no trophy, no KR. */
   const writeWork = (fn) => setState((prev) => {
     const s = structuredClone(prev);
     s.work = fn(s.work || []);
@@ -8170,8 +8495,10 @@ export default function LifeManager() {
   const updateWork = (id, next) => {
     const cur = (state.work || []).find((w) => w.id === id);
     if (!cur) return "";
-    // The sheet replaces title, note and link; id, date, done, source and createdAt are kept.
-    const rec = { id: cur.id, date: cur.date, title: next.title, ...(next.note ? { note: next.note } : {}), ...(next.link ? { link: next.link } : {}),
+    // The sheet replaces title, note and link; id, date, done, source and createdAt are kept. A follow-up's item keeps
+    // its link whatever the sheet sends: the link is owned by the follow-up (v26).
+    const link = cur.source === "meeting" ? cur.link : next.link;
+    const rec = { id: cur.id, date: cur.date, title: next.title, ...(next.note ? { note: next.note } : {}), ...(link ? { link } : {}),
       done: cur.done, source: cur.source, createdAt: cur.createdAt };
     const refused = recordFits(rec, JSON.stringify(cur).length, "업무를");
     if (refused) return refused;
@@ -8180,18 +8507,40 @@ export default function LifeManager() {
     showToast({ msg: "업무를 수정했어요" });
     return "";
   };
+  // The follow-up a work item mirrors, found in a cloned state, or null (v26: a `meeting` link with `followUpId`).
+  const mirroredFollowUp = (s, w) => (w?.link?.kind === "meeting" && w.link.followUpId
+    ? ((s.meetings || []).find((m) => m.id === w.link.id)?.followUps || []).find((f) => f.id === w.link.followUpId) || null
+    : null);
   const toggleWork = (id) => {
     const cur = (state.work || []).find((w) => w.id === id);
     if (!cur) return;
-    writeWork((list) => list.map((w) => (w.id === id ? { ...w, done: !w.done } : w)));
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const w = (s.work || []).find((x) => x.id === id);
+      if (!w) return prev;
+      w.done = !w.done;
+      const fu = mirroredFollowUp(s, w);
+      if (fu) fu.done = w.done;
+      return s;
+    });
     setModal(null);
     showToast({ msg: cur.done ? "완료를 취소했어요" : "완료로 표시했어요" });
   };
+  // Deletes the given work items; a follow-up one of them mirrored stays on its meeting, unlinked (`mine` and `done` kept).
+  const dropWork = (drop) => setState((prev) => {
+    const s = structuredClone(prev);
+    for (const w of (s.work || []).filter((x) => drop.has(x.id))) {
+      const fu = mirroredFollowUp(s, w);
+      if (fu && fu.workId === w.id) delete fu.workId;
+    }
+    s.work = (s.work || []).filter((x) => !drop.has(x.id));
+    return s;
+  });
   const removeWork = (id) => {
     const cur = (state.work || []).find((w) => w.id === id);
     if (!cur) return;
     if (!window.confirm(`${cur.title} 업무를 삭제해요. 계속할까요?`)) return;
-    writeWork((list) => list.filter((w) => w.id !== id));
+    dropWork(new Set([id]));
     setModal(null);
     showToast({ msg: "업무를 삭제했어요" });
   };
@@ -8200,7 +8549,7 @@ export default function LifeManager() {
     const drop = new Set(ids);
     const n = (state.work || []).filter((w) => drop.has(w.id)).length;
     if (!n || !window.confirm(`업무 ${n}건을 삭제해요. 계속할까요?`)) return false;
-    writeWork((list) => list.filter((w) => !drop.has(w.id)));
+    dropWork(drop);
     showToast({ msg: `업무 ${n}건을 삭제했어요` });
     return true;
   };
@@ -8574,7 +8923,8 @@ export default function LifeManager() {
         <MeetingViewModal state={state} meetingId={modal.meetingId} today={today} onClose={() => setModal(null)}
           onEdit={(meetingId) => setModal({ type: "meeting", meetingId })}
           onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })}
-          onAddProgress={addProgress} onRemoveProgress={removeProgress} />
+          onAddProgress={addProgress} onRemoveProgress={removeProgress}
+          onToggleFollowUp={toggleFollowUp} onSetFollowUpMine={setFollowUpMine} onAppendFollowUps={appendFollowUps} />
       )}
       {/* Work items — records outside the goal ladder: no payout, no goal, no streak (rules 1, 9, 18) */}
       {modal?.type === "work" && (

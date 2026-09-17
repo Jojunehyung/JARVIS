@@ -2,7 +2,7 @@
 module.exports = async (h) => {
   const { step, shot, clickText, clickTab, clickExact, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
   // The schema version every migrated fixture must end at — bumped with each new `migrate` block (rule 12).
-  const SCHEMA_V = 25;
+  const SCHEMA_V = 26;
   // Order-independent deep equality for plain JSON records read back from the save.
   const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.keys(v).sort().map((k) => [k, canon(v[k])]) : v);
   const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
@@ -18,6 +18,12 @@ module.exports = async (h) => {
     if (st.v !== SCHEMA_V) throw new Error("schema version " + st.v + " (expected " + SCHEMA_V + ")");
     return st;
   };
+  // The local date, shifted out of UTC before the ISO slice (the same day the app's own `dstr` reports).
+  const localToday = () => page.evaluate(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
+  // The CV-shaped profile of a v21+ legacy fixture; `tag` names the save, `eduId` its one education entry.
+  const legacyProfile = (tag, eduId) => ({ name: `${tag} 사용자`, nick: `${tag}세이브`, birth: "1996-03-02", email: "", phone: "", gender: "남성",
+    status: "직장인 1~3년", edus: [{ id: eduId, school: "레거시대학교", degree: "ba", status: "grad" }], careers: [],
+    edu: "ba", career: "y13", certs: [], examsOwned: [], directions: [], look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" });
   // ── Goal status change and removal
   await step("create goal to finish (count KR ×1)", async () => {
     await clickTab("목표");
@@ -433,7 +439,7 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick") continue;
       if (!same(st[k], s22[k])) throw new Error(`v23 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s22) && k !== "meetingProjects" && k !== "meetings");
+    const extra = Object.keys(st).filter((k) => !(k in s22) && k !== "meetingProjects" && k !== "meetings" && k !== "work"); // work: added by v25 on the same load
     if (extra.length) throw new Error("v23 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("프로젝트가 없어요 — 프로젝트를 먼저 만들어요.");
@@ -464,12 +470,13 @@ module.exports = async (h) => {
     };
     const st = await migrateFixture(s23);
     if ((st.meetings || []).length !== 1) throw new Error("v24 meetings: " + JSON.stringify(st.meetings));
-    if (!same(st.meetings[0], { ...meeting, taskIds: [] })) throw new Error("v24 meeting record: " + JSON.stringify(st.meetings[0]));
+    // Later blocks run on the same load: v25 adds progress/aiHidden and v26 adds followUps (fixed 2026-09-17, not run).
+    if (!same(st.meetings[0], { ...meeting, taskIds: [], progress: [], aiHidden: false, followUps: [] })) throw new Error("v24 meeting record: " + JSON.stringify(st.meetings[0]));
     for (const k of Object.keys(s23)) {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s23[k])) throw new Error(`v24 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s23));
+    const extra = Object.keys(st).filter((k) => !(k in s23) && k !== "work"); // work: added by v25 on the same load
     if (extra.length) throw new Error("v24 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("레거시 회의록");
@@ -478,15 +485,12 @@ module.exports = async (h) => {
     // A v24 save has no `work` key and its meetings carry neither `progress` nor `aiHidden`. After the migration the
     // save gains `work: []` only, the meeting gains `progress: []` and `aiHidden: false`, and every other field and
     // key comes back exactly as planted. (Written 2026-09-17 under the standing instruction; not run.)
-    // The local date, shifted out of UTC before the ISO slice (the same day the app's own `dstr` reports).
-    const now = await page.evaluate(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
+    const now = await localToday();
     const meeting = { id: "mw", projectId: "pw", title: "레거시 진행 회의", date: "2026-01-06", attendees: "담당자 B", taskIds: ["tz"],
       summary: "레거시 요약", decisions: "레거시 결정", actions: "레거시 후속", eventId: "ew", createdAt: "2026-01-06" };
     const s24 = {
       v: 24,
-      profile: { name: "v24 사용자", nick: "v24세이브", birth: "1996-03-02", email: "", phone: "", gender: "남성", status: "직장인 1~3년",
-        edus: [{ id: "ew1", school: "레거시대학교", degree: "ba", status: "grad" }], careers: [],
-        edu: "ba", career: "y13", certs: [], examsOwned: [], directions: [], look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
+      profile: legacyProfile("v24", "ew1"),
       areas: [{ id: "aw", name: "커리어", grade: 2, achievements: [] }],
       tasks: [{ id: "tz", title: "레거시 실행", areaId: "aw", diff: "D", type: "daily", status: "todo", doneDates: [] }],
       goals: [{ id: "gw", title: "레거시 목표", areaId: "aw", status: "active", createdAt: "2026-01-01", krs: [] }],
@@ -503,7 +507,8 @@ module.exports = async (h) => {
     const st = await migrateFixture(s24);
     if (!same(st.work, [])) throw new Error("v25 work: " + JSON.stringify(st.work));
     if ((st.meetings || []).length !== 1) throw new Error("v25 meetings: " + JSON.stringify(st.meetings));
-    if (!same(st.meetings[0], { ...meeting, progress: [], aiHidden: false })) throw new Error("v25 meeting record: " + JSON.stringify(st.meetings[0]));
+    // The v26 block runs on the same load and adds followUps: [] (2026-09-17, not run).
+    if (!same(st.meetings[0], { ...meeting, progress: [], aiHidden: false, followUps: [] })) throw new Error("v25 meeting record: " + JSON.stringify(st.meetings[0]));
     for (const k of Object.keys(s24)) {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s24[k])) throw new Error(`v25 changed ${k}: ` + JSON.stringify(st[k]));
@@ -512,6 +517,46 @@ module.exports = async (h) => {
     if (extra.length) throw new Error("v25 added keys it does not own: " + extra.join(", "));
     await clickTab("업무");
     await expectText("오늘 업무가 없어요.");
+  });
+  await step("v25 save → v26 meeting follow-ups", async () => {
+    // A v25 save's meetings carry no `followUps`. After the migration each meeting gains `followUps: []` only; work items
+    // and events come back exactly as planted (no `projectId` appears, `actions` is never rewritten), and no top-level
+    // key is added. (Written 2026-09-17 under the standing instruction; not run.)
+    const meeting = { id: "mv", projectId: "pv", title: "레거시 후속 회의", date: "2026-01-07", attendees: "담당자 C", taskIds: ["tv"],
+      summary: "레거시 요약", decisions: "레거시 결정", actions: "레거시 후속", eventId: "ev", createdAt: "2026-01-07",
+      progress: [{ id: "pg", date: "2026-01-07", text: "레거시 진행" }], aiHidden: true };
+    const now = await localToday();
+    const s25 = {
+      v: 25,
+      profile: legacyProfile("v25", "ev1"),
+      areas: [{ id: "av", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tv", title: "레거시 실행", areaId: "av", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [{ id: "gv", title: "레거시 목표", areaId: "av", status: "active", createdAt: "2026-01-01", krs: [] }],
+      events: [{ id: "ev", title: "레거시 회의", kind: "appt", date: "2026-01-07", time: "10:00", createdAt: "2026-01-02" }],
+      folio: [], rates: [], deals: [],
+      meetingProjects: [{ id: "pv", name: "레거시 프로젝트", createdAt: "2026-01-02" }],
+      meetings: [meeting],
+      work: [{ id: "w1", date: "2026-01-06", title: "레거시 업무", done: false, source: "manual", createdAt: "2026-01-06" }],
+      journal: [{ id: "jv", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [],
+      ui: { bizView: "deals" },
+      act: { streak: 2, lastActive: "2026-01-07", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-07", dModel: "1.3",
+    };
+    const st = await migrateFixture(s25);
+    if ((st.meetings || []).length !== 1) throw new Error("v26 meetings: " + JSON.stringify(st.meetings));
+    if (!same(st.meetings[0], { ...meeting, followUps: [] })) throw new Error("v26 meeting record: " + JSON.stringify(st.meetings[0]));
+    if (st.meetings[0].actions !== "레거시 후속") throw new Error("v26 rewrote the free-text follow-ups: " + JSON.stringify(st.meetings[0].actions));
+    if (!same(st.work, s25.work)) throw new Error("v26 work: " + JSON.stringify(st.work));
+    if (!same(st.events, s25.events) || st.events.some((e) => "projectId" in e)) throw new Error("v26 events: " + JSON.stringify(st.events));
+    for (const k of Object.keys(s25)) {
+      if (k === "v" || k === "lastTick" || k === "meetings") continue;
+      if (!same(st[k], s25[k])) throw new Error(`v26 changed ${k}: ` + JSON.stringify(st[k]));
+    }
+    const extra = Object.keys(st).filter((k) => !(k in s25));
+    if (extra.length) throw new Error("v26 added keys it does not own: " + extra.join(", "));
+    await clickTab("미팅");
+    await expectText("레거시 프로젝트");
   });
   await shot("migrated");
 };
