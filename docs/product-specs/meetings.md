@@ -21,10 +21,15 @@ they surface inside `미팅` itself (below) and the storage arithmetic they add.
 ## What a meeting record is, and is not
 A record of what was said, never a task and never an appointment:
 ```
-meetingProjects: [{ id, name, note?, createdAt }]
+meetingProjects: [{ id, name, note?, track("work"|"biz"|"personal"), createdAt }]
 meetings: [{ id, projectId(string | null), date("YYYY-MM-DD"), title, attendees?, summary, decisions?, actions?, transcript?, eventId?, createdAt, taskIds[],
-             progress[], aiHidden, followUps[{ id, text, mine, due?, done, workId? }] }]
+             progress[], aiHidden, followUps[{ id, text, mine, due?, done, workId? }], track?("work"|"biz"|"personal") }]
 ```
+`track` on a project (schema v28) is a stored field with `TrackRow` chips in `ProjectModal`, default `work`,
+backfilled `work` on every existing project. `track?` on a meeting is written **only for a memo**
+(`projectId == null`) — a project meeting inherits its project's track (`meetingTrack`, below) and never stores
+one of its own; `commitMeeting` deletes `rec.track` before the reconcile whenever `rec.projectId != null`, so a
+memo moved into a project drops its own track key on that save. See [Tracks (v28)](#tracks-v28).
 `projectId` may be `null` since 2026-09-17: an urgent memo with no project. No backfill was needed — the form
 always writes the key, so an absent `projectId` never occurs, and `null` is a value every existing reader now
 tolerates or has been updated to state (below).
@@ -73,6 +78,45 @@ A meeting is a record, never a task ([Rule 1](../design-docs/core-beliefs.md#rul
 `todoOf`, `agendaOf`, `buildBriefing`, `buildAssistantPacket`, `parseAssistantReply` and `calendarExportOf` do not
 read `meetingProjects` or `meetings` — nothing here reaches the to-do list, the briefing, the packet or the
 calendar file ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
+
+## Tracks (v28)
+Every project, document, event, work item and deal carries a `track` (`work`/`직장` — the day job; `biz`/`사업`
+— the business; `personal`/`개인` — private life), declared once at the head of the Business region:
+```js
+const TRACKS = ["work", "biz", "personal"];
+const TRACK_LABEL = { work: "직장", biz: "사업", personal: "개인" };
+const trackOf = (rec, fallback = "work") => (TRACKS.includes(rec?.track) ? rec.track : fallback);
+```
+A meeting is the one kind that does not store its own track when it belongs to a project — it **inherits**:
+`meetingTrack(state, m)` returns `trackOf(m)` for a memo (`m.projectId == null`) and otherwise `trackOf` of the
+meeting's project. A record of another kind whose `track` is missing (a hand-edited save) reads as `work`, the
+safe default — a record wrongly left on the day-job track is only absent from a packet, never leaked; there is
+no per-record "send to AI anyway" override ([TD-73](../exec-plans/tech-debt-tracker.md), backlog).
+
+- **The form row.** `TrackRow({ value, onPick, caption })`, a shared component beside `BizChips`: label `트랙`,
+  the three chips, caption `직장 트랙은 AI 패킷에 실리지 않아요.` `ProjectModal` shows it after `메모 (선택)`,
+  default `work`. `MeetingModal` shows it **only while `pid === null`** (the memo path), default `work`; picking
+  a project instead removes the row and, on submit, the record carries no `track` key at all.
+- **`followUpWorkItem(fu, m, today, track)`** (gains a fourth argument) stamps the mirrored work item with the
+  meeting's track at creation; `reconcileFollowUps` passes it through. The work item then keeps its own `track`
+  field afterwards — editing the meeting's or the project's track later never rewrites an already-created work
+  item ([Rule 12](../design-docs/core-beliefs.md#rule-12) in spirit: the app never cascades a track change).
+- **Section heads and rows.** `groupHead(name, rowCount, docCount, track)` prints a mono tag (`TRACK_TONE[track]`)
+  before the counts on a project's section head; the memo group's own head carries no tag (a memo has no single
+  track until read per row); each memo row's marker is prefixed with that memo's own track label and ` · `; each
+  document row's marker becomes the track label, ` · ` and the `yy-mm-dd` date.
+- **Packet exclusion.** A `work`-track record never enters the work packet, the daily packet or a prep packet —
+  see [assistant-bridge.md](../design-docs/assistant-bridge.md) (`PACKET_TRACKS`). `buildWorkPacket` filters its
+  meetings by `PACKET_TRACKS.includes(meetingTrack(state, m))` before the slice; a linked event or deal on the
+  `work` track is never named through a live-link lookup either — `buildPrepPacket` treats a packet-track
+  event's `work`-track project as if the event had no project at all (no project name, minutes, documents or
+  contracts), and `meetingPacketLines`' `일정:` fact line omits a linked event's title when that event is
+  currently on the `work` track (a **deleted** link is still stated as gone). `MeetingPrepCard`'s block for a
+  `work`-track event replaces the `AI에게 회의 준비 묻기` button with the line `직장 트랙 — AI 패킷에 실리지
+  않아요` and states the event's track label on its second line.
+- **Order.** Every surface that lists mixed-track records — the reader, the briefing, the work tab — orders
+  `직장` first, then `사업`, then `개인`: the day job's items must not slip, so they lead; see
+  [daily-work.md](daily-work.md), [daily-reader.md](daily-reader.md), [daily-briefing.md](daily-briefing.md).
 
 ## Caps and the storage arithmetic
 `MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200, transcript: 30000 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17; `progress` is new at schema v25, `followUp` at schema v26, `transcript` (2026-09-17, optional field, no migration) is `녹취록은` — placed last among the field caps, so the refusal order is title, attendees, summary, decisions, actions, then transcript, before the follow-up-row cap),
@@ -123,6 +167,9 @@ entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per m
   `recordFits` refuses. `recordFits` already measures the whole record, transcript included, before any write, and
   the tab's `저장 공간` line already counts it; `clearTranscript` (`녹취록 지우기`) is the in-app way to reclaim it,
   the backup path the way out of a full budget.
+- Track backfill (v28): `,"track":"work"` adds **15 chars** per project, document, event, work item and memo;
+  `,"track":"biz"` adds **14** per deal; `,"track":"personal"` is 19 chars when chosen. A save with 20 projects,
+  50 documents, 200 events, 500 work items, 20 deals and 10 memos grows by ≈ 12 k chars (0.3 % of the budget).
 - Documents and checks (schema v27, [documents.md](documents.md), [schedule.md](schedule.md)) share the same
   storage budget: `,"documents":[]` adds 15 chars once; one document ≈ 91 chars + title + summary (+ 12 with a
   `source`); a full document (60 + 120 + 5,000) ≈ 5,283 chars, a typical one ≈ 753. One event check ≈ 60 chars +
@@ -412,10 +459,29 @@ if (s.v < 26) {
 if (s.v < 27) {
   s = { ...s, v: 27, documents: Array.isArray(s.documents) ? s.documents : [] };
 }
+if (s.v < 28) {
+  const stamp = (list, t) => (s[list] || []).map((r) => ({ ...r, track: TRACKS.includes(r.track) ? r.track : t }));
+  s = { ...s, v: 28,
+    meetingProjects: stamp("meetingProjects", "work"), documents: stamp("documents", "work"), events: stamp("events", "work"),
+    work: stamp("work", "work"), deals: stamp("deals", "biz"),
+    meetings: (s.meetings || []).map((m) => (m.projectId == null && !TRACKS.includes(m.track) ? { ...m, track: "work" } : m)),
+    milestones: Array.isArray(s.milestones) ? s.milestones : [],
+    timeLog: Array.isArray(s.timeLog) ? s.timeLog : [],
+    leads: Array.isArray(s.leads) ? s.leads : [],
+    notices: Array.isArray(s.notices) ? s.notices : [],
+    settings: { ...(s.settings || {}), bizHoursPerWeek: Number.isFinite(s.settings?.bizHoursPerWeek) ? s.settings.bizHoursPerWeek : 20 },
+  };
+}
 ```
-`documents` (v27) is the only new array; `events[].checks` is optional with no backfill, like `projectId` at v26
-([documents.md](documents.md), [schedule.md](schedule.md)). `freshState`: `v: 27`, `meetingProjects: []`,
-`meetings: []`, `work: []`, `documents: []`. `exportBackup` writes the whole
+`documents` (v27) is the only new array at that step; `events[].checks` is optional with no backfill, like
+`projectId` at v26 ([documents.md](documents.md), [schedule.md](schedule.md)). At v28: every project, document,
+event, work item and memo gains `track: "work"` unless it already carries a valid one; every deal gains
+`track: "biz"`; a project meeting inherits and stores nothing. `milestones` / `timeLog` / `leads` / `notices`
+are added as empty arrays and `settings.bizHoursPerWeek` defaults to 20; `deals[].payments`, `role.stages` and
+`work[].minutes` stay optional with no backfill. See [state-lifecycle.md](../design-docs/state-lifecycle.md) for
+the full ledger and [business.md](business.md) for what the new arrays hold. `freshState`: `v: 28`,
+`meetingProjects: []`, `meetings: []`, `work: []`, `documents: []`, `milestones: []`, `timeLog: []`, `leads: []`,
+`notices: []`, `settings: { bizHoursPerWeek: 20 }`. `exportBackup` writes the whole
 `state`, so every array travels in the backup file with no code change of their own; `importBackup` runs the
 file's `state` through `migrate`, so an older backup gains the new fields on import; `resetAll` deletes the
 state key, which removes every project, every meeting and every work item along with the rest of the save. See
@@ -435,6 +501,17 @@ counts line reads `프로젝트 2개 · 회의록 4건`. Since 2026-09-17 (schem
 2건`; the demo tomorrow event, `○○물산 주간 점검`, carries two `checks` (one `manual`, one `ai` with a folded
 basis) — see [documents.md](documents.md), [schedule.md](schedule.md) and
 [demo-data.md](../design-docs/demo-data.md).
+
+**Tracks and a day-job project (v28, 2026-09-17).** Every existing demo project, document, deal, memo and work
+item is `track: "biz"`; the three schedule events stay `personal`; `○○물산 주간 점검` is `biz`. One synthetic
+day-job project is added, `mpJob`, name `데이터 프로파일링 — 데모기관`, `track: "work"`, created 15 days back,
+prepended so the order reads `[mpJob, mp2, mp1]` — a real institution is never named. It carries one meeting
+(`주간 품질 점검`, 2 days back, attendee `담당자 C`) and one follow-up (`결측 컬럼 목록 정리`, due tomorrow,
+mirrored to a `track: "work"` work item), plus one manual `track: "work"` work item today (`프로필 리포트
+초안`) and one `track: "work"` event today (`품질 회의`, `appt`, `15:00`, linked to `mpJob`). The demo counts
+move to `프로젝트 3개 · 회의록 5건 · 문서 2건`, and the `미팅` section head for `mpJob` carries the `직장` tag —
+see [demo-data.md](../design-docs/demo-data.md) for the day-job additions' effect on every other tab's demo
+figures.
 
 ## Meeting-prep rows (`meetingPrepOf`, schema v26)
 
@@ -483,6 +560,8 @@ project ([TD-60](../exec-plans/tech-debt-tracker.md), accepted).
 - A project with documents cannot be deleted any more than one with minutes can (schema v27,
   [documents.md](documents.md)); a document itself is never a task, is never read by `buildAssistantPacket` or
   `calendarExportOf`, and its `source` field is never carried into the prep packet.
+- (v28) A `work`-track project's or memo's meeting never reaches the work packet, the daily packet or a prep
+  packet, whatever `aiHidden` says — the track filter runs first; see [Tracks (v28)](#tracks-v28).
 - A transcript (2026-09-17) is never read anywhere but `MeetingModal`, `MeetingViewModal`, `clearTranscript`,
   `recordFits` (through `JSON.stringify` of the whole record) and `demoState`: `buildWorkPacket`,
   `buildAssistantPacket`, `calendarExportOf`, `buildIcs` and `meetingPrepOf` never read it — the app never
@@ -504,4 +583,8 @@ item has no such button. `tools/e2e/flow10.js` adds four **documents** steps (sc
 after that: registering a document under a project and in the memo group, the sheet's caps and edit, moving a
 document between the memo group and a project, and the project-deletion guard by document count. `flow11.js`
 adds five **pre-meeting check** steps (schedule.md) covering the prep card's checklist, the event sheet, the
-prep packet, a pasted prep reply, and `확인할 것 가져오기`. See [tools/e2e/README.md](../../tools/e2e/README.md).
+prep packet, a pasted prep reply, and `확인할 것 가져오기`. **Tracks (v28, written 2026-09-17, not run):**
+`flow10.js` adds a step registering a project with the `사업` chip (`track: "biz"`, the section head's tag), a
+meeting on it storing no `track` key, and a memo whose track chips render only while `없음 (긴급 메모)` is
+chosen — picking `개인` and registering stores `track: "personal"`, and moving the memo into the project drops
+the key. See [tools/e2e/README.md](../../tools/e2e/README.md).

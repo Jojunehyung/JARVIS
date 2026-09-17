@@ -6,7 +6,7 @@ Home is one CV card plus one small proximity line under it — nothing else (202
 Deliberately absent: goal progress and pace (the user's own decision — `목표별 진행률은 목표탭에서만 하고 롤모델 근접도만`, so progress with pace stays in `목표` only, [goals.md](goals.md)), and everything dated today — the briefing, today's schedule and business counts, today's tasks, today's completion count. None of it disappeared; [Where everything went](#where-everything-went-and-why) below is the map.
 
 ## Admission rule
-A row is admitted only when its value is a number, a grade, or an ordinal credential level — age, a degree level with status, months of practice, an area grade `n/9`, a certification or exam D, a count (held certifications, exam bests, portfolio pieces, trophies, verified achievements), or role-model proximity `%`. A nominal field appears only as the label that qualifies such a value: the major of the degree, the most recent role behind the practice months, the name of the certification or exam whose D is shown. Portrait and display name stay, as the CV's identity.
+A row is admitted only when its value is a number, a grade, or an ordinal credential level — age, a degree level with status, months of practice, an area grade `n/9`, a certification or exam D, a count (held certifications, exam bests, portfolio pieces, trophies, verified achievements), role-model proximity `%`, or (v28) a role stage's ordinal position `k/n` with its condition count `c/m` — an ordinal stage count is a quantitative value by the same rule as the grade `n/9` line, never a nominal label. A nominal field appears only as the label that qualifies such a value: the major of the degree, the most recent role behind the practice months, the name of the certification or exam whose D is shown. Portrait and display name stay, as the CV's identity.
 
 Excluded on the same rule: school and employer names, e-mail, phone, gender, `현재 신분` (the header already states it on every tab), knowledge and job directions, anything dated today, goal progress and pace, money (a record, not an evaluation), and free-text achievement entries (one tap away behind the `성취` row, in full, inside `AchievementWallModal`).
 
@@ -40,9 +40,30 @@ A truncated row is never the only place a name lives: every held certification a
 ## The proximity line
 The second and last child of `<main>`, outside the card. With `rg = roleGap(state)`: a full-width button reading `롤모델 근접도` · `{rg.match}%` (`font-mono font-bold text-cyan-300`) · `· {rg.name}` (truncated) · `›` → `onRoleAdvice` opens `RoleAdviceModal`. Without a usable role (`rg === null` — no role model, no target above 0, or a role whose every target area is excluded, [TD-11](../exec-plans/tech-debt-tracker.md)): the inert fact `롤모델 미설정 — 근접도 계산 대상 없음`, not a button — the role model is set from `설정`, not from this line, and `RoleAdviceModal` has nothing to explain without one ([TD-29](../exec-plans/tech-debt-tracker.md)). Formula, demo numbers and the segmented-bar mechanics: [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md).
 
+### The stage line (v28)
+When `role.stages` is a non-empty array (`roleStageOf(state, today)` non-null — see
+[metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#role-stages-v28)), a **second** full-width
+button renders directly under the proximity line, in the same style: zinc `단계`, a mono cyan `{k}/{n}`, a
+truncating zinc tail `· 조건 {c}/{m} · 전환 조건 미충족 (0/1)` (or `전환 조건 충족 (1/1)`), then `›` →
+`onRoleAdvice` (the same modal; its stage block, below, renders alongside the proximity bars). Without stages
+nothing new renders — the button is absent, not disabled, on every save that predates v28 or that never opened
+the stages editor. `roleGap`'s `match` percentage is **never read, touched or recomputed** by this line; the
+stage count `k/n` and the condition count `c/m` are a second, independent number the app derives from its own
+records (`role.stages`' fact conditions), never merged or averaged into the proximity figure
+([Rule 14](../design-docs/core-beliefs.md#rule-14)).
+
 ## `SettingsModal` (`modal.type: "settings"`)
 Opened by the CV's corner button. Title `설정`, a bottom sheet like every other modal — chosen over a sixth tab for the same reason `ProfileModal` is a modal: opened rarely, one modal slot, the `Modal` shell already scrolls. Two sections, both moved verbatim from the former growth tab's collapsed panels:
-- `롤모델`: the button `{state.role ? "롤모델 수정" : "롤모델 설정"}` → `onRoleModel` (`setModal({ type: "role" })`, `RoleModelModal`) with its explanatory line underneath.
+- `롤모델`: the button `{state.role ? "롤모델 수정" : "롤모델 설정"}` → `onRoleModel` (`setModal({ type: "role" })`, `RoleModelModal`) with its explanatory line underneath. The stage editor lives inside that same modal — see
+  [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-stages-editor-v28).
+- `사업 시간 — 주간 예산` (v28, between `롤모델` and `데이터`): `SectionLabel`, a row with the label `주간 시간`, a
+  number input (`aria-label="주간 사업 시간"`, `font-mono`, initial `bizHoursOf(state)`) and a border button
+  `저장` → `onSetBizHours(n)` (root `setBizHours`, writes `settings.bizHoursPerWeek` only, toast `주간 사업 시간을
+  {n}시간으로 저장했어요`); caption `이번 주 사업 시간은 업무 완료 시간과 시간 기록의 합으로 계산돼요.`; refusal
+  `0 이상 168 이하 정수로 입력해 주세요.` This is the one self-typed number in the whole plan — a **budget**, not
+  a measure: the weekly sum itself is always derived from dated `timeLog` entries, never stored
+  ([Rule 8](../design-docs/core-beliefs.md#rule-8)). Screen and time-log mechanics:
+  [daily-work.md](daily-work.md#weekly-time-budget-v28).
 - `데이터 — 백업 · 초기화`: the backup sentence, `백업 내보내기` → `exportBackup`, `백업 불러오기` → `askImport`, then `데이터 초기화` → `onReset`. No `<input type="file">` inside the modal — `askImport` drives the one hidden input mounted on `Shell` (R-14, [tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md)), so the modal closing mid-pick cannot take it down. The root wires `onReset={() => { setModal(null); resetAll(); }}` — `resetAll` never clears `modal` itself, so without the explicit close the sheet would reappear over the app after the next onboarding or demo entry. `resetAll` is otherwise byte-identical and still asks nothing before it runs ([TD-26](../exec-plans/tech-debt-tracker.md), unresolved).
 
 Backup and reset mechanics (file shape, validation, toasts): [install-and-backup.md](install-and-backup.md).

@@ -8,8 +8,15 @@ label, and a summary — never a task and never the file itself.
 ## What a document is, and is not
 
 ```
-documents: [{ id, projectId(string | null), title (≤ 60), source? (≤ 120), summary (≤ 5,000), addedAt("YYYY-MM-DD") }]
+documents: [{ id, projectId(string | null), title (≤ 60), source? (≤ 120), summary (≤ 5,000), addedAt("YYYY-MM-DD"), track("work"|"biz"|"personal") }]
 ```
+
+`track` (schema v28) is a stored field, backfilled `work` on every existing document. `DocumentModal` shows the
+`TrackRow` chips after `ProjectPicker`: the initial value is the document's own track when editing, else the
+picked project's track, else `work`; picking a project chip **follows** that project's track until the user
+taps a track chip in this form (tracked as local `touched` state) — so opening the form on a business project
+defaults to `사업` without a tap, but a deliberate `개인` choice survives a later project pick. Writes `track`.
+The row marker on the document row (in `MeetingsTab`) becomes the track label, ` · ` and the `YY-MM-DD` date.
 
 Top-level, not nested under a project: a document may belong to no project (`projectId: null`), the same shape
 `meetings[]` already used for an urgent memo, and every reader here filters by `projectId` the way `MeetingsTab`
@@ -120,6 +127,13 @@ change — the whole state travels, and `migrate` adds the empty array to an old
 - **The prep packet** (`buildPrepPacket`, `AI에게 회의 준비 묻기`, [assistant-bridge.md](../design-docs/assistant-bridge.md)):
   title and summary only, up to `PREP_PACKET_DOCS` (10), clipped at `PREP_PACKET_DOC_CLIP` (1,500, trimmed to 500
   under the packet's own cap) — **never `source`**, since a file name or a link can name a drive or a person.
+  Since v28, the document list is filtered by `trackOf(d)` first: a `work`-track document never reaches this
+  packet even when it belongs to a matched project, and when the event's own track is outside `PACKET_TRACKS`
+  the function returns the header plus a single `## 회의` line, `직장 트랙 일정 — AI 패킷에 실리지 않아요`.
+- **`NoticeModal`'s document links** ([business.md](business.md#공고-view--national-project-notices-v28)): the
+  same checkbox list (`MilestoneLinkList`) as the roadmap sheet's link blocks, one row per document (title and
+  the track label), up to 10 — a document link on a notice is a reference, exactly like a milestone's, and
+  moves nothing about the document.
 - **The daily reader** (`buildReader`, [daily-reader.md](daily-reader.md)): the prep section's document titles,
   and the `{since} 이후 새로 들어온 것` section lists a document added since the last run as
   `문서 · {title} · {project name | 프로젝트 없음}`.

@@ -50,10 +50,18 @@ Both sit in `SettingsModal`, opened from the `설정` button in the corner of ho
 
 Because the file contains the evidence photos, it is as sensitive as the app itself — see [../SECURITY.md](../SECURITY.md).
 
+**Backup contents (v28).** `state` carries the four new arrays (`milestones`, `timeLog`, `leads`, `notices`) and
+`settings.bizHoursPerWeek` with no code change of their own — the whole state travels, so an older backup gains
+them on import through `migrate` exactly as every prior schema bump did. See
+[state-lifecycle.md](../design-docs/state-lifecycle.md) for the v28 ledger row.
+
 ## Calendar file — `캘린더로 내보내기`
 The `일정` tab's `캘린더로 내보내기` button downloads a second, unrelated file: `life-manager-calendar-{date}.ics`, a
 snapshot of dated records the phone's own calendar imports once and then raises alarms from — never a recovery
-file and not read back by the app. Mechanics and the RFC 5545 decisions:
+file and not read back by the app. Since schema v28 the file also carries open meeting follow-up due dates,
+roadmap milestone due days and their D-7, unpaid contract payment due dates (**never the amount**) and open
+national-project notice deadlines — every track included, no lead, no document, no transcript, no portfolio, no
+rate. Mechanics and the RFC 5545 decisions:
 [../design-docs/calendar-export.md](../design-docs/calendar-export.md); the sheet and what each source
 contributes: [schedule.md](schedule.md), section "Calendar export". Data carried and never carried:
 [../SECURITY.md](../SECURITY.md).

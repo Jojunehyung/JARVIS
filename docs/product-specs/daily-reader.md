@@ -64,8 +64,39 @@ empty section holds the one item `{ text: "없음" }`; `more` is the count of it
 `buildReader` calls `buildBriefing` once and reuses its `biz`/`goals` items — the reader and the briefing state
 the same numbers by construction, never a different one ([decision log](../design-docs/decision-log.md)).
 
-The reader's own sections number seven; a `브리핑 ›` link row follows them (below) — the two together are what a
-user reads top to bottom, but only the seven above are `buildReader`'s `sections`.
+**Two more sections (v28), after `biz` and before `goals`:**
+
+| Key | Title | States | `action` |
+|---|---|---|---|
+| `roadmap` | `사업 로드맵` | first `timeLine(state, today)` (`이번 주 사업 {h}/{budget}h · 남은 날 {d}`), then `stageOrderNote(milestones)` when present, then one item per not-done milestone by `milestoneOrder` (`milestoneLine`), each with a `조건: {clipped condition}` sub-line when the milestone carries one | `{ type: "biz" }` |
+| `pipeline` | `사업 파이프라인 · 공고` | leads not won whose next action is past (`leadLine`), then leads due within `LEAD_SOON_DAYS` (3), then open notices past or within `NOTICE_SOON_DAYS` (14) (`noticeLine`), each with a `메모: {note}` sub-line when the record carries one | `{ type: "biz" }` |
+
+Neither section is a packet (unlike the daily and work packets, [assistant-bridge.md](../design-docs/assistant-bridge.md)):
+`pipeline` states the **full** lead and notice line, never a count standing in for one, since the reader's own
+rule ([Rule 13](../design-docs/core-beliefs.md#rule-13)) applies here the same as everywhere else in this
+screen. The `계약·입금 미확인` (`biz`) section restates the briefing's payment-line, overdue-lead-count and
+open-notice lines by construction (it reuses the briefing's own `biz` items) — see
+[business.md](business.md#the-reader-and-the-calendar-file).
+
+The reader's own sections number **nine** (v28, up from seven); a `브리핑 ›` link row follows them (below) — the
+two together are what a user reads top to bottom, but only the nine above are `buildReader`'s `sections`.
+
+## Track heads (v28)
+
+Five of the nine sections carry mixed-track records (`prep` by the event's own track, `work` by `trackOf(w)`,
+`followups` by `meetingTrack(state, m)`, `decisions` by `meetingTrack`, `since` by `meetingTrack` for meetings,
+`trackOf(d)` for documents, and a progress entry's own meeting for progress lines). A local helper,
+`withHeads(items)`, stable-sorts each such section's items by track and inserts a head item (text = the track
+label, a space, the group's own count and `건`, `head: true`) before each non-empty track group; `add` (the
+`READER_LINES`/`more` slicer) counts and slices **non-head** items only, so a head is never mistaken for content
+and never eats into the 50-line cap. `DailyReaderModal` renders a `head` item as `text-xs font-bold
+text-zinc-500 pt-1`, visually distinct from a plain content line. `roadmap` and `pipeline` carry no heads — both
+are single-track sections (business by construction), like the briefing's `계약·입금 미확인`.
+
+**Order: `직장` first, then `사업`, then `개인` — everywhere, and always in that order.** The reader opens
+before the working day, and the day job's items are the ones that must not slip — the user's own condition for
+the whole plan — so they lead; the business follows as the second block; private life closes. The work tab and
+the briefing use the same order, so no screen ever reorders the user's day differently from another.
 
 ## `DailyReaderModal({ state, today, onClose, onAction })`
 
@@ -114,7 +145,10 @@ yesterday-dated, done work item added for exactly this, without changing the dem
 no carried row); the follow-up section states the overdue item; the decisions section lists two meetings; the
 `{since} 이후 새로 들어온 것` section lists meetings, the two demo documents and progress entries; `계약·입금
 미확인` states the unpaid month and the closing totals line; `뒤처진 목표 페이스` lists both demo goals behind
-pace. See [demo-data.md](../design-docs/demo-data.md).
+pace. (v28) `오늘 업무` and `오늘·내일 회의 준비` now show the `직장`/`사업` heads once the day-job project's
+records are counted; `사업 로드맵` opens with the time line, then the eight open demo milestones with their
+conditions (the ninth, seeded `done`, is excluded); `사업 파이프라인 · 공고` lists the two demo leads (one
+overdue) and the one demo notice. See [demo-data.md](../design-docs/demo-data.md).
 
 ## E2E coverage (written, not run — standing user instruction)
 
@@ -125,7 +159,11 @@ the same day reopens neither screen; the streak line is now read by reaching the
 section's `›` (`계약·입금 미확인 열기`) lands on `사업` with no overlay left. `tools/e2e/flow11.js` adds one step
 asserting the reader's content over the prep, document and check fixtures (placed before the check-import step,
 so the fixtures are still in their pre-import shape). `tools/e2e/flow.js`'s demo sweep opens the reader from the
-CV card and asserts its content. See [tools/e2e/README.md](../../tools/e2e/README.md).
+CV card and asserts its content. **Tracks and the roadmap/pipeline sections (v28, written 2026-09-17/18):**
+`flow11.js` asserts the `오늘 업무` heads `직장 1건` / `사업 1건` / `개인 1건` in that order with one item per
+track planted; `flow8.js` asserts the `사업 로드맵` section states a planted milestone's pace and links
+(`3단계 · E2E 페이스 마일스톤 · D-10 · 업무 2/2 · 50%p 앞섬`) and the `사업 파이프라인 · 공고` section lists a
+planted lead's full line. See [tools/e2e/README.md](../../tools/e2e/README.md).
 
 ## What the daily reader never does
 

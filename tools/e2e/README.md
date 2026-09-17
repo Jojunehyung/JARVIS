@@ -8,7 +8,7 @@ Drives the app (`src/LifeManager.jsx`) end to end in a real browser. It uses the
 npm run build            # from the project root (add --sourcemap when you want line coverage)
 npx vite preview --port 4173
 cd tools/e2e && npm i    # once
-node run.js --tag run    # 248-step scenario as currently written (`await step(` count across flow*.js — not a claim of a recent green run; see the note below)
+node run.js --tag run    # 246-step scenario as currently written (`await step(` count across flow*.js — not a claim of a recent green run; see the note below)
 node perf.js --tag run   # performance measurement (4× CPU throttle)
 node cov_map.js out/run-coverage.json   # map never-executed source lines (needs a --sourcemap build)
 node prof.js             # top CPU-profile functions
@@ -111,8 +111,10 @@ review's three per-track lines with `AI에게 회고 묻기 ›` disabled until 
 (business week and saved review, no day-job title, profile name or `## 이력`) whose reply registers `E2E 다음 주 업무`
 dated next Monday on the business track, leaving `tasks`, `journal` and `reviews` unchanged. `flow9.js`'s existing
 export steps strip the v28 alarm sources from their plant (`stripAlarmSources`) and read the new excluded and skipped
-lines; `flow11.js`'s work-packet step asserts the generalised bridge keeps the `오늘 업무 만들기` title and caption; 248
-`await step(` calls as written; every edited file parses (`node --check`), and none of it has been executed.
+lines; `flow11.js`'s work-packet step asserts the generalised bridge keeps the `오늘 업무 만들기` title and caption; 246
+`await step(` calls as written (the four new steps — two in `flow9.js`, two in `flow5.js` — bring the running total
+from 242 to 246; a prior progress note in the exec plan said +6/248, an arithmetic slip corrected here after a fresh
+count); every edited file parses (`node --check`), and none of it has been executed.
 
 ## Scenario layout
 

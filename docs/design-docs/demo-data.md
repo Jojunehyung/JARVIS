@@ -120,14 +120,45 @@ The □□랩스 quote was created 9 days before `today`, one day past `QUOTE_ST
 stale-quote line fires as well; with the unpaid line, that is two `biz` alerts, well under the `CAP − 1` the
 section reserves before its closing summary line.
 
+## Tracks and a day-job project (schema v28)
+
+Every existing project, document, deal, memo and work item is stamped `track: "biz"`; the three schedule events
+stay `track: "personal"`; `○○물산 주간 점검` is `track: "biz"`. One synthetic day-job project is added, `mpJob`,
+named `데이터 프로파일링 — 데모기관` (a synthetic institution, no real name), `track: "work"`, created 15 days
+back, prepended so the order reads `[mpJob, mp2, mp1]` and the counts line becomes `프로젝트 3개 · 회의록 5건 ·
+문서 2건`. It carries one meeting, `주간 품질 점검` (2 days back, attendee `담당자 C`, one follow-up `결측 컬럼
+목록 정리` due tomorrow, mirrored to a `track: "work"` work item), one manual `track: "work"` work item today
+(`프로필 리포트 초안`), and one `track: "work"` event today (`품질 회의`, `appt`, `15:00`, linked to `mpJob`).
+The demo's own-day counts line moves to `남음 4건 · 이월 0건 · 완료 1건 · AI 제안 1건`, with the work tab's heads
+reading `직장 2건` and `사업 3건`; the briefing's prep line and the reader's `오늘 업무`/`오늘·내일 회의 준비`
+sections gain the matching track heads. See [../product-specs/meetings.md](../product-specs/meetings.md#tracks-and-a-day-job-project-v28).
+
+## Roadmap, time log, payments, leads, notices and role stages (schema v28)
+
+`s.milestones = seedMilestones(today)` — the nine `ROADMAP_SEED` rows — then the first is stamped `status:
+"done"` (`doneAt` yesterday) and the second `status: "active"` with `dealIds` naming the `△△테크` deal and
+`workIds` naming the open manual business work item; the roadmap view reads `예정 7 · 진행 중 1 · 완료 1`.
+`△△테크` gains one unpaid `deposit` payment line due in 5 days (₩3,000,000); `○○물산` gains one `final` line
+due 20 days back, paid 18 days back (₩600,000) — so the header's third line reads `일시금 미확인 1건 · 이번 달
+일시금 입금 {0원 또는 60만원}`, depending on whether the demo is opened on or after the 19th of the month (the
+paid stamp can fall in the current or the prior month). The done AI-proposed work item gains `minutes: 180`;
+`s.timeLog` holds three entries dated today — business 180 minutes with that item's `workId`, business 90
+minutes with no `workId`, day-job 60 minutes — so the work tab's week line reads `이번 주 사업 4.5h/20h · 남은
+날 {d}`. Two leads: `□□병원` at `접촉` (contact 4 days back, next action `시연 일정 제안` due 2 days back,
+created 6 days back) and `◎◎의료원` at `잠재` (since yesterday) — `리드 2건 · 다음 액션 기한 지남 1건`. One
+notice: `데모 AI 바우처 공고` by `데모진흥원` (posted 8 days back, deadline in 10 days, status `작성`, linked to
+the `요구사항 정의서 v1` document) — `공고 1건 · 마감 14일 이내 1건`. `s.role.stages = seedStages()` (the nine
+`ROLE_STAGE_SEED` stages); the stage figures depend on the save's own facts (below). See
+[../product-specs/business.md](../product-specs/business.md#demo-content-v28).
+
 ## Remaining state
 - `act`: `{ streak: 4, lastActive: today − 1, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: today − 7 }` — a live streak that continues on the first completion instead of breaking; `briefingSeen: null` and an overdue task together mean the demo briefing opens on first load; `lastReview` at last week's Monday leaves this week's review outstanding. There is no `metrics` field and no `lastCheckin` stamp — both were removed entirely by schema v19 (2026-09-11); what they claimed to measure lives in a goal's metric KR instead.
 - `exams`: `best.toeic = { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: today − 60 }`, `dim.toeic = 1`, empty `spec`. So the TOEIC 800 milestone pays the difference only — 720 − 480 = 240 P at multiplier 1 — which is exactly the same-family upgrade rule ([Rule 2](core-beliefs.md#rule-2)) on screen.
 - `certBest`: empty, so 전기기사 (no stage group) pays its full `certP(67) = 900` before job weighting.
 - `journal`: one entry dated yesterday with an `ai` reply, so the journal list and the stored-reply block are both visible.
-- `reviews`: one entry for last week (`weekOf` = that Monday), which leaves this week's review outstanding.
+- `reviews`: one entry for last week (`weekOf` = that Monday), which leaves this week's review outstanding — and, since schema v28, means `ReviewModal`'s `AI에게 회고 묻기 ›` button opens **disabled** on the demo until the user saves this week's own review, exactly as the button's rule states (the packet reads the stored review, never a draft).
 - `room.trophies`: one `{ kind: "rank", label: "직업·커리어 실무자", date: today − 20 }`, so the achievement wall is not empty on first open.
-- `role`: `{ name: "완성차 1차사 하네스 설계 책임", targets: { 직업·커리어: 6, 기본지식: 4 } }` — two targeted areas, which makes `roleGap` computable and the RANK UP proximity line meaningful.
+- `role`: `{ name: "완성차 1차사 하네스 설계 책임", targets: { 직업·커리어: 6, 기본지식: 4 }, stages: seedStages() }` (schema v28) — two targeted areas, which makes `roleGap` computable and the RANK UP proximity line meaningful; the nine seeded stages read `단계 1/9 · 조건 3/14 · 전환 조건 미충족 (0/1)` — met: stage 1's `deals_active` (the upcoming `△△테크` contract), stage 3's `deals_won` ≥ 2 (two `won` deals), stage 4's `folio_match` `AI` (the document-search prototype); stage 1's `payment_paid` `deposit` is `0/1` (no paid deposit exists), so stage 1 stays current. `roleGap`'s own `match` figure is untouched by any of this ([Rule 14](core-beliefs.md#rule-14)) — the demo's role's target areas (`직업·커리어`, `기본지식`) are unchanged, so `RoleAdviceModal` shows no `사업` gap block on this save (the stage block still renders under the proximity bars via the CV's second line).
 - `meetings` (schema v25; `followUps` schema v26; a project-less memo and `transcript`, 2026-09-17, no schema change): the newest demo meeting, `요구사항 1차 회의`, is flagged `aiHidden: true`, so its work-packet line states only its date and title; `유지보수 범위 협의` carries one `progress` entry (`월 10시간 한도를 반영한 유지보수 견적서 초안 작성`, dated two days before today) and three follow-up items — `긴급 대응 기준 초안 공유` (`mine: true`, due today + 2, mirrored to the demo work item below), `초과분 시간 단가표 회신` (`mine: false`, due today + 5), `월 리포트 양식 확정` (`mine: false`, `done: true`) — so its minutes row states `후속 2/3` and the demo shows the v25 and v26 fields at once; the third meeting carries empty `progress` and `followUps`, and `aiHidden: false`. Prepended (2026-09-17), one urgent memo, `긴급 메모 — ◇◇스튜디오 전화` (`projectId: null`, dated yesterday), with a 259-character Korean `transcript` (a reservation-page redesign call), one `progress` entry dated today (`개편 범위 정리 — …`) and one follow-up (`예약 페이지 개편 견적서 초안`, `mine: false`, due today + 3, so it mirrors no work item and the demo `업무` counts stay `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건`); the `미팅` tab's counts line changes from `프로젝트 2개 · 회의록 3건` to `프로젝트 2개 · 회의록 4건`, and the new memo lists under `프로젝트 없음 · 긴급 메모`.
 - `work` (schema v25; a third `source: "meeting"` item schema v26; a fourth, yesterday-dated done item schema v27): three items dated today — `○○물산 유지보수 견적서 송부` (manual, open, `note: "월 10시간 · 초과분 시간 단가"`, linked to the `○○물산 재고 관리 자동화` project), `전기기사 필기 기출 1회분 채점` (`source: "ai"`, `done: true`, linked to the `하네스 설계 엔지니어 취업` goal), and `긴급 대응 기준 초안 공유` (`source: "meeting"`, open, `link: { kind: "meeting", id: <유지보수 범위 협의>, followUpId: <fuA.id> }`) — so the demo `업무` tab shows one open manual row, one done AI-proposed row and one open `회의`-chip row, and its counts line reads `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건`. Plus (schema v27) `○○물산 월 리포트 양식 회신`, dated **yesterday**, `done: true`, with a `result` (`양식 v2 확정본을 메일로 송부 — 다음 달부터 적용`), linked to the same project — it is not in today's view, so the counts line above is unchanged, but the daily reader's `오늘 업무` section states its `처리:` line ([TD-57](../exec-plans/tech-debt-tracker.md) still holds — there is still no carried row). See [../product-specs/daily-work.md](../product-specs/daily-work.md).
 

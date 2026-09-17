@@ -12,8 +12,11 @@ source (`source: "meeting"`) for a work item a follow-up registers — see the s
 
 A dated record of something the user did or means to do that day, never a task:
 ```
-work: [{ id, date("YYYY-MM-DD"), title, note?, result?, done, link?{ kind("goal"|"meeting"|"project"), id, followUpId? }, source("manual"|"ai"|"meeting"), createdAt }]
+work: [{ id, date("YYYY-MM-DD"), title, note?, result?, minutes?, done, link?{ kind("goal"|"meeting"|"project"), id, followUpId? }, source("manual"|"ai"|"meeting"), track("work"|"biz"|"personal"), createdAt }]
 ```
+`track` (schema v28) is a stored field, backfilled `work` on every existing item. `minutes?` (v28, optional, no
+backfill) is the item's own fact — how long it took, typed on completion — read only by its own sheet fact and
+by `syncTimeLog`, below; the weekly time sum never reads it directly (below).
 Rule 19's amendment restricts goal tasks to reading, exercise, certifications and study, so an item like
 `견적서 송부` cannot be a task ([Rule 19](../design-docs/core-beliefs.md#rule-19)). A work item pays nothing,
 completes nothing, moves no grade, streak, KR or goal, and never enters `computeGrades`, `krProgress`,
@@ -63,6 +66,12 @@ picker, newest first by `meetingOrder`).
   for a 40-char title; a follow-up text over `WORK_LIMITS.title` (60) is copied whole into `note` (≤ 200), so the
   largest such item ≈ 436 chars. `commitMeeting` ([meetings.md](meetings.md)) measures the meeting record **plus
   every work item its reconcile creates** against the budget before writing either.
+- Track backfill (v28): `,"track":"work"` adds **15 chars** per work item; `,"minutes":120` (v28, optional) adds
+  **14**. A time-log entry, `{"id":"…","date":"…","track":"biz","minutes":120,"createdAt":"…"}`, is ≈ **85
+  chars** (+22 with `workId`); one entry a working day ≈ 250 × 107 ≈ **27 k chars a year** (0.7 % of the budget).
+  `,"settings":{"bizHoursPerWeek":20}` adds **33 chars** once; `,"milestones":[],"timeLog":[],"leads":[],"notices":[]`
+  adds **56** once (shared with [business.md](business.md)'s arithmetic). Every write of a time-log entry runs
+  `recordFits` (noun `시간 기록을`).
 
 ## The meeting progress log (feeds the work packet)
 
@@ -101,11 +110,58 @@ together. The bar is `grid-cols-7`; at 390 px each cell is ≈ 51 px — `업무
   from earlier days first (oldest date first), then today's own items by `createdAt` ascending (a done item
   keeps its place); any other day is unprefixed, in its own `createdAt` order. Lead chip (`workLeadOf`): a
   carried item states `이월 {n}일` in the overdue tone; otherwise `AI` (violet) for `source === "ai"`, `회의`
-  (cyan-300 on cyan-800) for `source === "meeting"`, `수기` (zinc) for manual. Marker `목표` / `회의록` /
-  `프로젝트` when linked, none otherwise. Empty: `오늘 업무가 없어요.` (today) / `이 날짜에는 업무가 없어요.`
-  (any other day).
+  (cyan-300 on cyan-800) for `source === "meeting"`, `수기` (zinc) for manual. The row marker (v28) starts with
+  the item's track label (`TRACK_LABEL[trackOf(w)]`), then, only when linked, ` · ` and the link word (`목표` /
+  `회의록` / `프로젝트`). Empty: `오늘 업무가 없어요.` (today) / `이 날짜에는 업무가 없어요.` (any other day).
+- **Grouped by track (v28).** The day's rows are additionally grouped by `TRACKS` order (`직장` → `사업` →
+  `개인`), each group a head line `{track label} {n}건` (`text-xs font-bold text-zinc-500 mt-1`) followed by
+  that group's rows in the order above (a carried item still sorts first within its own group); an empty group
+  renders nothing. Select mode (below) covers every group at once, as it already covered the flat list.
 - Every row opens `WorkModal` (`onOpen`); `업무 추가` opens it in add mode for the viewed day. A row with
   `source === "meeting"` came from a meeting follow-up (below).
+
+## Weekly time budget (v28)
+
+A **setting** the user types, `settings.bizHoursPerWeek` (default 20) — never a measure
+([Rule 8](../design-docs/core-beliefs.md#rule-8)) — set from `설정` → `사업 시간 — 주간 예산` (see
+[home.md](../product-specs/home.md)). The weekly sum itself is always derived from dated `timeLog` entries,
+never stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)): `TIME_LOG_MAX_MINUTES = 1440`; `weekMinutes(state,
+weekOf, track)` sums `timeLog` minutes dated `weekOf`..`weekOf + 6`, filtered to `track` when given;
+`weekDaysLeft(today)` — days to Sunday inclusive; `hoursText(min)` — `12.5h` / `20h`; `bizHoursOf(state)` — the
+setting when finite, else 20; `timeLine(state, today)` → `이번 주 사업 {h}/{budget}h · 남은 날 {d}`, the one
+string the work tab, `TimeLogModal` and the reader's `사업 로드맵` section (first item) all print.
+
+**The single source of the weekly sum.** `work[].minutes` is the item's own fact, shown on its own sheet; the
+`timeLog[]` entry a completion appends (with `workId`) is what `weekMinutes` actually sums — nothing is
+double-counted because the sum never reads `work[].minutes` itself. `syncTimeLog(s, w)` (App root, beside
+`mirroredFollowUp`) keeps **exactly one** entry per done item with minutes and none otherwise: it removes any
+existing entry for `w.id`, then, when `w.done && w.minutes > 0`, appends `{ id: uid(), date: w.date, track:
+trackOf(w), minutes: w.minutes, workId: w.id, createdAt: today }` (or keeps the existing entry unchanged when its
+date, track and minutes already match, so a plain re-save never churns ids). `toggleWork`, `updateWork` and
+`toggleFollowUp` (which mirrors `done` onto a linked item) all call it in the same clone update; `dropWork`
+removes the entries of every deleted item.
+
+**`WorkModal`'s minutes field.** Edit mode only, after `처리 내용 (선택)`: a row `걸린 시간 (분, 선택)`, a number
+input (`aria-label="걸린 시간"`, initial the stored minutes or empty). `draft()` includes `minutes` as an integer
+1–1440 or absent, refused with `걸린 시간은 1 이상 1440 이하 분으로 입력해 주세요.` The sheet's `상태` fact reads
+`완료 · {n}분` once done with minutes recorded, `미완료 · {n}분` when un-completed with minutes kept.
+
+**`TimeLogModal({ state, today, onClose, onAdd, onRemove })`**, `modal.type: "timeLog"`, title `사업 시간 기록`:
+`timeLine(state, today)` and a second mono line `직장 {h}h · 개인 {h}h` (this week's other two tracks); fields a
+date input (default today), a number `BizField` `분 — 예: 90`, `TrackRow` (default `사업`), button `기록` →
+`onAdd({ date, track, minutes })` — refusals `날짜를 선택해 주세요.`, `분을 1 이상 1440 이하로 입력해 주세요.`;
+below, this week's entries newest first, one mono line each (date · track label · `{n}분` · the linked work
+item's title or `직접 기록`) with a remove `X` (`aria-label="시간 기록 삭제"` → confirm → `onRemove(id)`) — shown
+only for an entry with no `workId` (a mirrored entry is edited on the work sheet, not here, and shows `업무에서
+기록` with no button). Empty: `이번 주 기록이 없어요.`
+
+`WorkTab` renders, under the counts line, a full-width left-aligned text button (`text-xs font-mono
+text-zinc-400 active:opacity-70`) reading `{timeLine(state, today)} ›` → opens `TimeLogModal` (root:
+`setModal({ type: "timeLog" })`).
+
+**Root handlers** (writing `timeLog` or `settings` only): `addTimeLog(next)` (`recordFits`, noun `시간
+기록을`) appends, toast `시간 {n}분을 기록했어요`; `removeTimeLog(id)` filters, toast `시간 기록을 삭제했어요`;
+`setBizHours(n)` writes `settings.bizHoursPerWeek` only, toast `주간 사업 시간을 {n}시간으로 저장했어요`.
 
 ## `MeetingPrepCard({ state, today, onOpenMeeting, onOpenDocument, onAddCheck, onToggleCheck, onRemoveCheck, onAskAi })` — `오늘 회의 준비` (schema v26; documents + checklist + AI prep packet, schema v27)
 
@@ -123,7 +179,14 @@ button replaces (`flow11.js`'s prep step now taps the button, not the block). Wh
 `결정: {clipped decisions | 없음}`, up to `PREP_FOLLOWUPS` (10) open follow-up lines `{내 담당|타인} · {text} ·
 기한 {due | 없음} · 업무 {완료|미완료|없음}` (mine first) with `{k}건 더` past the cap, up to `PREP_PROGRESS` (3)
 progress lines or `진행사항 없음`, and up to `PREP_TASKS` (5) linked-task lines (block omitted when none linked).
-On-device only, so a meeting flagged `aiHidden` is stated in full here.
+On-device only, so a meeting flagged `aiHidden` is stated in full here. Line 2 gains (v28) ` · ` and the event's
+own track label.
+
+For a row whose event is on the `work` track (v28), the block's `AI에게 회의 준비 묻기` button (below) is
+replaced by the line `직장 트랙 — AI 패킷에 실리지 않아요` (`text-xs text-zinc-500`) — the block still states
+everything on-device (the project name, the last meeting, its follow-ups and progress), since none of that
+leaves the device; only the ask-AI path is withheld, the same rule the prep packet itself enforces
+([documents.md](documents.md), [assistant-bridge.md](../design-docs/assistant-bridge.md)).
 
 Then (schema v27, [documents.md](documents.md)) `문서 {n}건` and up to `PREP_DOCS` (5) of the project's
 documents, each a left-aligned button `{title} — {oneLineText(summary, DOC_SUMMARY_CLIP)}` that opens the
@@ -151,7 +214,8 @@ input (`업무 제목 — 예: 견적서 송부`, no `maxLength` — the submit 
 `연결 안 함` plus `workLinkOptions(state)` — active goals, the newest `WORK_LINK_MEETINGS` meetings, every
 project — **except** for `source === "meeting"`, where the picker is replaced by the line `연결은 회의록의 후속
 항목을 따라요.` (the `연결` fact row above still shows `회의록 · {date} {title}`; the link is owned by the
-follow-up, schema v26). Submit refuses in order: `업무 제목을 입력해 주세요.`, `업무 제목은 60자까지예요 — 지금 {n}자예요.`,
+follow-up, schema v26). After `연결 (선택)` (v28), the `TrackRow` chips (also shown for a `source: "meeting"`
+item, whose link line above stays): initial `work?.track || "work"`; `draft()` includes `track`. Submit refuses in order: `업무 제목을 입력해 주세요.`, `업무 제목은 60자까지예요 — 지금 {n}자예요.`,
 `메모는 200자까지예요 — 지금 {n}자예요.`, `처리 내용은 1000자까지예요 — 지금 {n}자예요.`, then whatever `onAdd`/`onUpdate` returns (the
 storage-budget line). The record keeps only non-empty optional fields, so a cleared note, result or link disappears on
 an edit; `updateWork` keeps a `source: "meeting"` item's `link` whatever the sheet sends. Buttons: `등록` (add) / `저장` (edit), then, in edit mode, a full-width `완료로 표시` / `완료 취소`
@@ -176,12 +240,12 @@ Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `ar
 
 | Handler | Effect | Toast |
 |---|---|---|
-| `addWork(next)` | `recordFits`; otherwise prepends `{ id: uid(), ...next, done: false, source: "manual", createdAt: today }` | `업무를 등록했어요` |
-| `updateWork(id, next)` | replaces title/note/link, keeping `id`/`date`/`done`/`source`/`createdAt` (a `meeting`-sourced item keeps its own `link` regardless of `next.link`) | `업무를 수정했어요` |
-| `toggleWork(id)` | flips `done`; when the item mirrors a follow-up, sets that follow-up's `done` to match, in the same update — no streak, no trophy, no KR | `완료로 표시했어요` / `완료를 취소했어요` |
-| `removeWork(id)` | confirmed by name, then filters; a mirrored item's follow-up loses its `workId` (`mine`/`done` kept) | `업무를 삭제했어요` |
-| `removeWorkMany(ids)` | one confirmation `업무 {n}건을 삭제해요. 계속할까요?`, then filters the same way per item; answers `true` when it deleted, so the tab leaves select mode | `업무 {n}건을 삭제했어요` |
-| `importWork(list)` (from the AI bridge, below) | registers every ticked proposal as `source: "ai"`, `done: false` records; the raw reply is never stored | `AI 제안 업무 {n}건 등록` |
+| `addWork(next)` | `recordFits`; otherwise prepends `{ id: uid(), ...next, track: trackOf(next), done: false, source: "manual", createdAt: today }` | `업무를 등록했어요` |
+| `updateWork(id, next)` | replaces title/note/result/minutes/link, keeping `id`/`date`/`done`/`source`/`createdAt`; writes `track: trackOf(next, cur.track)` (a `meeting`-sourced item keeps its own `link` regardless of `next.link`) | `업무를 수정했어요` |
+| `toggleWork(id, next?)` | flips `done`; writes whatever the sheet sends (`title`/`note`/`result`/`minutes`/`track`/`link`) in the same update, so a result or minutes typed before completing is kept; when the item mirrors a follow-up, sets that follow-up's `done` to match; runs `syncTimeLog` (v28) in the same update — no streak, no trophy, no KR | `완료로 표시했어요` / `완료를 취소했어요` |
+| `removeWork(id)` | confirmed by name, then calls the shared `dropWork(new Set([id]))`, which filters `work` and (v28) removes the matching `timeLog` entry; a mirrored item's follow-up loses its `workId` (`mine`/`done` kept) | `업무를 삭제했어요` |
+| `removeWorkMany(ids)` | one confirmation `업무 {n}건을 삭제해요. 계속할까요?`, then `dropWork(ids)` the same way for every id; answers `true` when it deleted, so the tab leaves select mode | `업무 {n}건을 삭제했어요` |
+| `importWork(list, date = today, track = null)` (from the AI bridge, below) | registers every ticked proposal as `source: "ai"`, `done: false` records dated `date`; `track` is the given value or the Phase 1 rule (the linked project's or meeting's track via `meetingTrack`, else `biz` — a proposal can only originate from an allowed packet, so it never resolves to `work`); the raw reply is never stored | `AI 제안 업무 {n}건 등록`, plus ` · {date}` when `date` is not today |
 
 `moveWorkToToday` and its `onMove` wiring are gone (carry-forward is derived, above).
 
@@ -189,7 +253,7 @@ Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `ar
 the same storage-refusal sentence with `noun` substituted — `회의록을` / `진행사항을` / `업무를`); every meeting,
 progress and work write runs through it, all sharing the one storage budget ([meetings.md](meetings.md)).
 
-## `오늘 업무 만들기` — the assistant bridge, `WorkBridgeModal`
+## `오늘 업무 만들기` and `주간 회고` — `WorkBridgeModal` (generalised, v28)
 
 The second bridge packet, alongside the daily check-in bridge (`AI에게 보내기`). `modal: { type: "workBridge" }`;
 opened from the tab's `AI로 만들기 ›` button. Shares its send pane, paste pane and clipboard routine
@@ -197,15 +261,29 @@ opened from the tab's `AI로 만들기 ›` button. Shares its send pane, paste 
 proposal has no goal, difficulty or type to choose.
 
 1. **Send** (`오늘 업무 만들기`): a read-only textarea holding `buildWorkPacket(state, today)`, `복사` and
-   `AI 답변 붙여넣기 ›`. Caption (2026-09-17, gained one sentence): `아래 글을 복사해 Claude·ChatGPT 채팅에
-   붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 —
-   녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요.`
+   `AI 답변 붙여넣기 ›`. Caption (2026-09-17, gained one sentence; v28 gained a second): `아래 글을 복사해
+   Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과
+   진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를
+   켜요. 직장 트랙 기록은 실리지 않아요.`
 2. **Paste** (`AI 답변 붙여넣기`): a textarea (`AI 답변을 여기에 붙여넣어요`) and `답변 확인`, which runs
    `parseWorkReply` and pre-ticks every non-rejected proposal.
 3. **Confirm**: `제안 업무 확인 — {n}건`, the reply's own `note` line, then one row per proposal — a checkbox
    (disabled and unticked when rejected), the title, a second line `{linkText || "연결 없음"}{ · note}`, and a
    rose reason line when rejected. No proposals: `제안 업무 없음 — 등록할 항목이 없어요.` `선택한 업무 등록`
    calls `importWork` with the ticked, non-rejected proposals only.
+
+**Generalised for a second caller (v28).** `WorkBridgeModal({ state, today, build, title, caption, importDate,
+importTrack, onClose, onImport, onToast })` takes the packet builder, the title, the caption, an import date and
+an import track as props rather than hard-coding them, so there is exactly **one** confirm view for both
+packets — a second copy would be a ≥ 6-line duplicate `npm run finish` flags. The root renders it twice:
+`workBridge` with `buildWorkPacket`, the existing title and caption, `today` and no track (the Phase 1 rule
+above); `reviewBridge` with `buildReviewPacket`, title `주간 회고 — AI에게 묻기`, caption `아래 글을 복사해
+Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 사업 트랙의 이번 주
+업무·후속·로드맵·파이프라인·공고·입금 예정과 저장된 리뷰가 실려요 — 직장·개인 트랙, 녹취록, 이름·연락처는
+실리지 않아요. 답변의 제안은 다음 주 월요일 업무로 등록돼요.`, next Monday (`shiftDay(mondayOf(today), 7)`) and
+`track: "biz"`. The `주간 회고` packet itself, its reply path and the `ReviewModal` button that opens it are
+documented in [assistant-bridge.md](../design-docs/assistant-bridge.md) — this section covers only the shared
+screen.
 
 The packet, the parser and their caps are documented in full in
 [assistant-bridge.md](../design-docs/assistant-bridge.md); this spec covers the screen. Nothing here writes state
@@ -242,6 +320,16 @@ stays `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건` unchanged ([
 holds — there is still no carried row). The tomorrow event also carries two `checks`
 ([schedule.md](schedule.md)). See [demo-data.md](../design-docs/demo-data.md), [meetings.md](meetings.md).
 
+**Tracks and the day-job project (v28).** Every existing demo work item is `track: "biz"`; the day-job project
+`데이터 프로파일링 — 데모기관` ([meetings.md](meetings.md)) adds one `track: "work"` follow-up-mirrored item
+(`결측 컬럼 목록 정리`, due tomorrow) and one manual `track: "work"` item today (`프로필 리포트 초안`) — the
+demo counts move to `남음 4건 · 이월 0건 · 완료 1건 · AI 제안 1건` with the work tab's heads `직장 2건` and
+`사업 3건` (two open plus one done business item today; the head counts every row of the day, done included).
+**Time budget and payments (v28 Phase 3).** The done AI work item (`전기기사 필기 기출 1회분 채점`) gains
+`minutes: 180`; `s.timeLog` holds three entries dated today: business 180 minutes with that item's `workId`,
+business 90 minutes with no `workId`, day-job 60 minutes — so the work tab's week line reads `이번 주 사업
+4.5h/20h · 남은 날 {d}`. See [demo-data.md](../design-docs/demo-data.md).
+
 ## E2E coverage
 
 `tools/e2e/flow11.js` (written 2026-09-17, **not run** — standing user instruction) runs between `flow10.js` and
@@ -268,8 +356,17 @@ such button. **Documents and pre-meeting checks (2026-09-17, schema v27)** add: 
 button replaces the old whole-block tap (the prep step in `flow11.js` was updated to tap it); five more
 `flow11.js` steps cover the checklist add/tick/delete, the event sheet's checklist, the prep packet, a pasted
 prep reply, and `확인할 것 가져오기` — see [meetings.md](meetings.md) and [schedule.md](schedule.md) for the full
-detail. Every step parses (`node --check`); none has been executed. See
-[tools/e2e/README.md](../../tools/e2e/README.md).
+detail. Every step parses (`node --check`); none has been executed.
+
+**Tracks (v28, written 2026-09-17):** one item per track planted and listed in `flow11.js` lists the reading
+order `직장` → `사업` → `개인` under the heads `직장 1건` / `사업 1건` / `개인 1건`, and the sheet's chips
+round-trip `track`; a day-job project, meeting, work item, event and contract stay out of the work, daily and
+prep packets. **Time budget and time log (v28 Phase 3, written 2026-09-18):** typing `90` into `걸린 시간` and
+completing writes `minutes: 90` and exactly one business `timeLog` entry with the item's `workId`, moving `work`
+and `timeLog` only; the week line moves from `0h/20h` to `1.5h/20h`; un-completing removes the entry and keeps
+`minutes`; `1441` is refused; deleting a completed item leaves no entry. The week line opens `사업 시간 기록`,
+whose quick entry records minutes by track (`timeLog` only) and whose settings save writes `settings` only.
+See [tools/e2e/README.md](../../tools/e2e/README.md) for the running step count.
 
 ## What a work item never does
 
@@ -283,3 +380,6 @@ detail. Every step parses (`node --check`); none has been executed. See
   never appears in that packet or in the exported calendar file.
 - `parseAssistantReply` never reads a `work` key, and `parseWorkReply` never reads `tasks`, `deals`, `events` or
   `meetings` — the two bridges cannot create each other's record kind.
+- (v28) A `work`-track item never enters the work packet, the daily packet, a prep packet or the `주간 회고`
+  packet, whatever else is true about it; a time-log entry and the weekly business-hours setting pay nothing,
+  move no grade and are never read by `computeGrades` or `krProgress`.

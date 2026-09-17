@@ -59,7 +59,7 @@ instead.
 - **Lead badge** (mono, bordered): `마감` → `ddayStr(date)` — `D-3` / `D-DAY` / `D+2`, rose when the date has
   passed, amber on today, zinc otherwise. `약속` → `time`, or `시간 미정` when no time was given.
 - **Title**, struck through at 50 % opacity once the occurrence is ticked.
-- **Sub-line**: the occurrence date in mono, then ` · {장소}`, ` · {메모}`, ` · 반복 {매일|매주|매월}` when present.
+- **Sub-line**: the occurrence date in mono, then ` · {장소}`, ` · {메모}`, ` · 반복 {매일|매주|매월}` when present, then (v28) ` · {track label}` last.
 - **Kind chip**: `약속` (zinc) or `마감` (amber).
 - **Buttons**: `완료 표시` ↔ `완료 취소` (`onToggleDone(id, date)`); `이번 회차 취소` (`onSkip(id, date)`) only on a
   repeating occurrence — skipping the single date of a one-off would leave a record that can never be rendered,
@@ -171,6 +171,7 @@ One form for both modes: `새 일정` when opened from `일정 추가`, `일정 
 | place | text, placeholder `장소 (선택)` | optional |
 | note | text, placeholder `메모 (선택)` | optional |
 | project (schema v26) | `<select aria-label="프로젝트 (선택)">` under the label `프로젝트 (선택)`, listing `meetingProjects` | optional; `연결 안 함` plus one option per project; no project → the line `프로젝트가 없어요 — 미팅 탭에서 만들어요.` instead of a picker; a `projectId` whose project no longer exists stays selectable as `연결 대상이 삭제됐어요` rather than being silently dropped |
+| track (v28) | `TrackRow` chips, after the project select | initial `event?.track || "work"`; picking a project follows that project's track (`BizChips`, [meetings.md](meetings.md#tracks-v28)) until the user taps a track chip; writes `track` |
 
 `EventModal`'s new `projects` prop is `state.meetingProjects || []`, passed by the root. Submit writes
 `...(projectId ? { projectId } : {})` into the record — `updateEvent` spreads the form's record over the
@@ -277,18 +278,22 @@ a how-to line → the validation error, the sheet's only `text-rose-400` element
 **Preview** (hidden, replaced by one line, when `sel.entries.length === 0`):
 - line 1 — `{today} ~ {end} · 항목 {n}건`
 - line 2 — `일정 {a} · 실행 기한 {b} · 매일 실행 {c} · 목표 기한 {d}` (`sel.counts`)
+- line 3 (v28) — `후속 {e} · 확인 {f} · 마일스톤 {g} · 입금 {h} · 공고 {i}` (the five v28 kinds)
 
-**Skipped line**, only when `sel.skipped.tasks + sel.skipped.goals > 0`: `기한이 지난 실행 {x}건 · 목표
-{y}건은 날짜가 지나 넣지 않아요.` — the overdue items the file cannot date truthfully are counted, never silently
-dropped ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
+**Skipped line**, shown whenever any of tasks, goals, follow-ups, milestones, payments or notices is above 0:
+`기한이 지난 실행 {x}건 · 목표 {y}건 · 후속 {z}건 · 마일스톤 {w}건 · 입금 {v}건 · 공고 {u}건은 날짜가 지나
+넣지 않아요.` — the overdue items the file cannot date truthfully are counted, never silently dropped
+([Rule 13](../design-docs/core-beliefs.md#rule-13)); a separate line, shown only when the checks counter is
+above 0, `확인할 것 {n}건은 하루 전이 지나 넣지 않아요.` (v28).
 
-**Excluded line** (always shown): `넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 기록과 금액, 일정의
-장소·메모.`
+**Excluded line** (always shown, v28): `넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 금액·단가·포트폴리오·
+리드, 일정의 장소·메모, 녹취록·문서.`
 
 **Snapshot box**, four fixed sentences, none of them a number that could go stale: the file only holds what
 existed at export time and does not follow later edits; completing something in the app does not silence the
 calendar's alarm; the daily reminder keeps the task list exactly as it was at export; and where the alarms stop
-(`{end} 뒤로는 알림이 없어요.`).
+(`{end} 뒤로는 알림이 없어요.`). The time note (v28) gains one sentence: `후속 기한·마일스톤·입금 예정·공고
+마감과 회의 하루 전 확인할 것도 이 시각에 알려요.`
 
 **Calendar-app notes**, three sentences on what the app cannot promise: whether re-import replaces or
 duplicates depends on the calendar app; some calendars use their own default notification instead of the
@@ -318,7 +323,21 @@ days)`. `calendarExportOf` reads `state.events`, `state.tasks` and `state.goals`
 | Goal deadlines (`status: "active"`, `today ≤ deadline ≤ end`) | yes | all-day, UID `goal-{id}@life-manager`, summary `목표 기한 · {title}`; no progress or pace number is written |
 | Goal deadlines already past | no — counted in the sheet's skipped line | |
 | Done goals, done tasks | no | |
-| Business (`deals`/`rates`/`folio`), `profile`/CV, an event's `place`/`note`, `journal`, `reviews`, achievements, grades, exams, evidence | never | see [../SECURITY.md](../SECURITY.md) |
+| Meeting follow-ups, open, with a due date (v28) | yes, when `today ≤ due ≤ end` | all-day, UID `followup-{meetingId}-{followUpId}@life-manager`, summary `후속 기한 · {text}`, description names the meeting title, never the minutes |
+| Meeting follow-ups with `due < today` | no — counted in the sheet's skipped line | |
+| Event checks, open, per included occurrence (v28) | yes, one entry `ICS_CHECK_LEAD_DAYS` (1) day before the occurrence, when that reminder date is `≥ today` | all-day, UID `check-{eventId}-{YYYYMMDD}@life-manager`, summary `확인할 것 {n}건 · {event title}`, description lists each open check's text |
+| Event checks whose reminder day has already passed | no — counted in the sheet's own `checks` skipped line | |
+| Roadmap milestones, not done, with a due date (v28) | yes, on the due day **and** on `ICS_MILESTONE_LEAD_DAYS` (7) days before it, each when inside the window | all-day, UID `milestone-{id}@life-manager` and `milestone-{id}-d7@life-manager`, summary `마일스톤 기한 ·`/`마일스톤 D-7 ·` + title; no progress or pace number is written |
+| Milestones with `due < today` | no — counted in the sheet's skipped line | |
+| Unpaid contract payment lines, with a due date (v28) | yes, when `today ≤ due ≤ end` | all-day, UID `payment-{dealId}-{paymentId}@life-manager`, summary `입금 예정 · {kind} · {client} {title}` — **never the amount** |
+| Payment lines with `due < today` | no — counted in the sheet's skipped line | |
+| Open national-project notices, with a deadline (v28) | yes, when `today ≤ deadline ≤ end` | all-day, UID `notice-{id}@life-manager`, summary `공고 마감 · {title} · {agency}` |
+| Notices with `deadline < today` | no — counted in the sheet's skipped line | |
+| Business (`deals`/`rates`/`folio`) amounts, portfolio, hospital leads, an event's `place`/`note`, documents, transcripts, `profile`/CV, `journal`, `reviews`, achievements, grades, exams, evidence | never | see [../SECURITY.md](../SECURITY.md) |
+
+**Every track is included** (v28) — the phone calendar is the user's own device and already carries day-job
+event titles, so nothing here is filtered by `PACKET_TRACKS` the way the AI packets are; see
+[../design-docs/calendar-export.md](../design-docs/calendar-export.md).
 
 A one-off event is left out both when its date is ticked (in `doneDates`) and when its date is in `skip` —
 the export calls `occurrencesOf`, which drops a `skip`-listed date regardless of whether the event currently
@@ -376,7 +395,11 @@ counts line (above) is the one on-screen summary outside this tab and the briefi
 - The calendar export reads events (and tasks and goals) and creates none: `calendarExportOf`/`buildIcs` call
   no `setState` and no `store` write, so exporting a file cannot mark an occurrence done, cancel one, or move a
   goal.
-- A check (schema v27) pays nothing, completes nothing, and is never read by the export, the calendar file, the
-  daily packet or the work packet — only the prep packet (`AI에게 회의 준비 묻기`) reads it, to avoid proposing a
-  duplicate. A pasted prep reply can only *propose* a check item; it never ticks, edits or deletes an existing
-  one, and nothing in that packet is a task ([../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md)).
+- A check (schema v27) pays nothing, completes nothing, and is never read by the daily packet or the work
+  packet (only the prep packet, `AI에게 회의 준비 묻기`, reads it, to avoid proposing a duplicate — the check
+  itself is read by the **calendar file** since v28, as a reminder, never a proposal). A pasted prep reply can
+  only *propose* a check item; it never ticks, edits or deletes an existing one, and nothing in that packet is a
+  task ([../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md)).
+- (v28) An event's `track` never enters the calendar file's filtering — every track is exported — but does
+  gate the three AI packets exactly as every other record kind's track does; see
+  [meetings.md](meetings.md#tracks-v28).

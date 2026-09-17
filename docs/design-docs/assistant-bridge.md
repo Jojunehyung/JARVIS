@@ -37,14 +37,14 @@ Returns `{ sections }` (2026-09-15; the `counts` field it used to return — `{ 
 
 | Section | Rule | Severity |
 |---|---|---|
-| `today` | when any work item is carried from an earlier day (`state.work`, undone, dated before today — schema v26), a first line `이월 업무 {n}건 · 최장 {d}일` (`n` = the carried count, `d` = the largest `daysBetween`), `action: { type: "work" }`, severity 3 — a count only, never a title (rule 13); then overdue → `{title} — 기한 {due} 지남 ({D+n})`; due today → `{title} — 오늘 기한`; open daily → `{title} — 매일 · 미완료` | 3 / 3 / 3 / 1 |
-| `events` | today's schedule and the deadlines around it, in this order: today's `마감` → `{title} — 오늘 마감`; a `마감` already past → `{title} — 마감 {date} 지남 (D+{n})`; a `마감` inside `EVENT_SOON_DAYS` → `{title} — D-{n} 마감`; today's `약속` → `{title} — {HH:MM} 약속` or `{title} — 시간 미정 · 약속`; `해당 없음` when there is none. Ticked occurrences are left out — the tab keeps them so `완료 취소` stays reachable. Every line carries `action: { type: "schedule" }`, which `closeBriefing` routes to the 일정 tab | 3 / 3 / 2 / 2 / 1 |
-| `prep` (`회의 준비`, schema v26) | `오늘 회의 준비 {n}건` (`n` = `meetingPrepOf` rows dated today) with ` · 내일 {m}건` appended only when `m > 0`, `action: { type: "work" }`, severity 2 when any row exists else 1 (stated even at zero — rule 13); when any follow-up across every meeting is `!done && due && due < today`, a second item `후속 기한 지남 {n}건 · 내 담당 {m}건` (`m` = those with `mine`), `action: { type: "meetings" }`, severity 3. Counts only, never a meeting or follow-up's own text | 2 / 1 / 3 |
+| `today` | when any work item is carried from an earlier day (`state.work`, undone, dated before today — schema v26), a first line `이월 업무 {n}건 · 최장 {d}일 · 직장 {a} · 사업 {b} · 개인 {c}` (`n` = the carried count, `d` = the largest `daysBetween`, the per-track counts appended v28), `action: { type: "work" }`, severity 3 — a count only, never a title (rule 13); then overdue → `{title} — 기한 {due} 지남 ({D+n})`; due today → `{title} — 오늘 기한`; open daily → `{title} — 매일 · 미완료` | 3 / 3 / 3 / 1 |
+| `events` | today's schedule and the deadlines around it, each line prefixed with its own track label and ` · ` (v28), in this order: today's `마감` → `{title} — 오늘 마감`; a `마감` already past → `{title} — 마감 {date} 지남 (D+{n})`; a `마감` inside `EVENT_SOON_DAYS` → `{title} — D-{n} 마감`; today's `약속` → `{title} — {HH:MM} 약속` or `{title} — 시간 미정 · 약속`; `해당 없음` when there is none. Ticked occurrences are left out — the tab keeps them so `완료 취소` stays reachable. Every line carries `action: { type: "schedule" }`, which `closeBriefing` routes to the 일정 tab | 3 / 3 / 2 / 2 / 1 |
+| `prep` (`회의 준비`, schema v26) | `오늘 회의 준비 {n}건 · 직장 {a} · 사업 {b} · 개인 {c}` (`n` = `meetingPrepOf` rows dated today, per-track counts v28) with ` · 내일 {m}건` appended only when `m > 0`, `action: { type: "work" }`, severity 2 when any row exists else 1 (stated even at zero — rule 13); when any follow-up across every meeting is `!done && due && due < today`, a second item `후속 기한 지남 {n}건 · 내 담당 {m}건` (`m` = those with `mine`), `action: { type: "meetings" }`, severity 3. Counts only, never a meeting or follow-up's own text | 2 / 1 / 3 |
 | `streak` | `lastActive === today` → recorded; `=== today − 1` → the streak breaks unless something is completed today; `=== today − 2` with a shield left → completing today spends one 보호권 (streak shield); otherwise the next completion resets the streak to 1. Mirrors what `completeTask` actually does | 1 / 3 / 3 / 2 |
 | `goals` | every active goal, nearest deadline first: `{title} — {D-day} · 진행 {n}% · {pace}`. Severity 3 when `paceOf.gap <= −5`, when the deadline is within 7 days and progress is below 100 %, or when it has passed; those cases append the unmet KRs via `krRemainText` (at most two) | 3 / 1 |
-| `biz` | records, never tasks: at most `BIZ_ALERT_MAX` (3) unpaid billed months (`{client} {title} — {month} 입금 미확인 {won}`) — the same constant and the same months the `실행` tab's to-do list names ([../product-specs/tasks.md](../product-specs/tasks.md)); a `won` deal ending within `DEAL_END_SOON` months (`{client} {title} — {month} 종료 · 남은 계약 {won}`); a `quote` older than `QUOTE_STALE_DAYS` days (`{client} {title} — 견적 {n}일 경과 · {won}`); then always the closing line `이번 달 계약 매출 {won} · 입금 확인 {won} · 남은 계약 {won}`. The closing line is the reason the section exists, so it is built last from at most `CAP − 1` alerts rather than a plain sixth item — three unpaid months plus two ending contracts would otherwise fill `CAP` and push it out. Every line carries `action: { type: "biz" }`, which `closeBriefing` routes to the 사업 tab ([business.md](../product-specs/business.md)) | 3 / 2 / 2 / 1 |
+| `biz` | records, never tasks, in order: at most `BIZ_ALERT_MAX` (3) unpaid billed months (`{client} {title} — {month} 입금 미확인 {won}`) — the same constant and the same months the `실행` tab's to-do list names ([../product-specs/tasks.md](../product-specs/tasks.md)); up to `PAYMENT_ALERT_MAX` (3, v28) unpaid lump-sum lines (`{client} {title} — {kind} 입금 예정 {due} · 미확인`, carrying the deal's track); a `won` deal ending within `DEAL_END_SOON` months (`{client} {title} — {month} 종료 · 남은 계약 {won}`); a `quote` older than `QUOTE_STALE_DAYS` days (`{client} {title} — 견적 {n}일 경과 · {won}`); `다음 액션 기한 지난 리드 {n}건` (v28, `n > 0` only, carries `track: "biz"` and `packet: false` — below); up to `NOTICE_ALERT_MAX` (2, v28) open-notice lines (`공고 {title} — 마감 {D-day}`, `packet: false`); up to `ROADMAP_ALERT_MAX` (2, v28) not-done milestone lines (`마일스톤 {title} — {D-day}`, carrying `milestoneTrack`); then always the closing line `이번 달 계약 매출 {won} · 입금 확인 {won} · 남은 계약 {won}`. The closing line is the reason the section exists, so it is built last from at most `CAP − 1` alerts rather than a plain sixth item — a full slate of business alerts (an unpaid month, a payment line, an overdue lead and two near notices) can fill that budget and push an ending contract, a stale quote or a milestone line out of the briefing itself (TD-72's crowding note); the revenue line is never cut. Every line carries `action: { type: "biz" }`, which `closeBriefing` routes to the 사업 tab ([business.md](../product-specs/business.md)) | 3 / 2 / 2 / 1 |
 | `areas` | 영역 (areas) with no achievement in 30 days (role-model targets first, at most 3), `action: { type: "home" }` — the area's grade row and its promotion gate live on the CV; goals whose activity kind has no completion in 7 days (at most 3), `action: { type: "goals" }` | 2 |
-| `next` | no role model → say so; no gaps → `모든 요구 영역 충족 · 근접도 {n}%`; otherwise the first gap and its top recommendation from `roleRecommendations` | 2 / 1 / 2 |
+| `next` | no role model → say so; no gaps → `모든 요구 영역 충족 · 근접도 {n}%`; otherwise the first gap and its top recommendation from `roleRecommendations` — or, when the gap's area is `사업` and `role.stages` exist (v28), the stage tail instead: see [metrics-and-role-model.md](metrics-and-role-model.md#the-briefings-next-step-tail) | 2 / 1 / 2 |
 | `review` | no review whose `weekOf` is this Monday → `이번 주 리뷰 없음 (마지막 {date})` | 2 / 1 |
 | `journal` | today's entry length, and the date of a stored assistant reply | 1 |
 
@@ -61,20 +61,38 @@ Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CA
 ## `roleRecommendations(state)`
 Extracted from `RoleAdviceModal` so the briefing and the direction-advice screen compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
-The bridge carries **three** packets in total (2026-09-17): the daily check-in, `오늘 업무 만들기`, and the
-third, `AI에게 회의 준비 묻기`, below.
+The bridge carries **four** packets in total (2026-09-17/18): the daily check-in, `오늘 업무 만들기`,
+`AI에게 회의 준비 묻기`, and the fourth, `주간 회고` (v28), below.
+
+## Tracks (v28) — what leaves the device
+
+Every project, document, event, work item, meeting and deal carries or derives a `track`
+(`work`/`직장`, `biz`/`사업`, `personal`/`개인` — see [meetings.md](../product-specs/meetings.md#tracks-v28)).
+`PACKET_TRACKS = ["biz", "personal"]` — a `work`-track record **never** leaves the device through any of the
+four packets below; the day-job track is the safe default (a record wrongly left on it is only absent from a
+packet, never leaked), and there is no per-record override ([TD-73](../exec-plans/tech-debt-tracker.md)).
+
+| Packet | Filter |
+|---|---|
+| Daily check-in (`buildAssistantPacket`) | `briefLines` keeps only briefing items with no `track` or a track in `PACKET_TRACKS`, and additionally drops any item with `packet: false` (the v28 lead/notice count lines, below); `eventLines` filters by the event's own track; `bizPacketLines` filters deals by `trackOf(d, "biz")` and recomputes its summary line over that filtered list, so the section's totals can never disagree with the lines it names |
+| `오늘 업무 만들기` (`buildWorkPacket`) | `meetings` filtered by `PACKET_TRACKS.includes(meetingTrack(state, m))` before the slice; `eventLines` and the work-record section filtered by track; `taskLines` unchanged (a task has no track) |
+| `AI에게 회의 준비 묻기` (`buildPrepPacket`) | `docs` filtered by `trackOf(d)`; `dealsOfProject`'s result filtered by `trackOf(d, "biz")`; when the event's own track is outside `PACKET_TRACKS`, the function returns just the header plus `## 회의` with the single line `- 직장 트랙 일정 — AI 패킷에 실리지 않아요` |
+| `주간 회고` (`buildReviewPacket`, v28) | business track only by construction — see below |
+
+Captions state the exclusion in the send pane itself: `BridgeModal`'s and `WorkBridgeModal`'s captions each gain
+the sentence `직장 트랙 기록은 실리지 않아요.`; `PrepBridgeModal`'s gains `직장 트랙 문서·계약은 실리지 않아요.`
 
 ## The bridge — `buildAssistantPacket(state, today)`
 A text packet the user copies into an external chat. It opens with the role and the four rules the assistant must follow (facts and numbers only, `해요체`, no judging scores or difficulty, proposals limited to day-sized tasks under an existing goal whose title names the activity (`제목에 독서·운동처럼 활동을 그대로 적어요.`) — never a certification, an exam, or a business record — and a closing JSON block whose template no longer offers a `kind` field), then the data:
 
 | Section | Content | Cap |
 |---|---|---|
-| `## 오늘 브리핑` | briefing lines of severity 2 and above — since schema v26 this includes the `회의 준비` section's counts (`오늘 회의 준비 {n}건`, and, once any follow-up is overdue, `후속 기한 지남 {n}건 · 내 담당 {m}건`) whenever their severity qualifies, and the carried-work line (`이월 업무 {n}건 · 최장 {d}일`) when it does — never a meeting or follow-up title | 12 |
+| `## 오늘 브리핑` | briefing lines of severity 2 and above — since schema v26 this includes the `회의 준비` section's counts (`오늘 회의 준비 {n}건`, and, once any follow-up is overdue, `후속 기한 지남 {n}건 · 내 담당 {m}건`) whenever their severity qualifies, and the carried-work line (`이월 업무 {n}건 · 최장 {d}일`) when it does — never a meeting or follow-up title. `briefLines` additionally drops any item with `track` outside `PACKET_TRACKS` and, since v28, any item flagged `packet: false` — the lead-count and open-notice lines carry that flag so they never reach this packet even though their severity would otherwise qualify (a demo run without the flag pushed `[주간 리뷰] 이번 주 리뷰 없음` out of this cap; the flag is the one-condition fix) | 12 |
 | `## 이력` | one line built from `cvSummaryOf(profile, today)` — the same helper the home CV's `학력` / `경력` rows read ([home.md](../product-specs/home.md)), lifted out of this function 2026-09-15 so the two surfaces cannot state a different degree or role: degree + status label (`박사 졸업`, not a bare `박사` — `topEdu` falls back to the most recent entry when nothing is completed, and a bare degree would imply one the user does not hold) + major/field (or `전공 미기재`), then total practice months (`careerMonths`) + the latest role; `학력 미입력` when there is no education entry at all, `경력 없음` when there is no career entry, and `- 없음` for the whole line only when both are absent (`cvSummaryOf(...).any` false). Deliberately excludes `profile.name`, `birth`, `email`, `phone`, the school name and the employer name — a school or an employer identifies a person nearly as well as a name does, and this is the one place data leaves the device by design (see `docs/SECURITY.md`) | 1 |
 | `## 목표` | active goals: deadline, D-day, progress, pace, KR remainders | 5 goals × 4 KRs |
 | `## 열린 실행` | the agenda in order: goal, title, difficulty, cadence, due | 12 |
 | `## 다가오는 일정 (14일)` | `- {date} {HH:MM\|시간 미정} · {약속\|마감} · {title}{ · 반복 {매일\|매주\|매월}}`, date-ascending from `upcomingEvents(state, today, PACKET_EVENT_DAYS)`; the heading and the window read the same constant | 8 |
-| `## 사업 (계약·매출)` | the summary line `- 이번 달 계약 {won} · 입금 확인 {won} · 남은 계약 {won} · 견적 대기 {won}`, then `- 미수 {month} {client} {title} {won}` per unpaid billed month, then `- {진행 중\|예정} {client} {title} · {startMonth} ~ {endMonth} · 월 {won}` for `active`/`upcoming` deals — `bizPacketLines(state, today)` (2026-09-17, lifted to module level so the work packet below reuses it), built from the same `bizSummary` the tab and the briefing read, before the journal-trim loop below so its cap and behaviour are unaffected | `PACKET_BIZ_LINES` = 6 |
+| `## 사업 (계약·매출)` | the summary line `- 이번 달 계약 {won} · 입금 확인 {won} · 남은 계약 {won} · 견적 대기 {won}`, then (v28) `- 입금 예정 {kind} {due} {client} {title} {won}` per payment line of an allowed deal (` · 입금 확인 {paidAt}` when paid), then `- 미수 {month} {client} {title} {won}` per unpaid billed month, then `- {진행 중\|예정} {client} {title} · {startMonth} ~ {endMonth} · 월 {won}` for `active`/`upcoming` deals — `bizPacketLines(state, today)` (2026-09-17, lifted to module level so the work packet below reuses it), built from the same `bizSummary` the tab and the briefing read, filtered to `PACKET_TRACKS` deals (v28), before the journal-trim loop below so its cap and behaviour are unaffected. A milestone, a lead and a notice **never** appear here — only the fourth packet (`주간 회고`, below) carries the roadmap, the pipeline and open notices | `PACKET_BIZ_LINES` = 6 |
 | `## 최근 일지 (7일)` | journal entries clipped to 200 characters | 7 |
 | `## 최근 주간 리뷰` | the newest review | 1 |
 | `## 연속·롤모델` | streak, shields, role-model proximity | 2 lines |
@@ -227,3 +245,62 @@ meeting preparation needs no CV); never a transcript (the shared meeting-line bu
 never an event's `place` or `note`; never a document's `source`; a hidden meeting always contributes date and
 title only, never its summary or project name. `tools/e2e/flow11.js` plants a hidden meeting, a transcript and a
 document with a `source`, and asserts each is absent from the built packet text.
+
+## The fourth packet — `주간 회고` (`buildReviewPacket` / the unchanged `parseWorkReply`, v28)
+
+Opened from `ReviewModal`'s `AI에게 회고 묻기 ›` button — **enabled only once this week's review is saved**, so
+the packet always reads the stored review, never an unsaved draft ([../product-specs/daily-briefing.md](../product-specs/daily-briefing.md)).
+It needs **no Rule 7 amendment**: the reply is read by the unchanged `parseWorkReply` (key `work` only, exactly
+as `오늘 업무 만들기`'s reply is) and registered by `importWork`, which gains an optional `date` (next Monday)
+and `track` (`biz`) argument — no new stored key, no network call. Business track of the current week only
+(`mondayOf(today)`) — **no day-job or private record, no `## 이력` line, no profile identifier, no transcript,
+and no body of a meeting flagged `aiHidden`** (its follow-ups stay out too); a milestone whose `milestoneTrack`
+is `work` also stays out.
+
+`buildReviewPacket(state, today)`, through the same `packetSection` helper:
+
+| Heading | Content |
+|---|---|
+| `## 이번 주 사실 (사업)` | the review's business-track line (`weekFactRows(weekFacts(state, weekOf)).biz`) and `timeLine(state, today)` |
+| `## 이번 주 완료 업무 (사업)` | business work items dated in the week and done: date, title, the result clipped at `WORK_PACKET_RESULT` |
+| `## 미완료 업무·후속 (사업)` | every undone business work item whatever its date (future-dated included, carried ones with `이월 {n}일`), then open follow-ups of non-`aiHidden` business meetings (`- 후속 · {meeting} · {내 담당\|타인} · {text} · {기한 {due}\|기한 없음}`) |
+| `## 로드맵` | `timeLine`, the stage-order note when any, one `milestoneLine` per not-done business-track milestone by `milestoneOrder` |
+| `## 파이프라인` | one `leadLine` per lead not won, by `leadOrder` (leads carry no track — all included) |
+| `## 공고` | one `noticeLine` per open notice, by `noticeOrder` (notices carry no track — all included) |
+| `## 입금 예정` | kind, due, client, title, amount, paid date — for payment lines of business-track deals, whatever their status |
+| `## 이번 주 리뷰` | `- 잘된 것: {clipped wins \| 없음}` and `- 막힌 것: {clipped blocks \| 없음}` from the saved review |
+
+Header `[인생 관리 — 주간 회고 요청 {today}]`, then `REVIEW_PACKET_HEAD` (verbatim below), a blank line. Own cap
+`REVIEW_PACKET_MAX` = 20,000.
+
+`REVIEW_PACKET_HEAD` (five numbered rules, verbatim): facts and numbers only, `해요체`; never judge or change a
+score/grade/payout/difficulty; propose only business work items to do **next week** — no count limit, title ≤
+60 / note ≤ 200 chars, never create or change a task/event/contract/meeting/milestone/lead, never re-propose a
+title already in `미완료 업무·후속`; name a proposal's meeting/project basis in `link.title` verbatim, or a
+milestone/lead/notice basis in `note`, or omit `link` when there is none; close with a ≤ 5-line retrospective
+then one JSON block, `{"work":[{"title":"...","note":"...","link":{"kind":"meeting|project","title":"..."}}],"note":"..."}`
+(`"work": []` when there is nothing to propose) — the **same shape as the work packet's**, so `parseWorkReply`
+reads the reply with no change of its own.
+
+**Trim order**, rebuilding and re-measuring after each step: (0) done-work lines 30 → 10; (1) open-work lines
+30 → 10; (2) follow-up lines 30 → 5; (3) lead lines 20 → 5; (4) notice lines 10 → 3; (5) payment lines → 3; (6)
+done-work lines → 0; (7) lead lines → 0. The header, the facts line and the roadmap section are never dropped.
+Measured on the demo build (2026-09-18): 1,946 chars with a saved review, 1,912 without; a heavy save (300 work
+items, 40 business meetings × 30 follow-ups each, 50 leads, 20 notices, 12 payment lines per deal) trims to
+18,938 chars with no transcript, lead contact string or day-job item present.
+
+`ReviewModal`'s per-track facts line (`직장 · 이번 주 기한 후속 …`, `사업 · … · {h}/{budget}h · 마일스톤 완료
+{n}건 · 리드 진전 {m}건`, `개인 · …`) is documented in [../product-specs/daily-briefing.md](../product-specs/daily-briefing.md#reviewmodal-modaltype-review);
+`weekFacts` reads due dates and item dates rather than a completion stamp, since follow-ups and work items store
+`done` only ([TD-71](../exec-plans/tech-debt-tracker.md), accepted).
+
+**Duplicate-check caveat (TD-71-adjacent, plan error found during implementation):** `parseWorkReply`'s dedupe
+compares a proposed title against **today's** view (`workOn(state, today, today)`), not the import date (next
+Monday) — a proposal whose title already exists on next Monday's own list is not refused by the parser; the
+packet head's own rule 3 ("don't re-propose what `미완료 업무·후속` already lists") is the only guard against a
+duplicate landing on that future date.
+
+`WorkBridgeModal` is generalised (`build`, `title`, `caption`, `importDate`, `importTrack` props) to render both
+`workBridge` and `reviewBridge` with one confirm view — see [../product-specs/daily-work.md](../product-specs/daily-work.md#오늘-업무-만들기-and-주간-회고--workbridgemodal-generalised-v28).
+`importWork(list, date = today, track = null)` dates the registered items `date` and applies `track` or the
+Phase 1 default rule, appending ` · {date}` to the toast when `date` is not today.

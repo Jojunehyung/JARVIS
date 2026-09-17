@@ -14,28 +14,68 @@ Life Manager is a local-only, single-user web app with no backend, no accounts, 
   holds a pre-meeting checklist per event, at most 30 items of 200 characters. Neither is a file: no file upload
   or file content is ever stored, only the summary text and, optionally, a file name or link as text (`source`).
   Both sit in the same unencrypted `liferpg-state-v1` key as everything else, with no separate handling.
+- Since schema v28 (2026-09-17/18): `leads[]` holds a hospital sales pipeline — a name, a contact string, a
+  next-action description and note, up to 400 characters each, which may name a real person's role and a
+  hospital; `notices[]` holds national-project notice titles, agencies and notes; `deals[].payments` holds
+  lump-sum amounts and dates; `role.stages` holds the user's own stage names and fact-condition arguments (which
+  may include a client-name substring or a certification name); `milestones[]` and `timeLog[]` hold roadmap and
+  time-tracking records with no personal-identifier field of their own. Every project, document, event, work
+  item, memo and deal also carries a `track` (`직장`/`사업`/`개인`) — see "Tracks" below. All of it sits in the
+  same unencrypted `liferpg-state-v1` key, with no separate handling.
+
+## Tracks (v28) — the day-job filter
+
+Every project, document, event, work item and deal carries a `track` (a project meeting derives its own from
+its project; a project-less memo carries its own field); the safe default is `"work"` (the day job), so a
+record wrongly left untracked is only **absent** from an AI packet, never leaked into one. **A `직장`-track
+record never leaves the device through any of the four AI packets** — the daily check-in, `오늘 업무 만들기`,
+`AI에게 회의 준비 묻기`, or `주간 회고` (below) — each filters by `PACKET_TRACKS = ["biz", "personal"]` before
+building its text; the meeting-prep card states everything about a day-job event on-device (project name, last
+meeting, follow-ups, progress) but replaces its `AI에게 회의 준비 묻기` button with the line `직장 트랙 — AI
+패킷에 실리지 않아요`, so the one path that would send it stays unreachable. There is **no per-record override**:
+the app deliberately gives the user no "send this one to AI anyway" toggle for a `직장`-track record, since one
+tap would be the only thing standing between confidential day-job data and an external chat
+([TD-73](exec-plans/tech-debt-tracker.md), backlog if the user asks). The calendar file (below) is the one
+surface that includes every track, because the phone calendar is the user's own device, not an external chat.
 
 ## Data in transit
 None by the app. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static. The calendar export ("The calendar file", below) is the one other place item titles leave the app, through a file the user hands to their own calendar app.
 
-The assistant bridge carries **three** packets, all text, all copy/paste only, all making no network call ([Rule 7](design-docs/core-beliefs.md#rule-7)):
+The assistant bridge carries **four** packets, all text, all copy/paste only, all making no network call ([Rule 7](design-docs/core-beliefs.md#rule-7)):
 
 - **The daily check-in** (`AI에게 보내기`, `buildAssistantPacket`): goals, open tasks, the last seven journal entries, the last weekly review, the streak and role-model proximity, and, since schema v21, one `## 이력` line stating degree, department/field, total months of practice and the most recent role — into a textarea and the clipboard; never photos. It never carries a meeting or a work item: `buildAssistantPacket` does not read `meetingProjects`, `meetings` or `work` ([product-specs/meetings.md](product-specs/meetings.md)). The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score.
 - **`오늘 업무 만들기`** (`buildWorkPacket`, schema v25, 2026-09-17): the same goals/tasks/schedule/business facts, plus what the daily packet never carries — the newest meeting minutes (summary, decisions) and their progress entries, and every undone work item carried into today plus yesterday's and today's own items, so the assistant does not repeat a proposal. Since schema v26 (2026-09-17), each visible meeting's follow-up items are also stated in full — owner flag, due date, done state and text, one line per item (open ones first). This is the user's own decision, reversing the 2026-09-16 default that the packet never reads a meeting: **every meeting is included by default**, except one flagged `aiHidden` (a per-meeting checkbox in `MeetingModal`, `AI에 보내지 않기`), whose line states only its date and title — no summary, decisions, follow-ups, progress, or project name (unchanged by v26). A project-less urgent memo (2026-09-17) is included the same way, printing `[프로젝트 없음]` in place of a project name. The reply's `work` array is read by `parseWorkReply`; each proposal becomes a work item, `source: "ai"`, only once the user ticks it in the confirm view. The raw reply is never stored (unlike the daily packet's `journal[].ai`).
-- **`AI에게 회의 준비 묻기`** (`buildPrepPacket`, schema v27, 2026-09-17): built for one schedule event that belongs to a meeting project — the event line, the project's newest meetings (a hidden one contributing date and title only), the project's document title and summary (never `source`), the open tasks those meetings link, the contracts of the same client when derivable, and the event's existing checks so they are not re-proposed. **Never** the profile identifiers, a transcript, an event's `place`/`note`, or a document's `source`. The reply's `checks` array is read by `parsePrepReply`; each proposal becomes a check item, `source: "ai"`, only once ticked. The raw reply is never stored. See [design-docs/assistant-bridge.md](design-docs/assistant-bridge.md) (the third packet) and `tools/e2e/flow11.js` step 22 for the proof that the exclusions hold.
+- **`AI에게 회의 준비 묻기`** (`buildPrepPacket`, schema v27, 2026-09-17): built for one schedule event that belongs to a meeting project — the event line, the project's newest meetings (a hidden one contributing date and title only), the project's document title and summary (never `source`), the open tasks those meetings link, the contracts of the same client when derivable, and the event's existing checks so they are not re-proposed. **Never** the profile identifiers, a transcript, an event's `place`/`note`, or a document's `source`. Since v28, a document or a contract on the `직장` track is filtered out even when the event's own track is a packet track, and an event on the `직장` track produces only `## 회의` with the line `직장 트랙 일정 — AI 패킷에 실리지 않아요` in place of everything else. The reply's `checks` array is read by `parsePrepReply`; each proposal becomes a check item, `source: "ai"`, only once ticked. The raw reply is never stored. See [design-docs/assistant-bridge.md](design-docs/assistant-bridge.md) (the third packet) and `tools/e2e/flow11.js` step 22 for the proof that the exclusions hold.
+- **`주간 회고`** (`buildReviewPacket`, schema v28, 2026-09-18): opened from `ReviewModal`'s `AI에게 회고 묻기 ›`
+  button, enabled only once the current week's review is saved, so it always reads the **stored** review, never
+  a draft. Business track (`사업`) of the current week only: the week's completed and open work items and open
+  follow-ups of non-hidden business meetings, the roadmap (open milestones on the business track, by
+  `milestoneTrack`), the sales pipeline, open notices, unpaid and paid lump-sum payment lines of business-track
+  deals, and the saved review's `잘된 것`/`막힌 것` text. **Never** the day-job or private track, a transcript,
+  a profile identifier, or `## 이력`. Its reply is read by the **unchanged** `parseWorkReply` (the same `work`
+  key `오늘 업무 만들기` reads); confirming registers next Monday's business work items through the same
+  `importWork` path, now generalised to take a date and a track. No new stored key, no network call — this
+  needed no [Rule 7](design-docs/core-beliefs.md#rule-7) amendment.
 
 **The work packet never carries `transcript`; neither does the daily packet, the calendar file or the prep card** (2026-09-17) — a meeting's optional pasted transcript (up to 30,000 characters, [product-specs/meetings.md](product-specs/meetings.md)) is read only by `MeetingModal`, `MeetingViewModal`, `clearTranscript` and `recordFits` (which measures the whole record's string length, transcript included, against the storage budget, never inspecting its content); `buildWorkPacket`, `buildAssistantPacket`, `calendarExportOf`/`buildIcs` and `meetingPrepOf` never read the key. `tools/e2e/flow11.js`'s sentinel step (`the work packet states a memo under the no-project head and carries none of its transcript`) plants a marker string inside a transcript and asserts it is absent from the built packet text.
 
 Both packets share the same CV line (`cvSummaryOf`, built from `topEdu` / `latestCareer`) and it is deliberately the only place the CV is summarised for an outside reader: neither packet ever carries `profile.name`, the birth date, the e-mail, the phone number, the school name or the employer name — a school or an employer identifies a person nearly as well as a name does. Neither carries a photo, evidence text, or a journal entry (the journal line is the daily packet's own domain). Copying either packet is a user action, and pasting it into a third-party chat puts that text outside this threat model. `tools/e2e/flow11.js` asserts the work packet excludes every one of those identifying fields, and excludes a hidden meeting's summary and project name, the same way `flow8.js` proves it for the daily packet.
 
 ## The backup file
-`백업 내보내기` writes the whole save — profile (including the exact name, birth date, optional e-mail/phone and every education and career record since schema v21), goals, tasks, achievements, meeting minutes since schema v23 (project names, attendees, summaries, decisions and actions), each meeting's progress log and `AI 전송` flag and every work item since schema v25, each meeting's structured follow-up items since schema v26, and every evidence photo — to a JSON file the user chooses where to keep. Since 2026-09-17, a meeting's `transcript` — up to 30,000 characters, the most sensitive free text the app holds — and a project-less memo's `projectId: null` travel in this file the same way: no separate handling, no encryption, exported and imported exactly like every other field. Carrying the CV, the minutes and the work items here is correct and unchanged from how every other field has always been handled: the file is local, it is the only way back from a cleared browser, and the file is as sensitive as the device itself — once it is in a downloads folder, a cloud-synced directory or a chat, it is outside this threat model. Import replaces the current records and asks for confirmation naming the export date first.
+`백업 내보내기` writes the whole save — profile (including the exact name, birth date, optional e-mail/phone and every education and career record since schema v21), goals, tasks, achievements, meeting minutes since schema v23 (project names, attendees, summaries, decisions and actions), each meeting's progress log and `AI 전송` flag and every work item since schema v25, each meeting's structured follow-up items since schema v26, and every evidence photo — to a JSON file the user chooses where to keep. Since 2026-09-17, a meeting's `transcript` — up to 30,000 characters, the most sensitive free text the app holds — and a project-less memo's `projectId: null` travel in this file the same way: no separate handling, no encryption, exported and imported exactly like every other field. Since schema v28 (2026-09-17/18), every record's `track`, the four new arrays (`milestones`, `timeLog`, `leads`, `notices` — hospital contact strings and next-action text included) and `settings.bizHoursPerWeek` travel the same way, with no code of their own — the whole state is one JSON tree. Carrying the CV, the minutes and the work items here is correct and unchanged from how every other field has always been handled: the file is local, it is the only way back from a cleared browser, and the file is as sensitive as the device itself — once it is in a downloads folder, a cloud-synced directory or a chat, it is outside this threat model. Import replaces the current records and asks for confirmation naming the export date first.
 
 ## The calendar file
 `캘린더로 내보내기` (일정 tab) writes `life-manager-calendar-{date}.ics`: a snapshot of dated **item titles** —
 event titles, dated-task titles, the daily-task digest, goal-deadline titles, and a task's linked goal title
 inside its own description line — and their dates, built in memory and handed to the browser exactly like the
-backup file. Mechanics: [design-docs/calendar-export.md](design-docs/calendar-export.md); the sheet:
+backup file. Since schema v28 it also carries: an open meeting follow-up's due date and text (never the
+minutes); an open pre-meeting check reminder the day before its occurrence (the check text, never the
+project); a roadmap milestone's due day and its D-7 (the title only — never progress or pace); an unpaid
+contract payment line's due day, kind and client/title — **the amount is never written, on any calendar
+entry, ever**; and an open national-project notice's deadline, title and agency. **Every track is included** —
+the phone calendar is the user's own device and already carries day-job event titles, so the calendar file does
+not apply the `PACKET_TRACKS` filter the four AI packets do. Mechanics:
+[design-docs/calendar-export.md](design-docs/calendar-export.md); the sheet:
 [product-specs/schedule.md](product-specs/schedule.md).
 
 Importing the file is the user's own action, and it carries those titles **out of the app sandbox into
@@ -46,13 +86,18 @@ explicit in the export sheet itself before anything is exported, and it still ma
 to produce or send the file — the request, if any, is the calendar app's, after import, not this app's.
 
 **What it never carries**: `profile` / the CV (name, birth date, e-mail, phone, school and employer names),
-any business record or amount (`deals`, `rates`, `folio`), an event's `place` or `note`, the journal, reviews,
-evidence, grades, exam bands, or any progress or pace number. `calendarExportOf` reads only `state.events`,
-`state.tasks` and `state.goals`; `tools/harness/smoke-logic.js` proves the boundary by building from a state
-whose `profile`, `deals`, `rates`, `folio`, `journal` and `reviews` are getters that throw, and whose events
-carry throwing `place`/`note` getters too — the build must still complete. `tools/e2e/flow9.js` mirrors the
-proof end to end: it plants a real CV, business records, an event `place`/`note` and a journal entry, exports,
-and asserts none of their values appears anywhere in the file's `SUMMARY` or `DESCRIPTION` lines.
+portfolio, unit prices, a contract's `monthly`/`costMonthly`/`note`/`paidMonths` or **any payment amount**, an
+event's `place` or `note`, hospital leads (a prospect's name and next-action text are person-adjacent and stay
+device-only), documents, meeting transcripts, the journal, reviews, evidence, grades, exam bands, or any
+progress or pace number. `calendarExportOf` reads `state.events`, `state.tasks`, `state.goals` and, since v28,
+`meetings[].followUps`, `events[].checks`, `state.milestones`, `deals[].payments` and `state.notices` — and
+nothing else; `tools/harness/smoke-logic.js` proves the boundary by building from a state whose `profile`,
+`folio`, `journal`, `reviews`, `leads` and `documents` are getters that throw, whose deals and meetings have
+their own privacy-bearing fields (amount, summary, decisions, transcript, and so on) trapped individually, and
+whose events carry throwing `place`/`note` getters too — the build must still complete. `tools/e2e/flow9.js`
+mirrors the proof end to end: it plants a real CV, business records, an event `place`/`note`, a journal entry
+and a payment amount, exports, and asserts none of their values — including the amount, in either its digit or
+만원 form — appears anywhere in the file's `SUMMARY` or `DESCRIPTION` lines.
 
 ## Code execution surfaces
 - Runtime: React renders user text as text (no `dangerouslySetInnerHTML`); links entered as study artifacts are stored as strings and rendered as text.

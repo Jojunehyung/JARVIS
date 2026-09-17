@@ -125,10 +125,38 @@ Every `VEVENT` carries exactly one `VALARM` (`ACTION:DISPLAY`, `DESCRIPTION` = t
   Two exports of the same record keep the same UID and a non-decreasing `SEQUENCE` (smoke check (e), E2E step
   "a second export keeps every UID").
 
+## Five more kinds (v28) — follow-ups, checks, milestones, payments, notices
+
+Since schema v28, `calendarExportOf` additionally reads `meetings[].followUps`, `events[].checks`,
+`state.milestones`, `deals[].payments` and `state.notices`. Every new entry is all-day and alarms at the chosen
+reminder time (built through the same `entry(source, uid, date, summary, body)` helper the existing kinds use);
+**every track is included** — the phone calendar is the user's own device and already carries day-job event
+titles, so nothing here is filtered by `PACKET_TRACKS` the way the three AI packets are.
+
+| Kind (`source`) | Written when | UID | Summary | Description | Skipped when |
+|---|---|---|---|---|---|
+| `followup` | per meeting, per open follow-up with `today ≤ due ≤ end` | `icsUid("followup", meetingId + "-" + followUpId)` | `후속 기한 · {text}` | the meeting title, `목표 기여 없음` — never the minutes | `due < today` |
+| `check` | per included event occurrence with ≥ 1 open check, on `shiftDay(date, -ICS_CHECK_LEAD_DAYS)` when that date is `≥ today` | `icsUid("check", eventId, date)` | `확인할 것 {n}건 · {event title}` | one `- {text}` per open check | the reminder date (occurrence − 1 day) is before today — this counts a check whose meeting is today, since its reminder day has already passed |
+| `milestone` (due day) | per not-done milestone with `today ≤ due ≤ end` | `icsUid("milestone", id)` | `마일스톤 기한 · {title}` | `진행률·페이스는 넣지 않아요 — 내보낸 뒤 바로 달라져요.` | `due < today` |
+| `milestone` (D-7) | the same milestone, when `today ≤ due − 7 ≤ end` | `icsUid("milestone", id + "-d7")` | `마일스톤 D-7 · {title}` | same | (shares the due-day entry's skip) |
+| `payment` | per unpaid payment line with `today ≤ due ≤ end` | `icsUid("payment", dealId + "-" + paymentId)` | `입금 예정 · {kind label} · {client} {title}` — **never the amount** | `금액은 넣지 않아요.` | `due < today` |
+| `notice` | per open notice with `today ≤ deadline ≤ end` | `icsUid("notice", id)` | `공고 마감 · {title} · {agency}` | `목표 기여 없음` | `deadline < today` |
+
+`ICS_MILESTONE_LEAD_DAYS = 7` and `ICS_CHECK_LEAD_DAYS = 1` are the two new named constants. `rank` (Ordering,
+below) gains `followup: 4, check: 5, milestone: 6, payment: 7, notice: 8`; `counts` and `skipped` gain the
+matching keys, read by the sheet's second preview line and its skipped-items line
+([schedule.md](../product-specs/schedule.md#calendarexportmodal-modaltype-calexport)). `buildIcs` needed no
+change — every new entry is all-day and alarms at the reminder time, the shape `buildIcs` already serialises.
+
+**A daily-repeating event with open checks can write up to 365 reminder entries** at the one-year range (one
+per included occurrence) — accepted, since a check belongs to the event record and every occurrence needs its
+own day-before reminder.
+
 ## Ordering
-Entries sort by start date, then `event → task → daily → goal`, then summary, then `UID` as a final tie-break,
-using plain code-unit comparison (never `localeCompare`, so the order cannot depend on the runtime's locale) —
-deterministic output for identical input and `now`.
+Entries sort by start date, then `event → task → daily → goal → followup → check → milestone → payment →
+notice` (v28), then summary, then `UID` as a final tie-break, using plain code-unit comparison (never
+`localeCompare`, so the order cannot depend on the runtime's locale) — deterministic output for identical input
+and `now`.
 
 ## The 365-day bound
 `occurrencesOf` stops after `MAX_OCC = 400` iterations. `ICS_RANGE_DAYS = [30, 90, 365]` is the sheet's three
@@ -139,17 +167,23 @@ calendar date the export runs on: a 90-day window starting mid-year can miss eve
 365-day window cannot.
 
 ## Privacy by construction
-`calendarExportOf` reads `state.events`, `state.tasks` and `state.goals` and nothing else — never `profile`,
-`deals`, `rates`, `folio`, `journal`, `reviews`, and never an event's `place` or `note`. What carries an event
+`calendarExportOf` reads `state.events`, `state.tasks`, `state.goals` and, since v28, `meetings[].followUps`,
+`events[].checks`, `state.milestones`, `deals[].payments` and `state.notices` — never `profile`, `folio`,
+`journal`, `reviews`, `leads`, `documents`, a meeting's summary/decisions/actions/transcript/progress/attendees,
+a deal's `monthly`/`costMonthly`/`note`/`paidMonths`, a payment's `amount`, a milestone's `condition` or link
+lists, a notice's `note`/`documentIds`/`postedAt`, and never an event's `place` or `note`. What carries an event
 through the builder is `occurrencesOf({ date: ev.date, repeat: ev.repeat }, …)` — a two-field literal, not a
 copy of `ev` — so nothing downstream of that call can read `place` or `note` even by accident; a shallow copy
 such as `{ ...ev, skip: [] }` would still carry both fields through untouched. `tools/harness/smoke-logic.js`
-check (g) proves the boundary by building from a state whose `profile`, `deals`, `rates`, `folio`, `journal` and
-`reviews` are getters that **throw**, and whose every event has trapped `place`/`note` getters as well, across
-every event branch (one-off, a repeat with exceptions, a day-31 monthly expansion) — the build must complete
-without error. The full mutation-testing record (what a weaker check would have missed) is in
-[../RELIABILITY.md](../RELIABILITY.md). Data-in-transit consequences of the fields the file *does* carry
-(event and task titles, goal titles) are recorded in [../SECURITY.md](../SECURITY.md#the-calendar-file).
+check (g) proves the boundary by building from a state whose `profile`, `folio`, `journal`, `reviews`, `leads`
+and `documents` are getters that **throw** (v28: `deals` is no longer trapped whole, since the export now reads
+payment lines — its own privacy-bearing fields are trapped individually instead, listed above), and whose every
+event has trapped `place`/`note` getters as well, across every event branch (one-off, a repeat with exceptions,
+a day-31 monthly expansion) — the build must complete without error. The full mutation-testing record (what a
+weaker check would have missed) is in [../RELIABILITY.md](../RELIABILITY.md). Data-in-transit consequences of
+the fields the file *does* carry (event and task titles, goal titles, follow-up text, milestone titles, a
+payment's kind/client/title without the amount, notice titles) are recorded in
+[../SECURITY.md](../SECURITY.md#the-calendar-file).
 
 ## What is guaranteed and what depends on the calendar app
 | Guaranteed by the file | Depends on the calendar app |
@@ -186,3 +220,16 @@ request ever leaves the device to produce or offer the file ([Rule 7](core-belie
 | `icsUid` | stable per-record UID, percent-encoded when the id needs it |
 | `calendarExportOf(state, today, days)` | selects and shapes entries — the per-source table in [schedule.md](../product-specs/schedule.md) |
 | `buildIcs(state, today, opts)` | serialises `calendarExportOf`'s entries into the complete `VCALENDAR` text |
+| `ICS_MILESTONE_LEAD_DAYS`, `ICS_CHECK_LEAD_DAYS` (v28) | the D-7 milestone lead and the one-day check reminder lead, the two new fixed constants |
+
+## Smoke checks (v28)
+`tools/harness/smoke-logic.js`'s `RICH` fixture gains one meeting with an open follow-up due inside the window
+and one past, one event with an open check whose occurrence is inside the window, one milestone due inside the
+window and one past, one deal with an unpaid payment (amount 1,234,567), and one notice. Checks (m)–(r) (after
+the pre-existing (a)–(l)): (m) the follow-up entry's UID and summary; (n) the check entry lands on the day
+before the occurrence, with the check text in the description, and an occurrence today is counted (not
+written); (o) the milestone yields two entries whose UIDs differ by `-d7`; (p) the payment entry's text contains
+neither `1234567` nor its 만원 form; (q) the past follow-up and milestone are counted as skipped, and the
+skipped/excluded lines follow the v28 copy; (r) a state without any of the v28 keys still builds. `ICS_NAMES`
+(the symbols the harness lifts by name) gains `ICS_MILESTONE_LEAD_DAYS`, `ICS_CHECK_LEAD_DAYS`, `PAYMENT_KIND`
+and `noticeOpen`.
