@@ -2473,6 +2473,40 @@ const milestoneTrack = (state, m) => {
   return linked.includes("work") ? "work" : "biz";
 };
 
+/* ── Pipeline and notices (v28) ── */
+/* Hospital leads and national-project notices are records, never tasks: registering or moving one pays nothing,
+   completes nothing and moves no goal, grade or proximity (rules 1, 14, 18). Both are business by nature and carry no
+   `track`; neither enters the work or prep packet, and the calendar file leaves leads out. The stage, the status and
+   `stageAt` are the user's own fields; overdue actions, near deadlines and the ordering are derived (rule 9). Storage: a
+   lead ≈ 110 chars of overhead, ≈ 260 typical, ≈ 880 full; a notice ≈ 110, ≈ 250 typical, ≈ 820 full with ten document
+   ids. Every write runs `recordFits` (`리드를` / `공고를`). `LEAD_STAGES` / `NOTICE_STAGES` sit with the role stages. */
+const LEAD_STAGE_LABEL = { potential: "잠재", contact: "접촉", demo: "시연", proposal: "제안", quote: "견적", won: "계약" };
+const LEAD_LIMITS = { name: 60, contact: 80, nextAction: 120, note: 400 };
+const LEAD_SOON_DAYS = 3;          // a next action due within this many days is listed by the reader
+const NOTICE_STATUS_LABEL = { review: "검토", writing: "작성", submitted: "제출", selected: "선정", rejected: "탈락" };
+const NOTICE_LIMITS = { title: 80, agency: 60, note: 400 };
+const NOTICE_DOCS_MAX = 10;        // documents one notice links
+const NOTICE_SOON_DAYS = 14;       // an open notice closing within this many days is counted and listed
+const NOTICE_ALERT_MAX = 2;        // notice lines the briefing names
+// Stage ascending, then the next due ascending (none last), then the newest first.
+const leadOrder = (a, b) => LEAD_STAGES.indexOf(a.stage) - LEAD_STAGES.indexOf(b.stage)
+  || String(a.nextDue || "9999").localeCompare(String(b.nextDue || "9999"))
+  || String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+// A lead not yet won whose next action date has passed — the view, the reader and the briefing count the same leads.
+const leadOverdue = (l, today) => l.stage !== "won" && !!l.nextDue && l.nextDue < today;
+const noticeOpen = (n) => ["review", "writing", "submitted"].includes(n?.status);
+// An open notice whose deadline has passed or falls within `days`.
+const noticeSoon = (n, today, days = NOTICE_SOON_DAYS) => noticeOpen(n) && !!n.deadline && daysBetween(today, n.deadline) <= days;
+// Open first, then the deadline ascending.
+const noticeOrder = (a, b) => (noticeOpen(b) - noticeOpen(a)) || String(a.deadline || "9999").localeCompare(String(b.deadline || "9999"));
+const leadLine = (l, today) => [
+  l.name,
+  LEAD_STAGE_LABEL[l.stage] || l.stage,
+  l.nextAction || "다음 액션 없음",
+  l.nextDue ? `기한 ${l.nextDue} (${ddayStr(l.nextDue)})` : "기한 없음",
+].join(" · ");
+const noticeLine = (n) => `공고 · ${[n.title, n.agency, NOTICE_STATUS_LABEL[n.status] || n.status, `마감 ${n.deadline} (${ddayStr(n.deadline)})`].join(" · ")}`;
+
 /* ───────────────────────── Daily assistant — agenda · briefing · bridge ───────────────────────── */
 // Everything below reads the save and states facts: the role stages, the direction advice, the agenda, the briefing,
 // the reader and the copy/paste packets. Nothing here pays, promotes or completes (rules 1, 7, 9).
@@ -2485,7 +2519,7 @@ const milestoneTrack = (state, m) => {
 const ROLE_STAGES_MAX = 12;
 const STAGE_CONDS_MAX = 5;
 const ROLE_STAGE_NAME = 40;
-// Pipeline and notice stages in order — read by the evaluator; the screens that write them arrive with the pipeline.
+// Pipeline and notice stages in order — read by the evaluator and by the pipeline screens (labels in the business region).
 const LEAD_STAGES = ["potential", "contact", "demo", "proposal", "quote", "won"];
 const NOTICE_STAGES = ["review", "writing", "submitted", "selected"];
 // [type, label, argument hint]; an empty hint means the type takes no argument.
@@ -2893,6 +2927,7 @@ const buildBriefing = (state, today) => {
      absence branch: the summary line is always the last item (rule 13). */
   const biz = bizSummary(state, today);
   const bizDeals = state.deals || [];
+  const overdueLeads = (state.leads || []).filter((l) => leadOverdue(l, today)).length;
   const bizAlerts = [
     ...biz.unpaid.slice(0, BIZ_ALERT_MAX).map((u) => ({
       kind: "biz", severity: 3, track: trackOf(u.deal, "biz"), text: `${u.deal.client} ${u.deal.title} — ${u.month} 입금 미확인 ${wonText(u.amount)}`,
@@ -2902,6 +2937,12 @@ const buildBriefing = (state, today) => {
       kind: "biz", severity: p.due < today ? 3 : 2, track: trackOf(d, "biz"),
       text: `${d.client} ${d.title} — ${PAYMENT_KIND[p.kind] || PAYMENT_KIND.other} 입금 예정 ${p.due} · 미확인`,
     })),
+    // Pipeline and notices (v28): overdue lead actions as a count, never a name; then open notices past or within 7 days
+    // by title. Leads and notices are business by nature (`biz`); `packet: false` keeps both out of the daily packet
+    // (the plan's Phase 5 decision), so they cannot displace a line from its `## 오늘 브리핑` cap.
+    ...(overdueLeads > 0 ? [{ kind: "biz", severity: 3, track: "biz", packet: false, text: `다음 액션 기한 지난 리드 ${overdueLeads}건` }] : []),
+    ...(state.notices || []).filter((x) => noticeSoon(x, today, 7)).slice().sort(noticeOrder).slice(0, NOTICE_ALERT_MAX)
+      .map((x) => ({ kind: "biz", severity: x.deadline < today ? 3 : 2, track: "biz", packet: false, text: `공고 ${x.title} — 마감 ${ddayStr(x.deadline)}` })),
     ...bizDeals
       .map((d) => ({ d, end: dealEnd(d), left: monthsBetween(biz.month, dealEnd(d) || biz.month) }))
       .filter(({ d, end, left }) => d.status === "won" && end && left >= 0 && left <= DEAL_END_SOON)
@@ -3122,6 +3163,16 @@ const buildReader = (state, today) => {
       sub: m.condition ? [`조건: ${oneLineText(m.condition, READER_CLIP)}`] : [],
     })),
   ], { type: "biz" });
+  /* Pipeline and notices (v28) — overdue lead actions, lead actions due within LEAD_SOON_DAYS, then open notices past or
+     within NOTICE_SOON_DAYS, each in full. A single-track section: no heads. */
+  const leadsByOrder = (state.leads || []).slice().sort(leadOrder);
+  const noteSub = (r) => (r.note ? [`메모: ${oneLineText(r.note, READER_CLIP)}`] : []);
+  add("pipeline", "사업 파이프라인 · 공고", [
+    ...leadsByOrder.filter((l) => leadOverdue(l, today)),
+    ...leadsByOrder.filter((l) => l.stage !== "won" && l.nextDue && l.nextDue >= today && daysBetween(today, l.nextDue) <= LEAD_SOON_DAYS),
+  ].map((l) => ({ text: leadLine(l, today), sub: noteSub(l) })).concat(
+    (state.notices || []).filter((n) => noticeSoon(n, today)).slice().sort(noticeOrder).map((n) => ({ text: noticeLine(n), sub: noteSub(n) })),
+  ), { type: "biz" });
   add("goals", "뒤처진 목표 페이스", briefItems("goals").filter((it) => it.severity === 3).map((it) => ({ text: it.text })), { type: "goals" });
 
   return { since, sections };
@@ -3203,8 +3254,9 @@ const buildAssistantPacket = (state, today) => {
   const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
   const sec = packetSection;
 
-  // v28: a briefing item carrying a track outside PACKET_TRACKS stays on the device; count lines carry no track.
-  const briefLines = brief.sections.flatMap((s) => s.items.filter((it) => it.severity >= 2 && (!it.track || PACKET_TRACKS.includes(it.track)))
+  // v28: a briefing item carrying a track outside PACKET_TRACKS, or marked `packet: false` (leads, notices), stays on the
+  // device; count lines carry no track.
+  const briefLines = brief.sections.flatMap((s) => s.items.filter((it) => it.severity >= 2 && it.packet !== false && (!it.track || PACKET_TRACKS.includes(it.track)))
     .map((it) => `- [${s.title}] ${it.text}`)).slice(0, 12);
   /* The CV at the level the user agreed to share: degree, department, months of practice and the most recent
      role. It deliberately carries none of `profile.name`, `profile.birth`, `profile.email`, `profile.phone`,
@@ -4231,6 +4283,18 @@ const demoState = () => {
   s.milestones[1] = { ...s.milestones[1], status: "active",
     dealIds: [s.deals.find((d) => d.client === "○○물산").id],
     workIds: [s.work.find((w) => w.source === "manual" && trackOf(w) === "biz" && !w.done).id] };
+  // The pipeline and one notice (v28) — synthetic institutions, no personal names. The first lead's next action is two
+  // days overdue, so the view, the reader and the briefing state it; the notice closes in 10 days and links the first
+  // document. Neither meets a seeded stage condition, so the stage figures stay `1/9 · 3/14`.
+  s.leads = [
+    { id: uid(), name: "□□병원", stage: "contact", stageAt: shiftDay(today, -4), contact: "원무팀 담당자", nextAction: "시연 일정 제안",
+      nextDue: shiftDay(today, -2), createdAt: shiftDay(today, -6) },
+    { id: uid(), name: "◎◎의료원", stage: "potential", stageAt: shiftDay(today, -1), createdAt: shiftDay(today, -1) },
+  ];
+  s.notices = [
+    { id: uid(), title: "데모 AI 바우처 공고", agency: "데모진흥원", postedAt: shiftDay(today, -8), deadline: shiftDay(today, 10),
+      status: "writing", documentIds: [s.documents[0].id], createdAt: shiftDay(today, -8) },
+  ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
     text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
@@ -4802,11 +4866,12 @@ function Onboarding({ onStart, onDemo }) {
 
 // Label/value row shared by the CV and the detail sheets: a fixed-width label and a one-line value (`wrap` lets a
 // long value break over lines instead of truncating). A button only when the row opens something.
-function CvFact({ label, children, onClick, wrap = false }) {
+// `wide` widens the label column for a five-syllable label (`단계 변경일`), which wraps in the default w-16 at 390 px.
+function CvFact({ label, children, onClick, wrap = false, wide = false }) {
   const cls = "flex items-baseline gap-2 text-xs w-full text-left";
   const body = (
     <>
-      <span className="w-16 shrink-0 text-zinc-500">{label}</span>
+      <span className={`${wide ? "w-20" : "w-16"} shrink-0 text-zinc-500`}>{label}</span>
       <span className={`min-w-0 flex-1 ${wrap ? "break-words" : "truncate"} text-zinc-300`}>{children}</span>
     </>
   );
@@ -7373,8 +7438,8 @@ const DEAL_GROUPS = [
   ["ended", "text-zinc-500"],
   ["lost", "text-zinc-600"],
 ];
-const BIZ_ADD_LABEL = { deals: "계약 추가", rates: "단가 추가", folio: "포트폴리오 추가", roadmap: "마일스톤 추가" };
-// The modal each view's add button opens (v28). Declared for all six views; `leads` and `notices` render in a later phase.
+const BIZ_ADD_LABEL = { deals: "계약 추가", rates: "단가 추가", folio: "포트폴리오 추가", roadmap: "마일스톤 추가", leads: "리드 추가", notices: "공고 추가" };
+// The modal each view's add button opens (v28), one per view.
 const BIZ_ADD_MODAL = { deals: "deals", rates: "rates", folio: "folio", roadmap: "milestone", leads: "lead", notices: "notice" };
 // Toast subject plus its Korean particle, so the one generic handler prints the right sentence per list.
 const BIZ_NOUN = { deals: "계약을", rates: "단가를", folio: "포트폴리오를" };
@@ -7654,9 +7719,77 @@ function RoadmapView({ state, today, onOpen, onSeed }) {
   );
 }
 
-function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onTogglePayment, onOpenMilestone, onSeedRoadmap }) {
+/* The sales pipeline (v28): hospital leads grouped by the user's stage. The overdue count and the D-day markers are
+   derived at render (rule 9); a lead pays nothing and becomes no task (rules 1, 18). */
+function LeadsView({ state, today, onOpen }) {
+  const list = state.leads || [];
+  const overdue = list.filter((l) => leadOverdue(l, today)).length;
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <SectionLabel tone="text-cyan-400">리드</SectionLabel>
+        <p className="text-xs font-mono text-zinc-400">
+          <span className="whitespace-nowrap">리드 {list.length}건</span>{" · "}
+          <span className={`whitespace-nowrap ${overdue > 0 ? "text-rose-400" : ""}`}>다음 액션 기한 지남 {overdue}건</span>
+        </p>
+        {list.length === 0 && <p className="text-sm text-zinc-500 mt-2.5">등록한 리드가 없어요 — 병원 이름부터 적어요.</p>}
+      </section>
+      {LEAD_STAGES.map((st) => {
+        const rows = list.filter((l) => l.stage === st).slice().sort(leadOrder);
+        return rows.length > 0 && (
+          <section key={st} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+            <SectionLabel tone={st === "won" ? "text-cyan-400" : "text-zinc-400"}>{LEAD_STAGE_LABEL[st]}</SectionLabel>
+            <div className="space-y-1.5">
+              {rows.map((l) => (
+                <TodoRow key={l.id} title={l.name} onOpen={() => onOpen(l.id)}
+                  lead={{ text: LEAD_STAGE_LABEL[st], tone: st === "won" ? "text-cyan-300 border-cyan-800" : "text-zinc-400 border-zinc-700" }}
+                  marker={l.nextDue ? <span className={`text-xs font-mono whitespace-nowrap shrink-0 ${leadOverdue(l, today) ? "text-rose-400" : "text-zinc-400"}`}>
+                    {ddayStr(l.nextDue)}</span> : null} />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+      <p className="text-xs text-zinc-600 px-1">리드는 기록이에요 — 견적·계약 단계에서 계약을 만들어 연결해요.</p>
+    </>
+  );
+}
+
+/* National-project notices (v28): open first, then by deadline. The near-deadline count and the markers are derived. */
+const NOTICE_TONE = { submitted: "text-cyan-300 border-cyan-800", selected: "text-emerald-300 border-emerald-800", rejected: "text-zinc-600 border-zinc-800" };
+function NoticesView({ state, today, onOpen }) {
+  const list = (state.notices || []).slice().sort(noticeOrder);
+  const soon = list.filter((n) => noticeSoon(n, today)).length;
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <SectionLabel tone="text-cyan-400">공고</SectionLabel>
+        <p className="text-xs font-mono text-zinc-400">
+          <span className="whitespace-nowrap">공고 {list.length}건</span>{" · "}
+          <span className="whitespace-nowrap">마감 {NOTICE_SOON_DAYS}일 이내 {soon}건</span>
+        </p>
+        {list.length === 0 && <p className="text-sm text-zinc-500 mt-2.5">등록한 공고가 없어요.</p>}
+      </section>
+      {list.length > 0 && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+          <div className="space-y-1.5">
+            {list.map((n) => (
+              <TodoRow key={n.id} title={n.title} onOpen={() => onOpen(n.id)}
+                lead={{ text: NOTICE_STATUS_LABEL[n.status] || n.status, tone: NOTICE_TONE[n.status] || "text-zinc-400 border-zinc-700" }}
+                marker={<span className={`text-xs font-mono whitespace-nowrap shrink-0 ${noticeOpen(n) && n.deadline < today ? "text-rose-400" : "text-zinc-400"}`}>
+                  {ddayStr(n.deadline)}</span>} />
+            ))}
+          </div>
+        </section>
+      )}
+      <p className="text-xs text-zinc-600 px-1">공고는 기록이에요.</p>
+    </>
+  );
+}
+
+function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onTogglePayment, onOpenMilestone, onSeedRoadmap, onOpenLead, onOpenNotice }) {
   // Any other value, including a save written before v20, opens the contracts.
-  const v = ["rates", "folio", "roadmap"].includes(view) ? view : "deals";
+  const v = ["rates", "folio", "roadmap", "leads", "notices"].includes(view) ? view : "deals";
   const sum = useMemo(() => bizSummary(state, today), [state, today]);
   return (
     <>
@@ -7690,6 +7823,8 @@ function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onTog
           <Chip on={v === "rates"} onClick={() => onView("rates")}>단가</Chip>
           <Chip on={v === "folio"} onClick={() => onView("folio")}>포트폴리오</Chip>
           <Chip on={v === "roadmap"} onClick={() => onView("roadmap")}>로드맵</Chip>
+          <Chip on={v === "leads"} onClick={() => onView("leads")}>리드</Chip>
+          <Chip on={v === "notices"} onClick={() => onView("notices")}>공고</Chip>
         </div>
       </section>
 
@@ -7697,6 +7832,8 @@ function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onTog
       {v === "rates" && <RatesView state={state} onEdit={onEdit} />}
       {v === "folio" && <FolioView state={state} onEdit={onEdit} />}
       {v === "roadmap" && <RoadmapView state={state} today={today} onOpen={onOpenMilestone} onSeed={onSeedRoadmap} />}
+      {v === "leads" && <LeadsView state={state} today={today} onOpen={onOpenLead} />}
+      {v === "notices" && <NoticesView state={state} today={today} onOpen={onOpenNotice} />}
     </>
   );
 }
@@ -7749,16 +7886,18 @@ function BizFormFoot({ err, edit, onSubmit, onRemove }) {
   );
 }
 
-function DealModal({ deal, onClose, onAdd, onUpdate, onRemove }) {
-  const [client, setClient] = useState(deal?.client || "");
-  const [title, setTitle] = useState(deal?.title || "");
-  const [status, setStatus] = useState(deal?.status || "lead");
+// `prefill` (v28) seeds a new contract from a lead (`makeDealFromLead`); an existing deal ignores it.
+function DealModal({ deal, prefill, onClose, onAdd, onUpdate, onRemove }) {
+  const seed = deal || prefill;
+  const [client, setClient] = useState(seed?.client || "");
+  const [title, setTitle] = useState(seed?.title || "");
+  const [status, setStatus] = useState(seed?.status || "lead");
   const [startMonth, setStartMonth] = useState(deal?.startMonth || "");
   const [months, setMonths] = useState(deal?.months == null ? "" : String(deal.months));
   const [monthly, setMonthly] = useState(deal?.monthly == null ? "" : String(deal.monthly));
   const [costMonthly, setCostMonthly] = useState(deal?.costMonthly == null ? "" : String(deal.costMonthly));
   const [note, setNote] = useState(deal?.note || "");
-  const [track, setTrack] = useState(deal?.track || "biz");
+  const [track, setTrack] = useState(seed?.track || "biz");
   // Payment lines (v28): the form's rows keep their `id` and `paidAt`; the amount is edited as text.
   const [pays, setPays] = useState(() => dealPayments(deal).map((p) => ({ ...p, amount: p.amount == null ? "" : String(p.amount) })));
   const [err, setErr] = useState("");
@@ -7995,12 +8134,12 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
 
 /* ── Milestone form (v28) — a record: no goal, no difficulty, no evidence, no payout (rules 1, 18). The D-day, the linked
    work and the pace in the facts are derived at render (rule 9). ── */
-// One link block of the milestone form: a header with the count against MILESTONE_LINKS and one checkbox row per record.
-function MilestoneLinkList({ label, rows, ids, onToggle, empty }) {
+// One link block of the milestone and notice forms: a header with the count against `max` and one checkbox row per record.
+function MilestoneLinkList({ label, rows, ids, onToggle, empty, max = MILESTONE_LINKS }) {
   return (
     <div>
       <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">
-        {label} <span className={`font-mono ${ids.length > MILESTONE_LINKS ? "text-rose-300" : ""}`}>({ids.length}/{MILESTONE_LINKS})</span>
+        {label} <span className={`font-mono ${ids.length > max ? "text-rose-300" : ""}`}>({ids.length}/{max})</span>
       </div>
       {rows.length === 0 ? <p className="text-xs text-zinc-500">{empty}</p> : (
         <div className="space-y-1 max-h-48 overflow-y-auto">
@@ -8108,6 +8247,129 @@ function MilestoneModal({ state, milestone, today, onClose, onAdd, onUpdate, onR
           rows={workRows} />
         <BizFormFoot err={err} edit={!!milestone} onSubmit={submit}
           onRemove={() => { if (window.confirm(`${milestone.title} 마일스톤을 삭제해요. 계속할까요?`)) onRemove(milestone.id); }} />
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Lead form (v28) — a record: no goal, no difficulty, no evidence, no payout (rules 1, 18). `stageAt` and the contract
+   link are the root's to write; the form writes the name, the stage and the optional fields it shows. ── */
+// A form label above a field of the pipeline and notice forms.
+function FormLabel({ children }) {
+  return <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">{children}</div>;
+}
+
+function LeadModal({ state, lead, onClose, onAdd, onUpdate, onRemove, onMakeDeal }) {
+  const [name, setName] = useState(lead?.name || "");
+  const [stage, setStage] = useState(lead?.stage || "potential");
+  const [contact, setContact] = useState(lead?.contact || "");
+  const [nextAction, setNextAction] = useState(lead?.nextAction || "");
+  const [nextDue, setNextDue] = useState(lead?.nextDue || "");
+  const [note, setNote] = useState(lead?.note || "");
+  const [err, setErr] = useState("");
+  const deal = lead?.dealId ? (state.deals || []).find((d) => d.id === lead.dealId) : null;
+  const dealText = !lead?.dealId ? "연결 없음" : deal ? `${deal.client} · ${deal.title}` : "연결 대상이 삭제됐어요";
+  const submit = () => {
+    const t = { name: name.trim(), contact: contact.trim(), nextAction: nextAction.trim(), note: note.trim() };
+    if (!t.name) { setErr("병원·기관 이름을 입력해 주세요."); return; }
+    if (t.name.length > LEAD_LIMITS.name) { setErr(`이름은 ${LEAD_LIMITS.name}자까지예요 — 지금 ${t.name.length}자예요.`); return; }
+    if (t.contact.length > LEAD_LIMITS.contact) { setErr(`담당자·연락 경로는 ${LEAD_LIMITS.contact}자까지예요 — 지금 ${t.contact.length}자예요.`); return; }
+    if (t.nextAction.length > LEAD_LIMITS.nextAction) { setErr(`다음 액션은 ${LEAD_LIMITS.nextAction}자까지예요 — 지금 ${t.nextAction.length}자예요.`); return; }
+    if (t.note.length > LEAD_LIMITS.note) { setErr(`메모는 ${LEAD_LIMITS.note}자까지예요 — 지금 ${t.note.length}자예요.`); return; }
+    const next = {
+      name: t.name, stage,
+      ...(t.contact ? { contact: t.contact } : {}),
+      ...(t.nextAction ? { nextAction: t.nextAction } : {}),
+      ...(nextDue ? { nextDue } : {}),
+      ...(t.note ? { note: t.note } : {}),
+    };
+    const refused = lead ? onUpdate(lead.id, next) : onAdd(next);
+    if (refused) setErr(refused);
+  };
+  return (
+    <Modal title={lead ? "리드" : "리드 추가"} onClose={onClose}>
+      <div className="space-y-3">
+        {lead && (
+          <div className="space-y-1">
+            <CvFact wide label="단계 변경일"><span className="font-mono">{lead.stageAt || "-"}</span></CvFact>
+            <CvFact wide label="계약"><span className={lead.dealId && !deal ? "text-rose-300" : ""}>{dealText}</span></CvFact>
+          </div>
+        )}
+        <BizField value={name} onChange={setName} placeholder="병원·기관 이름 — 예: □□병원" />
+        <div>
+          <FormLabel>단계</FormLabel>
+          <BizChips options={Object.entries(LEAD_STAGE_LABEL)} value={stage} onPick={(k) => { setStage(k); setErr(""); }} />
+        </div>
+        <BizField value={contact} onChange={setContact} placeholder="담당자·연락 경로 (선택)" />
+        <BizField value={nextAction} onChange={setNextAction} placeholder="다음 액션 (선택) — 예: 시연 일정 제안" />
+        <div>
+          <FormLabel>다음 액션 기한 (선택)</FormLabel>
+          <input type="date" value={nextDue} onChange={(e) => setNextDue(e.target.value)} aria-label="다음 액션 기한"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        </div>
+        <MeetingText value={note} onChange={setNote} placeholder="메모 (선택)" rows={3} cap={LEAD_LIMITS.note} />
+        {/* The saved stage decides, so the contract form is prefilled from what the lead record says */}
+        {lead && ["quote", "won"].includes(lead.stage) && !deal && (
+          <button onClick={() => onMakeDeal(lead)}
+            className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs active:translate-y-0.5">계약 만들기 ›</button>
+        )}
+        <BizFormFoot err={err} edit={!!lead} onSubmit={submit}
+          onRemove={() => { if (window.confirm(`${lead.name} 리드를 삭제해요. 계속할까요?`)) onRemove(lead.id); }} />
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Notice form (v28) — a record of a national-project call: no goal, no evidence, no payout (rules 1, 18). ── */
+function NoticeModal({ state, notice, onClose, onAdd, onUpdate, onRemove }) {
+  const documents = state.documents || [];
+  const [title, setTitle] = useState(notice?.title || "");
+  const [agency, setAgency] = useState(notice?.agency || "");
+  const [postedAt, setPostedAt] = useState(notice?.postedAt || "");
+  const [deadline, setDeadline] = useState(notice?.deadline || "");
+  const [status, setStatus] = useState(notice?.status || "review");
+  // A deleted document is dropped from the initial selection, so it is never counted.
+  const [documentIds, setDocumentIds] = useState(() => (notice?.documentIds || []).filter((id) => documents.some((d) => d.id === id)));
+  const [note, setNote] = useState(notice?.note || "");
+  const [err, setErr] = useState("");
+  const submit = () => {
+    const t = title.trim(), a = agency.trim(), n = note.trim();
+    if (!t) { setErr("공고 이름을 입력해 주세요."); return; }
+    if (!a) { setErr("기관을 입력해 주세요."); return; }
+    if (!deadline) { setErr("마감일을 선택해 주세요."); return; }
+    if (t.length > NOTICE_LIMITS.title) { setErr(`공고 이름은 ${NOTICE_LIMITS.title}자까지예요 — 지금 ${t.length}자예요.`); return; }
+    if (a.length > NOTICE_LIMITS.agency) { setErr(`기관은 ${NOTICE_LIMITS.agency}자까지예요 — 지금 ${a.length}자예요.`); return; }
+    if (n.length > NOTICE_LIMITS.note) { setErr(`메모는 ${NOTICE_LIMITS.note}자까지예요 — 지금 ${n.length}자예요.`); return; }
+    if (documentIds.length > NOTICE_DOCS_MAX) { setErr(`문서 연결은 ${NOTICE_DOCS_MAX}개까지예요.`); return; }
+    const next = { title: t, agency: a, ...(postedAt ? { postedAt } : {}), deadline, status, documentIds, ...(n ? { note: n } : {}) };
+    const refused = notice ? onUpdate(notice.id, next) : onAdd(next);
+    if (refused) setErr(refused);
+  };
+  return (
+    <Modal title={notice ? "공고" : "공고 추가"} onClose={onClose}>
+      <div className="space-y-3">
+        <BizField value={title} onChange={setTitle} placeholder="공고 이름 — 예: AI 바우처 지원사업" />
+        <BizField value={agency} onChange={setAgency} placeholder="기관 — 예: ○○진흥원" />
+        <div>
+          <FormLabel>공고일 (선택)</FormLabel>
+          <input type="date" value={postedAt} onChange={(e) => setPostedAt(e.target.value)} aria-label="공고일"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        </div>
+        <div>
+          <FormLabel>마감일</FormLabel>
+          <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} aria-label="마감일"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        </div>
+        <div>
+          <FormLabel>상태</FormLabel>
+          <BizChips options={Object.entries(NOTICE_STATUS_LABEL)} value={status} onPick={setStatus} />
+        </div>
+        <MilestoneLinkList label="문서 연결" max={NOTICE_DOCS_MAX} ids={documentIds} empty="등록한 문서가 없어요."
+          onToggle={(id) => setDocumentIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))}
+          rows={documents.map((d) => ({ id: d.id, text: `${d.title} · ${TRACK_LABEL[trackOf(d)]}` }))} />
+        <MeetingText value={note} onChange={setNote} placeholder="메모 (선택)" rows={3} cap={NOTICE_LIMITS.note} />
+        <BizFormFoot err={err} edit={!!notice} onSubmit={submit}
+          onRemove={() => { if (window.confirm(`${notice.title} 공고를 삭제해요. 계속할까요?`)) onRemove(notice.id); }} />
       </div>
     </Modal>
   );
@@ -10076,16 +10338,22 @@ export default function LifeManager() {
   };
   // A deal carrying payment lines (v28) runs the storage guard first; the form stays open with the refusal.
   const bizRefusal = (list, rec, prevLen) => (list === "deals" && rec.payments ? recordFits(rec, prevLen, "계약을") : "");
-  const addBiz = (list, item, imgWarn) => {
+  // `leadId` (v28): a contract registered from a lead's `계약 만들기 ›` sets that lead's `dealId` in the same update, so the
+  // write touches `deals` and `leads` only; a lead deleted meanwhile is skipped.
+  const addBiz = (list, item, imgWarn, leadId) => {
     const refused = bizRefusal(list, item, 0);
     if (refused) return refused;
+    const rec = { id: uid(), createdAt: today, ...item };
+    const linked = list === "deals" && !!leadId && (state.leads || []).some((l) => l.id === leadId);
     setState((prev) => {
       const s = structuredClone(prev);
-      s[list] = [{ id: uid(), createdAt: today, ...item }, ...(s[list] || [])];
+      s[list] = [rec, ...(s[list] || [])];
+      const lead = linked ? (s.leads || []).find((l) => l.id === leadId) : null;
+      if (lead) lead.dealId = rec.id;
       return s;
     });
     setModal(null);
-    showToast({ msg: `${BIZ_NOUN[list]} 등록했어요` });
+    showToast({ msg: `${BIZ_NOUN[list]} 등록했어요${linked ? " · 리드 연결" : ""}` });
     warnImage(imgWarn);
     return "";
   };
@@ -10379,6 +10647,65 @@ export default function LifeManager() {
     setState((prev) => ({ ...prev, milestones: (prev.milestones || []).filter((m) => m.id !== id) }));
     setModal(null);
     showToast({ msg: "마일스톤을 삭제했어요" });
+  };
+  /* Pipeline and notices (v28) — records, never tasks (rules 1, 18). The lead handlers write `leads`, the notice handlers
+     `notices`, and nothing else; `stageAt` is stamped when a lead is registered and whenever its stage changes, and
+     `dealId` is written only by `addBiz` when a contract is registered from the lead. */
+  const addLead = (next) => {
+    const rec = { id: uid(), ...next, stageAt: today, createdAt: today };
+    const refused = recordFits(rec, 0, "리드를");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, leads: [rec, ...(prev.leads || [])] }));
+    setModal(null);
+    showToast({ msg: "리드를 등록했어요" });
+    return "";
+  };
+  const updateLead = (id, next) => {
+    const cur = (state.leads || []).find((l) => l.id === id);
+    if (!cur) return "";
+    const rec = { id: cur.id, ...next, stageAt: next.stage === cur.stage && cur.stageAt ? cur.stageAt : today,
+      ...(cur.dealId ? { dealId: cur.dealId } : {}), createdAt: cur.createdAt };
+    const refused = recordFits(rec, JSON.stringify(cur).length, "리드를");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, leads: (prev.leads || []).map((l) => (l.id === id ? rec : l)) }));
+    setModal(null);
+    showToast({ msg: "리드를 수정했어요" });
+    return "";
+  };
+  // Confirmed in the sheet by name.
+  const removeLead = (id) => {
+    setState((prev) => ({ ...prev, leads: (prev.leads || []).filter((l) => l.id !== id) }));
+    setModal(null);
+    showToast({ msg: "리드를 삭제했어요" });
+  };
+  // Opens the contract form prefilled from the lead; nothing is written until that form registers.
+  const makeDealFromLead = (lead) => setModal({ type: "deals",
+    prefill: { client: lead.name, title: "", status: lead.stage === "won" ? "won" : "quote", track: "biz" }, leadId: lead.id });
+  const addNotice = (next) => {
+    const rec = { id: uid(), ...next, createdAt: today };
+    const refused = recordFits(rec, 0, "공고를");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, notices: [rec, ...(prev.notices || [])] }));
+    setModal(null);
+    showToast({ msg: "공고를 등록했어요" });
+    return "";
+  };
+  const updateNotice = (id, next) => {
+    const cur = (state.notices || []).find((n) => n.id === id);
+    if (!cur) return "";
+    const rec = { id: cur.id, ...next, createdAt: cur.createdAt };
+    const refused = recordFits(rec, JSON.stringify(cur).length, "공고를");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, notices: (prev.notices || []).map((n) => (n.id === id ? rec : n)) }));
+    setModal(null);
+    showToast({ msg: "공고를 수정했어요" });
+    return "";
+  };
+  // Confirmed in the sheet by title.
+  const removeNotice = (id) => {
+    setState((prev) => ({ ...prev, notices: (prev.notices || []).filter((n) => n.id !== id) }));
+    setModal(null);
+    showToast({ msg: "공고를 삭제했어요" });
   };
   // One tap fills the nine seeds, and only into an empty roadmap.
   const seedRoadmap = () => {
@@ -10798,7 +11125,9 @@ export default function LifeManager() {
             onEdit={(list, item) => setModal({ type: list, item })}
             onTogglePaid={toggleDealPaid} onTogglePayment={toggleDealPayment}
             onOpenMilestone={(id) => setModal({ type: "milestone", milestoneId: id })}
-            onSeedRoadmap={seedRoadmap} />
+            onSeedRoadmap={seedRoadmap}
+            onOpenLead={(id) => setModal({ type: "lead", leadId: id })}
+            onOpenNotice={(id) => setModal({ type: "notice", noticeId: id })} />
         )}
       </main>
 
@@ -10874,8 +11203,8 @@ export default function LifeManager() {
           onAdd={addEvent} onUpdate={updateEvent} onRemove={removeEvent} />
       )}
       {modal?.type === "deals" && (
-        <DealModal deal={modal.item} onClose={() => setModal(null)}
-          onAdd={(d) => addBiz("deals", d)} onUpdate={(id, next) => updateBiz("deals", id, next)}
+        <DealModal deal={modal.item} prefill={modal.prefill} onClose={() => setModal(null)}
+          onAdd={(d) => addBiz("deals", d, null, modal.leadId)} onUpdate={(id, next) => updateBiz("deals", id, next)}
           onRemove={(id) => removeBiz("deals", id)} />
       )}
       {modal?.type === "rates" && (
@@ -10891,6 +11220,14 @@ export default function LifeManager() {
       {modal?.type === "milestone" && (
         <MilestoneModal state={state} today={today} milestone={(state.milestones || []).find((m) => m.id === modal.milestoneId)}
           onClose={() => setModal(null)} onAdd={addMilestone} onUpdate={updateMilestone} onRemove={removeMilestone} />
+      )}
+      {modal?.type === "lead" && (
+        <LeadModal state={state} lead={(state.leads || []).find((l) => l.id === modal.leadId)}
+          onClose={() => setModal(null)} onAdd={addLead} onUpdate={updateLead} onRemove={removeLead} onMakeDeal={makeDealFromLead} />
+      )}
+      {modal?.type === "notice" && (
+        <NoticeModal state={state} notice={(state.notices || []).find((n) => n.id === modal.noticeId)}
+          onClose={() => setModal(null)} onAdd={addNotice} onUpdate={updateNotice} onRemove={removeNotice} />
       )}
       {/* Meeting records — no payout, no goal, no streak (rules 1, 18) */}
       {modal?.type === "project" && (

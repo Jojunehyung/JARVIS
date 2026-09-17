@@ -408,6 +408,12 @@ module.exports = async (h) => {
         await clickExact("로드맵");
         await expectText("예정 7 · 진행 중 1 · 완료 1");
         await expectText("계약금 입금 확인 — ETL 고도화 계약");
+        // v28 Phase 5: two leads, one with its next action two days overdue, and one notice closing in 10 days.
+        await clickExact("리드");
+        await expectText("리드 2건 · 다음 액션 기한 지남 1건");
+        await clickExact("공고");
+        await expectText("데모 AI 바우처 공고");
+        await expectText("공고 1건 · 마감 14일 이내 1건");
       }
       if (tab === "프로필") {
         await expectText("TOEIC L&R 735");

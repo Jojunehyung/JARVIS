@@ -847,4 +847,215 @@ module.exports = async (h) => {
       await dropPayDeal();
     }
   });
+
+  /* ── Pipeline and notices (schema v28, Phase 5, 2026-09-18, written, not run). A lead and a notice are records: these
+     steps assert that the lead handlers write `leads`, a contract registered from a lead writes `deals` and `leads`, the
+     notice handlers write `notices`, and that the view, the reader and the briefing state the overdue action and the near
+     deadline. The first step stashes the lists it empties; the last step restores them in `finally`. ── */
+  let pipeStash = null;
+  const PIPE_LISTS = ["deals", "leads", "notices", "documents", "role", "ui"];
+  // Every list a pipeline write must leave alone, besides the record boundary, the rates and the portfolio.
+  const assertOnlyLists = (before, after, keys, what) => {
+    assertOnlyDeals(before, after, what);
+    for (const k of ["deals", "leads", "notices", "work", "documents", "meetingProjects", "meetings", "events", "milestones", "timeLog", "settings", "role"]) {
+      if (keys.includes(k)) continue;
+      if (JSON.stringify(before[k] ?? null) !== JSON.stringify(after[k] ?? null)) throw new Error(`${what} changed ${k}`);
+    }
+  };
+  // Presses a sheet's submit button, waits for its toast and asserts that only `keys` moved; returns the save after the write.
+  const submitSheet = async (label, toastText, keys, what) => {
+    const before = await readState();
+    await clickInModalExact(label);
+    await sleep(500);
+    await expectText(toastText);
+    const after = await readState();
+    assertOnlyLists(before, after, keys, what);
+    return after;
+  };
+  const openPipeView = async (chip) => { await closeModal(); await clickTab("사업"); await clickExact(chip); await sleep(300); };
+  // The text of a sheet opened from a tab (the reader from the CV card, the briefing from the to-do header), closed again.
+  const sheetTextFrom = async (tab, opener) => {
+    await closeModal();
+    await clickTab(tab);
+    await clickText(opener);
+    await sleep(600);
+    const txt = await overlayText();
+    await closeModal();
+    return txt;
+  };
+  const readerText = async () => {
+    const txt = await sheetTextFrom("프로필", "오늘 읽을 것");
+    const i = txt.indexOf("사업 파이프라인 · 공고");
+    return i < 0 ? "" : txt.slice(i, txt.indexOf("뒤처진 목표 페이스", i) > 0 ? txt.indexOf("뒤처진 목표 페이스", i) : undefined);
+  };
+  const briefingText = () => sheetTextFrom("할 일", "브리핑 열기");
+  const modalChipOn = (label) => page.evaluate((l) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const c = ov && [...ov.querySelectorAll("button.rounded-full")].find((x) => (x.innerText || "").trim() === l);
+    return !!c && /bg-cyan-400/.test(c.className);
+  }, label);
+
+  await step("a lead registers, its stage change is stamped, and the overdue action is stated by the view, the reader and the briefing", async () => {
+    await closeModal();
+    // Empty contract, lead and notice lists, so the briefing's business alerts hold only this step's lines.
+    pipeStash = await page.evaluate((k, keys) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      const kept = Object.fromEntries(keys.map((x) => [x, x in s ? JSON.stringify(s[x]) : null]));
+      s.deals = []; s.leads = []; s.notices = [];
+      localStorage.setItem(k, JSON.stringify(s));
+      return kept;
+    }, KEY, PIPE_LISTS);
+    await h.reload();
+    const [today, yesterday, back5] = [await dayIn(0), await dayIn(-1), await dayIn(-5)];
+    await openPipeView("리드");
+    await expectText("리드 0건 · 다음 액션 기한 지남 0건");
+    await expectText("등록한 리드가 없어요 — 병원 이름부터 적어요.");
+    await clickText("리드 추가");
+    await sleep(400);
+    await clickInModalExact("등록");
+    if ((await modalError()) !== "병원·기관 이름을 입력해 주세요.") throw new Error("the empty-name refusal: " + (await modalError()));
+    await typeInto("병원·기관 이름", "E2E병원");
+    await clickInModalExact("접촉");
+    await typeInto("다음 액션 (선택)", "E2E 시연 제안");
+    await setValue('.fixed.inset-0 input[aria-label="다음 액션 기한"]', yesterday);
+    let after = await submitSheet("등록", "리드를 등록했어요", ["leads"], "registering a lead");
+    let lead = (after.leads || []).find((l) => l.name === "E2E병원");
+    if (!lead || lead.stage !== "contact" || lead.stageAt !== today || lead.createdAt !== today || lead.nextDue !== yesterday || lead.nextAction !== "E2E 시연 제안") {
+      throw new Error("the registered lead: " + JSON.stringify(lead));
+    }
+    if ("dealId" in lead || "contact" in lead || "note" in lead) throw new Error("the lead stores a field the form left empty: " + JSON.stringify(lead));
+    await expectText("리드 1건 · 다음 액션 기한 지남 1건");
+    if (!(await briefingText()).includes("다음 액션 기한 지난 리드 1건")) throw new Error("the briefing does not count the overdue lead");
+    const reader = await readerText();
+    if (!reader.includes(`E2E병원 · 접촉 · E2E 시연 제안 · 기한 ${yesterday} (D+1)`)) throw new Error("the reader's pipeline section: " + reader.slice(0, 300));
+
+    await page.evaluate((k, d) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.leads.find((l) => l.name === "E2E병원").stageAt = d;
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, back5);
+    await h.reload();
+    await openPipeView("리드");
+    await h.openTodo("E2E병원");
+    const sheet = await overlayText();
+    if (!sheet.includes(`단계 변경일 ${back5}`) || !sheet.includes("계약 연결 없음")) throw new Error("the lead sheet's facts: " + sheet.slice(0, 200));
+    if (sheet.includes("계약 만들기")) throw new Error("a contact-stage lead offers a contract");
+    await clickInModalExact("견적");
+    after = await submitSheet("저장", "리드를 수정했어요", ["leads"], "moving a lead to quote");
+    lead = after.leads.find((l) => l.name === "E2E병원");
+    if (lead.stage !== "quote" || lead.stageAt !== today || lead.createdAt !== today) throw new Error("the lead after the stage change: " + JSON.stringify(lead));
+  });
+
+  await step("a lead at the quote stage opens a prefilled contract form and links the contract it registers", async () => {
+    await openPipeView("리드");
+    await h.openTodo("E2E병원");
+    const before = await readState();
+    await clickInModalExact("계약 만들기 ›");
+    await sleep(400);
+    const noTick = (x) => JSON.stringify({ ...x, lastTick: null });
+    if (noTick(await readState()) !== noTick(before)) throw new Error("opening the prefilled contract form wrote the save");
+    const form = await overlayText();
+    if (!form.startsWith("새 계약")) throw new Error("the contract form did not open: " + form.slice(0, 80));
+    const client = await page.evaluate(() => document.querySelector('.fixed.inset-0 input[placeholder^="고객사"]')?.value);
+    if (client !== "E2E병원") throw new Error("the client is not prefilled: " + JSON.stringify(client));
+    if (!(await modalChipOn("견적")) || !(await modalChipOn("사업"))) throw new Error("the quote status or the business track is not on");
+    await typeInto("일감 이름", "E2E 챗봇 도입");
+    const after = await submitSheet("등록", "계약을 등록했어요 · 리드 연결", ["deals", "leads"], "registering a contract from a lead");
+    const deal = (after.deals || []).find((d) => d.client === "E2E병원");
+    const lead = after.leads.find((l) => l.name === "E2E병원");
+    if (!deal || deal.status !== "quote" || deal.track !== "biz" || deal.title !== "E2E 챗봇 도입") throw new Error("the registered contract: " + JSON.stringify(deal));
+    if (lead.dealId !== deal.id) throw new Error("the lead is not linked to the contract: " + JSON.stringify(lead));
+    await openPipeView("리드");
+    await h.openTodo("E2E병원");
+    const sheet = await overlayText();
+    if (!sheet.includes("계약 E2E병원 · E2E 챗봇 도입")) throw new Error("the lead sheet does not name the contract: " + sheet.slice(0, 200));
+    if (sheet.includes("계약 만들기")) throw new Error("a linked lead still offers a contract");
+    await closeModal();
+  });
+
+  await step("a notice registers with a document link and its deadline is stated, and a submitted notice moves the stage line", async () => {
+    try {
+      const [in5, today] = [await dayIn(5), await dayIn(0)];
+      await page.evaluate((k, a) => {
+        const s = JSON.parse(localStorage.getItem(k));
+        s.documents = [{ id: "e2e-pipe-doc", projectId: null, title: "E2E 공고 문서", source: "e2e.pdf", summary: "E2E", addedAt: a, track: "biz" },
+          ...(s.documents || []).filter((d) => d.id !== "e2e-pipe-doc")];
+        localStorage.setItem(k, JSON.stringify(s));
+      }, KEY, today);
+      await h.reload();
+      await openPipeView("공고");
+      await expectText("공고 0건 · 마감 14일 이내 0건");
+      await expectText("등록한 공고가 없어요.");
+      await clickText("공고 추가");
+      await sleep(400);
+      await typeInto("공고 이름", "E2E 공고");
+      await clickInModalExact("등록");
+      if ((await modalError()) !== "기관을 입력해 주세요.") throw new Error("the agency refusal: " + (await modalError()));
+      await typeInto("기관 — 예", "E2E진흥원");
+      await clickInModalExact("등록");
+      if ((await modalError()) !== "마감일을 선택해 주세요.") throw new Error("the deadline refusal: " + (await modalError()));
+      await setValue('.fixed.inset-0 input[aria-label="마감일"]', in5);
+      await tickLink("E2E 공고 문서");
+      await expectText("문서 연결 (1/10)");
+      let after = await submitSheet("등록", "공고를 등록했어요", ["notices"], "registering a notice");
+      let notice = (after.notices || []).find((n) => n.title === "E2E 공고");
+      if (!notice || notice.agency !== "E2E진흥원" || notice.deadline !== in5 || notice.status !== "review" || JSON.stringify(notice.documentIds) !== '["e2e-pipe-doc"]' || notice.createdAt !== today) {
+        throw new Error("the registered notice: " + JSON.stringify(notice));
+      }
+      if ("postedAt" in notice || "note" in notice) throw new Error("the notice stores a field the form left empty: " + JSON.stringify(notice));
+      await expectText("공고 1건 · 마감 14일 이내 1건");
+      if (!(await briefingText()).includes("공고 E2E 공고 — 마감 D-5")) throw new Error("the briefing does not name the notice deadline");
+      const reader = await readerText();
+      if (!reader.includes(`공고 · E2E 공고 · E2E진흥원 · 검토 · 마감 ${in5} (D-5)`)) throw new Error("the reader's notice line: " + reader.slice(0, 300));
+      // Leads and notices stay out of the daily packet.
+      const packet = await packetText();
+      await closeModal();
+      if (packet.includes("E2E 공고") || packet.includes("E2E병원") || packet.includes("리드")) throw new Error("the daily packet carries a lead or a notice");
+
+      // Two planted stages read the notices: the first needs a submitted notice, the second a selected one.
+      await page.evaluate((k) => {
+        const s = JSON.parse(localStorage.getItem(k));
+        s.role = { ...(s.role || { name: "E2E", targets: {} }), stages: [
+          { id: "e2e-pipe-st1", name: "E2E 공고 제출", conds: [{ type: "notice_status", arg: "submitted", min: 1 }] },
+          { id: "e2e-pipe-st2", name: "E2E 공고 선정", conds: [{ type: "notice_status", arg: "selected", min: 1 }] },
+        ] };
+        localStorage.setItem(k, JSON.stringify(s));
+      }, KEY);
+      await h.reload();
+      const stageLine = async () => {
+        await closeModal(); await clickTab("프로필"); await sleep(300);
+        return page.evaluate(() => {
+          const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
+          return b ? b.innerText.replace(/\s+/g, " ").trim() : null;
+        });
+      };
+      let line = await stageLine();
+      if (!line || !line.includes("단계 1/2") || !line.includes("조건 0/2")) throw new Error("the stage line before the submission: " + line);
+      await openPipeView("공고");
+      await h.openTodo("E2E 공고");
+      await clickInModalExact("제출");
+      after = await submitSheet("저장", "공고를 수정했어요", ["notices"], "submitting a notice");
+      notice = after.notices.find((n) => n.title === "E2E 공고");
+      if (notice.status !== "submitted" || JSON.stringify(notice.documentIds) !== '["e2e-pipe-doc"]' || notice.createdAt !== today) throw new Error("the notice after the submission: " + JSON.stringify(notice));
+      line = await stageLine();
+      if (!line || !line.includes("단계 2/2") || !line.includes("조건 1/2") || !line.includes("전환 조건 미충족 (0/1)")) throw new Error("the stage line after the submission: " + line);
+
+      await openPipeView("공고");
+      await h.openTodo("E2E 공고");
+      await page.evaluate(() => { window.confirm = () => true; });
+      await submitSheet("삭제", "공고를 삭제했어요", ["notices"], "deleting a notice");
+    } finally {
+      // Leave the save as the next flow expects it: the stashed lists back, no plants, the contract view.
+      await closeModal();
+      if (pipeStash) {
+        await page.evaluate((k, kept) => {
+          const s = JSON.parse(localStorage.getItem(k));
+          for (const [x, v] of Object.entries(kept)) { if (v == null) delete s[x]; else s[x] = JSON.parse(v); }
+          s.ui = { ...(s.ui || {}), bizView: "deals" };
+          localStorage.setItem(k, JSON.stringify(s));
+        }, KEY, pipeStash);
+      }
+      await h.reload();
+    }
+  });
 };
