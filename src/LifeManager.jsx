@@ -2746,7 +2746,6 @@ const PACKET_HEAD = [
 // whole packet 4,000) cut the minutes before the assistant could read them. A work packet is pasted into Claude or
 // ChatGPT, which take far more than the daily packet's 4,000; ChatGPT may attach a long paste as a file and still reads it.
 const WORK_PACKET_MAX = 20000;     // the work packet's own cap; the daily packet keeps PACKET_MAX
-const WORK_PROPOSAL_MAX = 20;      // proposals read from a work reply — the per-day cap `WORK_LIMITS.perDay` (8 until 2026-09-17)
 const WORK_PACKET_MEETINGS = 10;   // newest meetings by `meetingOrder` (6 until 2026-09-17)
 const WORK_PACKET_PROGRESS = 5;    // newest progress entries per meeting
 const WORK_PACKET_SUMMARY = 5000;  // chars of a meeting's summary — the whole summary (MEETING_LIMITS.summary)
@@ -2760,7 +2759,7 @@ const WORK_PACKET_HEAD = [
   "역할: 이 사용자의 목표·회의록·진행사항·기록을 근거로 오늘 처리할 업무를 제안하는 비서예요. 아래 데이터만 근거로 답해요.",
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
   "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
-  "3) 제안은 오늘 처리할 업무 항목만이에요 — 최대 20건, 제목 60자·메모 200자 이내. 실행·일정·계약·회의록을 만들거나 바꾸지 않아요. '업무 기록'에 이미 있는 항목은 다시 제안하지 않아요.",
+  "3) 제안은 오늘 처리할 업무 항목만이에요 — 건수 제한 없이, 제목 60자·메모 200자 이내. 실행·일정·계약·회의록을 만들거나 바꾸지 않아요. '업무 기록'에 이미 있는 항목은 다시 제안하지 않아요.",
   "4) 각 항목의 근거가 된 목표·회의록·프로젝트 이름을 link.title에 아래 데이터의 표기 그대로 적어요. 근거가 없으면 link를 생략해요.",
   "5) 답변 형식: ① 회의록·진행사항·목표를 근거로 한 분석 5줄 이내 ② 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"work\": []).",
   "```json",
@@ -2971,7 +2970,7 @@ const parseWorkReply = (text, state, today) => {
   };
   // Titles already on today's list, then each accepted proposal in turn — a reply cannot register a title twice.
   const seen = new Set(workOn(state, today).map((w) => normWorkTitle(w.title)));
-  const proposals = (Array.isArray(data?.work) ? data.work : []).slice(0, WORK_PROPOSAL_MAX).map((t, n) => {
+  const proposals = (Array.isArray(data?.work) ? data.work : []).map((t, n) => {
     const title = String(t?.title || "").trim().slice(0, WORK_LIMITS.title);
     const note = String(t?.note || "").trim().slice(0, WORK_LIMITS.note);
     const kind = WORK_LINK_KINDS.includes(t?.link?.kind) ? t.link.kind : null;
@@ -7320,7 +7319,9 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
    the budget a year); at the cap of 20 a day with every field full (60 + 200 + link ≈ 400 chars) ≈ 2.9 M a year —
    the tab states the storage in use, the backup path covers the rest, and `recordFits` refuses a save over the
    budget. */
-const WORK_LIMITS = { title: 60, note: 200, perDay: 20 };
+// No per-day count cap (removed 2026-09-17 at the user's request: undone items are carried to the next day, so a day's
+// list grows); `recordFits` still refuses a save past the storage budget.
+const WORK_LIMITS = { title: 60, note: 200 };
 const WORK_LINK_MEETINGS = 20; // meetings offered by the link picker, newest first
 const WORK_KIND_WORD = { goal: "목표", meeting: "회의록", project: "프로젝트" };
 // The title as the duplicate check sees it: trimmed, every space removed, lower-cased (`parseWorkReply`).
@@ -8157,9 +8158,7 @@ export default function LifeManager() {
     s.work = fn(s.work || []);
     return s;
   });
-  const workCapText = (n) => `업무는 하루 ${WORK_LIMITS.perDay}건까지예요${n == null ? "." : ` — ${n}건만 옮길 수 있어요.`}`;
   const addWork = (next) => {
-    if (workOn(state, next.date).length >= WORK_LIMITS.perDay) return workCapText();
     const rec = { id: uid(), ...next, done: false, source: "manual", createdAt: today };
     const refused = recordFits(rec, 0, "업무를");
     if (refused) return refused;
@@ -8205,26 +8204,22 @@ export default function LifeManager() {
     showToast({ msg: `업무 ${n}건을 삭제했어요` });
     return true;
   };
-  // Sets `date = today` on the given items, newest first, as far as today's cap allows; the rest stay where they are.
+  // Sets `date = today` on every given item not already dated today.
   const moveWorkToToday = (ids) => {
-    const room = Math.max(0, WORK_LIMITS.perDay - workOn(state, today).length);
-    const wanted = (state.work || []).filter((w) => ids.includes(w.id) && w.date !== today)
-      .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || ""));
-    const moving = new Set(wanted.slice(0, room).map((w) => w.id));
+    const moving = new Set((state.work || []).filter((w) => ids.includes(w.id) && w.date !== today).map((w) => w.id));
     if (moving.size) writeWork((list) => list.map((w) => (moving.has(w.id) ? { ...w, date: today } : w)));
-    showToast({ msg: moving.size < wanted.length ? workCapText(moving.size) : `미완료 ${moving.size}건을 오늘로 옮겼어요` });
+    showToast({ msg: `미완료 ${moving.size}건을 오늘로 옮겼어요` });
   };
-  // Registers the ticked work proposals as today's items with `source: "ai"`, the first `n` that fit today's cap. An
+  // Registers every ticked work proposal as today's item with `source: "ai"`. An
   // unresolved link is simply omitted. The raw reply is not stored anywhere — it would overwrite the day's journal reply.
   const importWork = (list) => {
-    const room = Math.max(0, WORK_LIMITS.perDay - workOn(state, today).length);
-    const made = list.slice(0, room).map((p) => ({ id: uid(), date: today, title: p.title, ...(p.note ? { note: p.note } : {}),
+    const made = list.map((p) => ({ id: uid(), date: today, title: p.title, ...(p.note ? { note: p.note } : {}),
       ...(p.link ? { link: p.link } : {}), done: false, source: "ai", createdAt: today }));
     const refused = recordFits(made, 0, "업무를");
     if (refused) { showToast({ msg: refused }); return; }
     if (made.length) writeWork((items) => [...made, ...items]);
     setModal(null);
-    showToast({ msg: made.length < list.length ? `업무는 하루 ${WORK_LIMITS.perDay}건까지예요 — ${made.length}건만 등록했어요.` : `AI 제안 업무 ${made.length}건 등록` });
+    showToast({ msg: `AI 제안 업무 ${made.length}건 등록` });
   };
 
   /* Daily assistant */

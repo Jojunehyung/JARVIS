@@ -33,14 +33,14 @@ later is stated as `연결 대상이 삭제됐어요` and never cleaned up, the 
 
 ## Caps and the storage arithmetic
 
-`WORK_LIMITS = { title: 60, note: 200, perDay: 20 }`; `WORK_LINK_MEETINGS = 20` (meetings offered by the link
+`WORK_LIMITS = { title: 60, note: 200 }` — no per-day count cap (the cap of 20 was removed 2026-09-17 at the user's request: undone items are carried to the next day, so a day's list grows; only `recordFits` bounds it); `WORK_LINK_MEETINGS = 20` (meetings offered by the link
 picker, newest first by `meetingOrder`).
 
 - Record overhead `{"id":"…","date":"…","title":"","done":false,"source":"manual","createdAt":"…"}` is about 100
   chars; with a 20-char title, a 30-char note (`,"note":""` + 30) and a link
   (`,"link":{"kind":"meeting","id":"…"}` ≈ 45) an item is about 200 chars, about 150 without a link.
-- Eight items a day for a year ≈ 2,920 × 150 ≈ 0.44 M chars (12 % of the 3.5 MB budget a year); at the cap of 20
-  a day with every field full (60 + 200 + link ≈ 400 chars) ≈ 2.9 M a year.
+- Eight items a day for a year ≈ 2,920 × 150 ≈ 0.44 M chars (12 % of the 3.5 MB budget a year); twenty a day
+  with every field full (60 + 200 + link ≈ 400 chars) ≈ 2.9 M a year. Nothing caps the count, so the storage guard below is the only bound.
 - The tab always states `저장 공간 {mb}MB / 3.5MB` (`storageUsedWith(state)`, memoised on `state`, the same
   helper the `미팅` tab reads); `recordFits` refuses a save that would cross the budget before any write, keeping
   the form open with everything typed. The backup path is the way out of a full budget.
@@ -90,7 +90,7 @@ input (`업무 제목 — 예: 견적서 송부`, no `maxLength` — the submit 
 `메모 (선택)` textarea (`rows=3`, capped at `WORK_LIMITS.note`), and a `연결 (선택)` `<select>` of
 `연결 안 함` plus `workLinkOptions(state)` — active goals, the newest `WORK_LINK_MEETINGS` meetings, every
 project. Submit refuses in order: `업무 제목을 입력해 주세요.`, `업무 제목은 60자까지예요 — 지금 {n}자예요.`,
-`메모는 200자까지예요 — 지금 {n}자예요.`, then whatever `onAdd`/`onUpdate` returns (the per-day cap or the
+`메모는 200자까지예요 — 지금 {n}자예요.`, then whatever `onAdd`/`onUpdate` returns (the
 storage-budget line). The record keeps only non-empty optional fields, so a cleared note or link disappears on
 an edit. Buttons: `등록` (add) / `저장` (edit), then, in edit mode, a full-width `완료로 표시` / `완료 취소`
 (`onToggle`, closes the sheet) and `삭제` (`onRemove`, confirmed by name: `{title} 업무를 삭제해요. 계속할까요?`).
@@ -112,13 +112,13 @@ Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `ar
 
 | Handler | Effect | Toast |
 |---|---|---|
-| `addWork(next)` | refuses `업무는 하루 20건까지예요.` at the per-day cap, then `recordFits`; otherwise prepends `{ id: uid(), ...next, done: false, source: "manual", createdAt: today }` | `업무를 등록했어요` |
+| `addWork(next)` | `recordFits`; otherwise prepends `{ id: uid(), ...next, done: false, source: "manual", createdAt: today }` | `업무를 등록했어요` |
 | `updateWork(id, next)` | replaces title/note/link, keeping `id`/`date`/`done`/`source`/`createdAt` | `업무를 수정했어요` |
 | `toggleWork(id)` | flips `done` only — no streak, no trophy, no KR | `완료로 표시했어요` / `완료를 취소했어요` |
 | `removeWork(id)` | confirmed by name, then filters | `업무를 삭제했어요` |
 | `removeWorkMany(ids)` | one confirmation `업무 {n}건을 삭제해요. 계속할까요?`, then filters; answers `true` when it deleted, so the tab leaves select mode | `업무 {n}건을 삭제했어요` |
-| `moveWorkToToday(ids)` | sets `date = today` on as many of the given (undone) items as today's cap allows, newest date first; the rest keep their date | `미완료 {n}건을 오늘로 옮겼어요` or, capped, `업무는 하루 20건까지예요 — {n}건만 옮길 수 있어요.` |
-| `importWork(list)` (from the AI bridge, below) | registers the first `n` that fit today's cap as `source: "ai"`, `done: false` records; the raw reply is never stored | `AI 제안 업무 {n}건 등록` or, capped, `업무는 하루 20건까지예요 — {n}건만 등록했어요.` |
+| `moveWorkToToday(ids)` | sets `date = today` on every given item not already dated today | `미완료 {n}건을 오늘로 옮겼어요` |
+| `importWork(list)` (from the AI bridge, below) | registers every ticked proposal as `source: "ai"`, `done: false` records; the raw reply is never stored | `AI 제안 업무 {n}건 등록` |
 
 `meetingFits` was renamed `recordFits(next, prevLen = 0, noun)` (still returning `""` when the record fits, or
 the same storage-refusal sentence with `noun` substituted — `회의록을` / `진행사항을` / `업무를`); every meeting,
@@ -178,7 +178,7 @@ meeting view, listed newest first, counted on the minutes row, and proven to mov
 textarea's empty/over-cap refusals; the `AI에 보내지 않기` checkbox round-tripped through the meeting form and
 stated in the view; a manual work item registered with a project link, changing no task, meeting, streak or
 trophy; completion in place (struck through, reversible); an item from three days back listed under
-`지난 미완료` and moved to today; the twenty-first item refused at the per-day cap; both new arrays present in
+`지난 미완료` and moved to today; a twenty-first item on one day registered (no per-day cap); both new arrays present in
 the exported backup file; the work packet carrying a visible meeting's summary and progress, only the date and
 title of a hidden one, and no profile identifier; a pasted reply importing two of three proposals (one rejected
 as a duplicate) with `source: "ai"`; a reply naming `tasks`/`deals`/`events`/`meetings` creating none of them.

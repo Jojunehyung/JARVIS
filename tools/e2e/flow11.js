@@ -241,7 +241,8 @@ module.exports = async (h) => {
     if (!line.startsWith("남음 2건 · 완료 0건")) throw new Error("counts after the move: " + line);
   });
 
-  await step("the per-day cap refuses a twenty-first item", async () => {
+  // The per-day cap was removed 2026-09-17: undone items are carried forward, so a day's list may grow past twenty.
+  await step("a twenty-first item on one day registers — there is no per-day cap", async () => {
     const today = await dstrIn(0);
     const keep = (await readState()).work; // the two items this file made — restored below
     await page.evaluate((k, d) => {
@@ -254,11 +255,9 @@ module.exports = async (h) => {
     await openWorkForm();
     await typeInto("업무 제목", "스물한 번째");
     await clickInModalExact("등록");
-    const e = await modalError();
-    if (e !== "업무는 하루 20건까지예요.") throw new Error("the twenty-first item gave: " + (e || "no error"));
-    await closeModal();
+    await expectText("업무를 등록했어요");
     const st = await readState();
-    if (st.work.filter((w) => w.date === today).length !== 20 || st.work.some((w) => w.title === "스물한 번째")) throw new Error("the refused item reached the save");
+    if (st.work.filter((w) => w.date === today).length !== 21 || !st.work.some((w) => w.title === "스물한 번째")) throw new Error("the twenty-first item did not reach the save");
     await page.evaluate((k, items) => { const s = JSON.parse(localStorage.getItem(k)); s.work = items; localStorage.setItem(k, JSON.stringify(s)); }, KEY, keep);
     await h.reload();
   });
