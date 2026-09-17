@@ -707,4 +707,144 @@ module.exports = async (h) => {
       await h.reload();
     }
   });
+
+  /* ── Payment lines (schema v28, Phase 3, 2026-09-18, written, not run). A payment line is a lump sum beside the monthly
+     `paidMonths`: these steps assert that the form and the paid stamp write `deals` only, that the header's first two
+     lines never move with a lump sum (no double count), and that the briefing names the unpaid line. The planted contract
+     is removed at the end of each step. ── */
+  const PAY_DEAL = { id: "e2e-pay-deal", client: "E2E입금사", title: "E2E 일시금 계약" };
+  const plantPayDeal = async () => {
+    const month = await monthIn(0);
+    await page.evaluate((k, d, m) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.deals = [{ ...d, status: "won", monthly: 1000000, months: 2, startMonth: m, paidMonths: [], createdAt: m + "-01", track: "biz" },
+        ...(s.deals || []).filter((x) => x.id !== d.id)];
+      s.ui = { ...(s.ui || {}), bizView: "deals" };
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, PAY_DEAL, month);
+    await h.reload();
+  };
+  const dropPayDeal = async () => {
+    await closeModal();
+    await page.evaluate((k, id) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.deals = (s.deals || []).filter((x) => x.id !== id);
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, PAY_DEAL.id);
+    await h.reload();
+  };
+  const editPayDeal = async () => {
+    await clickTab("사업");
+    const ok = await page.evaluate((t) => {
+      const card = [...document.querySelectorAll("button")].filter((b) => (b.innerText || "").trim() === "수정")
+        .map((b) => b.parentElement.parentElement).find((c) => (c.innerText || "").includes(t));
+      const b = card && [...card.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "수정");
+      if (!b) return false;
+      b.click(); return true;
+    }, PAY_DEAL.title);
+    if (!ok) throw new Error("the planted contract has no edit button");
+    await sleep(400);
+    await expectText("입금 예정 (선택)");
+  };
+  // The header's lump-sum line, whitespace-normalised.
+  const payLine = () => page.evaluate(() => [...document.querySelectorAll("main p")]
+    .map((p) => (p.innerText || "").replace(/\s+/g, " ").trim()).find((t) => t.startsWith("일시금 미확인 ")) || "");
+  // The payment chip of the planted contract: its text and tone, tapped first when `tap` is set.
+  const payChip = (tap = false) => page.evaluate((t, doTap) => {
+    const card = [...document.querySelectorAll("button")].filter((b) => (b.innerText || "").trim() === "수정")
+      .map((b) => b.parentElement.parentElement).find((c) => (c.innerText || "").includes(t));
+    const b = card && [...card.querySelectorAll("button")].find((x) => /^(계약금|중도금|잔금|기타) \d{4}-\d{2}-\d{2} · /.test((x.innerText || "").trim()));
+    if (!b) return null;
+    if (doTap) { b.scrollIntoView({ block: "center" }); b.click(); }
+    return { text: b.innerText.trim(), paid: /border-emerald-700/.test(b.className), late: /border-rose-800/.test(b.className) };
+  }, PAY_DEAL.title, tap);
+  // A payment write may move `deals` and nothing else.
+  const assertOnlyDealList = (before, after, what) => {
+    assertOnlyDeals(before, after, what);
+    for (const k of ["work", "timeLog", "settings", "milestones", "documents", "meetingProjects", "meetings", "events"]) {
+      if (JSON.stringify(before[k] ?? null) !== JSON.stringify(after[k] ?? null)) throw new Error(`${what} changed ${k}`);
+    }
+  };
+
+  await step("a contract stores payment lines, the row toggles a paid stamp, and the header and briefing state the unpaid one", async () => {
+    await closeModal();
+    await plantPayDeal();
+    try {
+      const today = await dayIn(0), due = await dayIn(3);
+      await editPayDeal();
+      await clickInModalExact("항목 추가");
+      await clickInModalExact("계약금");
+      await setValue('.fixed.inset-0 input[aria-label="입금 예정일"]', due);
+      await setValue('.fixed.inset-0 input[placeholder="금액 (원)"]', "1000000");
+      let before = await readState();
+      await clickInModalExact("저장");
+      await sleep(600);
+      let after = await readState();
+      assertOnlyDealList(before, after, "saving a payment line");
+      let deal = after.deals.find((d) => d.id === PAY_DEAL.id);
+      const line = (deal.payments || [])[0];
+      if ((deal.payments || []).length !== 1 || line.kind !== "deposit" || line.due !== due || line.amount !== 1000000 || "paidAt" in line || !line.id) throw new Error("the stored payment lines: " + JSON.stringify(deal.payments));
+      const chip = await payChip();
+      if (!chip || chip.text !== `계약금 ${due} · 100만원` || chip.paid || chip.late) throw new Error("the row's payment chip: " + JSON.stringify(chip));
+      if (!(await payLine()).startsWith("일시금 미확인 1건 · ")) throw new Error("the header's lump-sum line: " + JSON.stringify(await payLine()));
+      await clickTab("할 일");
+      await clickText("브리핑 열기");
+      await sleep(600);
+      const brief = await overlayText();
+      if (!brief.includes(`${PAY_DEAL.client} ${PAY_DEAL.title} — 계약금 입금 예정 ${due} · 미확인`)) throw new Error("the briefing's payment line: " + brief.slice(brief.indexOf("사업"), brief.indexOf("사업") + 400));
+      await closeModal();
+      await clickTab("사업");
+      const lines = await headerLines();
+      // flow8's save carries no other payment line, so the planted one is the whole lump-sum figure.
+      const paidBefore = await payLine();
+      if (paidBefore !== "일시금 미확인 1건 · 이번 달 일시금 입금 0원") throw new Error("the header before the tick: " + JSON.stringify(paidBefore));
+      before = await readState();
+      if (!(await payChip(true))) throw new Error("no payment chip to tap");
+      await sleep(400);
+      await expectText("계약금 입금 확인으로 표시했어요");
+      after = await readState();
+      assertOnlyDealList(before, after, "ticking a payment line");
+      deal = after.deals.find((d) => d.id === PAY_DEAL.id);
+      if (deal.payments[0].paidAt !== today) throw new Error("the paid stamp: " + JSON.stringify(deal.payments));
+      if (JSON.stringify(deal.paidMonths) !== "[]") throw new Error("a lump sum wrote a month stamp: " + JSON.stringify(deal.paidMonths));
+      if (!(await payChip()).paid) throw new Error("the paid chip is not emerald");
+      if (JSON.stringify(await headerLines()) !== JSON.stringify(lines)) throw new Error("a lump sum moved the monthly lines: " + JSON.stringify(await headerLines()));
+      if ((await payLine()) !== "일시금 미확인 0건 · 이번 달 일시금 입금 100만원") throw new Error("the header after the tick: " + JSON.stringify(await payLine()));
+      await payChip(true);
+      await sleep(400);
+      await expectText("계약금 입금 확인을 취소했어요");
+      deal = (await readState()).deals.find((d) => d.id === PAY_DEAL.id);
+      if ("paidAt" in deal.payments[0]) throw new Error("the second tap kept the paid stamp");
+      if ((await payLine()) !== paidBefore) throw new Error("the header after the second tap: " + JSON.stringify(await payLine()));
+    } finally {
+      await dropPayDeal();
+    }
+  });
+
+  await step("the deal form refuses a payment line with an empty amount and a cleared list drops the key", async () => {
+    await closeModal();
+    await plantPayDeal();
+    try {
+      const due = await dayIn(10);
+      await editPayDeal();
+      await clickInModalExact("항목 추가");
+      await setValue('.fixed.inset-0 input[aria-label="입금 예정일"]', due);
+      await clickInModalExact("저장");
+      if ((await modalError()) !== "입금 예정 1번째 항목의 날짜와 금액을 입력해 주세요.") throw new Error("the payment refusal: " + (await modalError()));
+      if ("payments" in (await readState()).deals.find((d) => d.id === PAY_DEAL.id)) throw new Error("the refused form was written");
+      await setValue('.fixed.inset-0 input[placeholder="금액 (원)"]', "500000");
+      await clickInModalExact("저장");
+      await sleep(500);
+      if (((await readState()).deals.find((d) => d.id === PAY_DEAL.id).payments || []).length !== 1) throw new Error("the fixed form did not store its line");
+      // Removing the only line and saving drops the key.
+      await editPayDeal();
+      await page.evaluate(() => document.querySelector('.fixed.inset-0 button[aria-label="입금 예정 삭제"]')?.click());
+      await sleep(200);
+      await clickInModalExact("저장");
+      await sleep(500);
+      if ("payments" in (await readState()).deals.find((d) => d.id === PAY_DEAL.id)) throw new Error("a cleared list kept the payments key");
+    } finally {
+      await dropPayDeal();
+    }
+  });
 };

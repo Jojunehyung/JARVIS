@@ -2330,14 +2330,36 @@ const revenueByMonth = (state, fromMonth, n) => {
   });
 };
 
+/* ── Payment lines (v28) ── */
+/* Lump sums only — a deposit, an interim or a final payment beside the monthly `paidMonths`. There is no monthly kind:
+   a month's instalment is already a `paidMonths` stamp, and a second record of the same month would double-count.
+   `paidAt` is the user's own stamp; what is due, overdue or paid this month is derived (rule 9). Storage: a line ≈ 75
+   chars (+ 21 with `paidAt`); `,"payments":[]` adds 14 to a deal the first time; twelve full lines ≈ 1.2 k on one deal. */
+const PAYMENT_KIND = { deposit: "계약금", interim: "중도금", final: "잔금", other: "기타" };
+const PAYMENT_SOON_DAYS = 7;   // an unpaid line due within this many days is named
+const PAYMENT_ALERT_MAX = 3;   // payment lines the briefing names
+const DEAL_PAYMENTS_MAX = 12;  // payment lines one deal carries
+// A deal's payment lines by due date (a missing due last).
+const dealPayments = (d) => (d?.payments || []).slice().sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")));
+
 // The one object the `사업` header, the `할 일` header and list, the briefing and the packet all read, so no two
 // surfaces can state a different figure.
+// Lump sums are never added to `thisMonth` / `collected` / `backlog`, which read the billing rule; a month's instalment
+// is a `paidMonths` stamp, so no line here may be a monthly one. Payments get their own figures: `payDue` (every unpaid
+// line due on or before today + PAYMENT_SOON_DAYS, due-ascending), `payOverdue` (those due before today) and
+// `payPaidMonth` (the amounts whose `paidAt` falls in this month).
 const bizSummary = (state, today) => {
   const month = String(today).slice(0, 7);
   const counts = { lead: 0, quote: 0, won: 0, lost: 0, active: 0, upcoming: 0, ended: 0, unpaid: 0 };
-  let thisMonth = 0, collected = 0, backlog = 0, pipeline = 0;
+  let thisMonth = 0, collected = 0, backlog = 0, pipeline = 0, payPaidMonth = 0;
   const unpaid = [];
+  const payDue = [];
+  const soon = shiftDay(today, PAYMENT_SOON_DAYS);
   for (const d of state?.deals || []) {
+    for (const p of dealPayments(d)) {
+      if (p.paidAt) { if (String(p.paidAt).slice(0, 7) === month) payPaidMonth += Number(p.amount) || 0; }
+      else if (p.due && p.due <= soon) payDue.push({ deal: d, payment: p });
+    }
     if (DEAL_STATUS[d.status]) counts[d.status]++;
     if (d.status === "quote") pipeline += dealTotal(d);
     if (d.status !== "won") continue;
@@ -2353,7 +2375,9 @@ const bizSummary = (state, today) => {
   }
   unpaid.sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
   counts.unpaid = unpaid.length;
-  return { month, thisMonth, collected, backlog, pipeline, unpaid, counts };
+  payDue.sort((a, b) => a.payment.due.localeCompare(b.payment.due));
+  const payOverdue = payDue.filter((x) => x.payment.due < today).length;
+  return { month, thisMonth, collected, backlog, pipeline, unpaid, counts, payDue, payOverdue, payPaidMonth };
 };
 
 /* ── Roadmap (v28) ── */
@@ -2775,6 +2799,11 @@ const buildBriefing = (state, today) => {
     ...biz.unpaid.slice(0, BIZ_ALERT_MAX).map((u) => ({
       kind: "biz", severity: 3, track: trackOf(u.deal, "biz"), text: `${u.deal.client} ${u.deal.title} — ${u.month} 입금 미확인 ${wonText(u.amount)}`,
     })),
+    // Payment lines (v28): unpaid lump sums past or near their date, never the amount; each carries the deal's track.
+    ...biz.payDue.slice(0, PAYMENT_ALERT_MAX).map(({ deal: d, payment: p }) => ({
+      kind: "biz", severity: p.due < today ? 3 : 2, track: trackOf(d, "biz"),
+      text: `${d.client} ${d.title} — ${PAYMENT_KIND[p.kind] || PAYMENT_KIND.other} 입금 예정 ${p.due} · 미확인`,
+    })),
     ...bizDeals
       .map((d) => ({ d, end: dealEnd(d), left: monthsBetween(biz.month, dealEnd(d) || biz.month) }))
       .filter(({ d, end, left }) => d.status === "won" && end && left >= 0 && left <= DEAL_END_SOON)
@@ -2981,10 +3010,11 @@ const buildReader = (state, today) => {
   /* Contracts and payments, and goals behind pace — the briefing's own items, so both screens agree */
   const briefItems = (key) => brief.sections.find((s) => s.key === key)?.items || [];
   add("biz", "계약·입금 미확인", briefItems("biz").map((it) => ({ text: it.text })), { type: "biz" });
-  /* The roadmap (v28) — the stage-order note, then every milestone not yet done by `milestoneOrder`. A single-track
+  /* The roadmap (v28) — this week's business time line, the stage-order note, then every milestone not yet done by `milestoneOrder`. A single-track
      section: no heads. The reader never leaves the device, so a milestone linked to day-job records is listed here. */
   const roadmapNote = stageOrderNote(state.milestones);
   add("roadmap", "사업 로드맵", [
+    { text: timeLine(state, today) },
     ...(roadmapNote ? [{ text: roadmapNote }] : []),
     ...(state.milestones || []).filter((m) => m.status !== "done").slice().sort(milestoneOrder).map((m) => ({
       text: milestoneLine(state, m, today),
@@ -3056,6 +3086,9 @@ const bizPacketLines = (state, today) => {
   return [
     `- 이번 달 계약 ${wonText(biz.thisMonth)} · 입금 확인 ${wonText(biz.collected)} · 남은 계약 ${wonText(biz.backlog)} · 견적 대기 ${wonText(biz.pipeline)}`,
     ...biz.unpaid.map((u) => `- 미수 ${u.month} ${u.deal.client} ${u.deal.title} ${wonText(u.amount)}`),
+    // v28: every payment line of an allowed deal, paid or not — lump sums, never summed into the line above.
+    ...allowed.deals.flatMap((d) => dealPayments(d).map((p) =>
+      `- 입금 예정 ${PAYMENT_KIND[p.kind] || PAYMENT_KIND.other} ${p.due} ${d.client} ${d.title} ${wonText(p.amount)}${p.paidAt ? ` · 입금 확인 ${p.paidAt}` : ""}`)),
     ...allowed.deals
       .filter((d) => ["active", "upcoming"].includes(dealPhase(d, biz.month)) && dealEnd(d))
       .map((d) => `- ${DEAL_PHASE_LABEL[dealPhase(d, biz.month)]} ${d.client} ${d.title} · ${d.startMonth} ~ ${dealEnd(d)} · 월 ${wonText(d.monthly)}`),
@@ -3988,8 +4021,12 @@ const demoState = () => {
     },
   ];
   s.deals = [
-    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140), track: "biz" },
-    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6), track: "biz" },
+    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140), track: "biz",
+      // A final lump sum (v28), paid two days after its date: the row's emerald chip and a paid packet line.
+      payments: [{ id: uid(), kind: "final", due: shiftDay(today, -20), amount: 600000, paidAt: shiftDay(today, -18) }] },
+    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6), track: "biz",
+      // An unpaid deposit due in five days (v28): the header's `일시금 미확인 1건` and the briefing's payment line.
+      payments: [{ id: uid(), kind: "deposit", due: shiftDay(today, 5), amount: 3000000 }] },
     { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9), track: "biz" },
     { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3), track: "biz" },
   ];
@@ -4067,7 +4104,8 @@ const demoState = () => {
   s.work = [
     { id: uid(), date: today, title: "○○물산 유지보수 견적서 송부", note: "월 10시간 · 초과분 시간 단가", done: false,
       link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today, track: "biz" },
-    { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today, track: "biz" },
+    { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today, track: "biz",
+      minutes: 180 }, // v28: the minutes typed on completion; its time-log entry is below
     workFromFollowUp,
     // A done item dated yesterday with a result, so the reader's `오늘 업무` section states a `처리:` line; not in
     // today's view, so the demo counts line is unchanged.
@@ -4076,6 +4114,14 @@ const demoState = () => {
     // The day-job project's two items for today (v28): the follow-up mirror and one typed by hand.
     workFromJob,
     { id: uid(), date: today, title: "프로파일링 리포트 초안", done: false, source: "manual", createdAt: today, track: "work" },
+  ];
+  // The time log (v28), every entry dated today so the week holds them whatever weekday the demo runs: the done AI item's
+  // 180 minutes (its `workId`), a 90-minute business entry typed by hand and a 60-minute day-job entry — `이번 주 사업 4.5h/20h`.
+  const doneAi = s.work.find((w) => w.minutes);
+  s.timeLog = [
+    { id: uid(), date: today, track: "biz", minutes: 180, workId: doneAi.id, createdAt: today },
+    { id: uid(), date: today, track: "biz", minutes: 90, createdAt: today },
+    { id: uid(), date: today, track: "work", minutes: 60, createdAt: today },
   ];
   // The seeded roadmap (v28): the first milestone done yesterday, the second active and linked to the first demo contract
   // and the open manual business work item, so the view shows all three groups and a linked-work count of 0/1.
@@ -6427,7 +6473,17 @@ function StudyVerifyModal({ task, onClose, onDone }) {
    the CV states the counts and this sheet holds every earned item, so nothing earned becomes unreachable (rule 13).
    Both live in the one `modal` slot and write nothing to the save (rule 9). */
 
-function SettingsModal({ state, onClose, onRoleModel, onExport, onImport, onReset }) {
+function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onExport, onImport, onReset }) {
+  const [hours, setHours] = useState(String(bizHoursOf(state)));
+  const [hoursErr, setHoursErr] = useState("");
+  // The weekly business budget (v28): a whole number of hours in one week, 0 to 168.
+  const saveHours = () => {
+    const t = hours.trim();
+    const n = Number(t);
+    if (!/^\d+$/.test(t) || n > 168) { setHoursErr("0 이상 168 이하 정수로 입력해 주세요."); return; }
+    setHoursErr("");
+    onSetBizHours(n);
+  };
   return (
     <Modal title="설정" onClose={onClose}>
       <div className="space-y-4">
@@ -6437,6 +6493,18 @@ function SettingsModal({ state, onClose, onRoleModel, onExport, onImport, onRese
             {state.role ? "롤모델 수정" : "롤모델 설정"}
           </button>
           <p className="text-xs text-zinc-500 mt-1.5">목표 인물상의 영역별 요구 등급을 정하면, 검증된 등급으로만 근접도를 계산합니다.</p>
+        </div>
+        <div>
+          <SectionLabel tone="text-cyan-400">사업 시간 — 주간 예산</SectionLabel>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-500 shrink-0">주간 시간</span>
+            <input type="number" inputMode="numeric" aria-label="주간 사업 시간" value={hours} onChange={(e) => setHours(e.target.value)}
+              className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm font-mono" />
+            <button onClick={saveHours}
+              className="shrink-0 px-3 py-2 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">저장</button>
+          </div>
+          {hoursErr && <p className="text-xs text-rose-400 mt-1.5">{hoursErr}</p>}
+          <p className="text-xs text-zinc-500 mt-1.5">이번 주 사업 시간은 업무 완료 시간과 시간 기록의 합으로 계산돼요.</p>
         </div>
         <div>
           <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
@@ -7121,10 +7189,11 @@ function BizRowHead({ title, chip, tag, onEdit }) {
   );
 }
 
-function DealRow({ deal: d, month, onEdit, onTogglePaid }) {
+function DealRow({ deal: d, month, today, onEdit, onTogglePaid, onTogglePayment }) {
   const months = dealMonths(d);
   const billed = billedMonths(d, month);
   const paidSet = d.paidMonths || [];
+  const pays = dealPayments(d);
   return (
     <div className="bg-zinc-950 rounded-xl px-3 py-2.5">
       <BizRowHead title={`${d.client} · ${d.title}`} chip={DEAL_STATUS[d.status]} tag={trackOf(d, "biz")} onEdit={() => onEdit("deals", d)} />
@@ -7150,13 +7219,27 @@ function DealRow({ deal: d, month, onEdit, onTogglePaid }) {
           )}
         </div>
       )}
+      {/* Lump-sum payment lines (v28): emerald when paid, rose when unpaid past its date; a tap flips the paid stamp */}
+      {pays.length > 0 && (
+        <div className="mt-2">
+          <div className="text-xs text-zinc-500 mb-1">입금 예정</div>
+          <div className="flex flex-wrap gap-1.5">
+            {pays.map((p) => (
+              <button key={p.id} onClick={() => onTogglePayment(d.id, p.id)}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-mono font-bold active:translate-y-0.5 ${
+                  p.paidAt ? "border-emerald-700 text-emerald-300" : p.due < today ? "border-rose-800 text-rose-300" : "border-zinc-700 text-zinc-300"}`}>
+                {`${PAYMENT_KIND[p.kind] || PAYMENT_KIND.other} ${p.due} · ${wonText(p.amount)}`}</button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* Contracts grouped by the phase `dealPhase` derives from the billing rule, plus the revenue roll-up.
    A group with no row is not rendered at all; a month with nothing contracted still prints its zero. */
-function DealsView({ state, month, onEdit, onTogglePaid }) {
+function DealsView({ state, month, today, onEdit, onTogglePaid, onTogglePayment }) {
   const deals = state.deals || [];
   const roll = revenueByMonth(state, monthAdd(month, -(BIZ_REVENUE_MONTHS - 1)), BIZ_REVENUE_MONTHS);
   const peak = Math.max(1, ...roll.map((r) => r.amount));
@@ -7173,7 +7256,7 @@ function DealsView({ state, month, onEdit, onTogglePaid }) {
           <section key={phase} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
             <SectionLabel tone={tone}>{DEAL_PHASE_LABEL[phase]}</SectionLabel>
             <div className="space-y-1.5">
-              {list.map((d) => <DealRow key={d.id} deal={d} month={month} onEdit={onEdit} onTogglePaid={onTogglePaid} />)}
+              {list.map((d) => <DealRow key={d.id} deal={d} month={month} today={today} onEdit={onEdit} onTogglePaid={onTogglePaid} onTogglePayment={onTogglePayment} />)}
             </div>
           </section>
         );
@@ -7342,7 +7425,7 @@ function RoadmapView({ state, today, onOpen, onSeed }) {
   );
 }
 
-function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onOpenMilestone, onSeedRoadmap }) {
+function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onTogglePayment, onOpenMilestone, onSeedRoadmap }) {
   // Any other value, including a save written before v20, opens the contracts.
   const v = ["rates", "folio", "roadmap"].includes(view) ? view : "deals";
   const sum = useMemo(() => bizSummary(state, today), [state, today]);
@@ -7368,6 +7451,11 @@ function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onOpe
           <span className="whitespace-nowrap">견적 대기 {wonText(sum.pipeline)}</span>{" · "}
           <span className={`whitespace-nowrap ${sum.counts.unpaid > 0 ? "text-rose-400" : ""}`}>입금 미확인 {sum.counts.unpaid}건</span>
         </p>
+        {/* Lump sums on their own line (v28), never added to the two lines above; always printed (rule 13) */}
+        <p className="text-xs font-mono text-zinc-400">
+          <span className={`whitespace-nowrap ${sum.payOverdue > 0 ? "text-rose-400" : ""}`}>일시금 미확인 {sum.payDue.length}건</span>{" · "}
+          <span className="whitespace-nowrap">이번 달 일시금 입금 {wonText(sum.payPaidMonth)}</span>
+        </p>
         <div className="flex flex-wrap gap-1.5 mt-2.5">
           <Chip on={v === "deals"} onClick={() => onView("deals")}>계약</Chip>
           <Chip on={v === "rates"} onClick={() => onView("rates")}>단가</Chip>
@@ -7376,7 +7464,7 @@ function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onOpe
         </div>
       </section>
 
-      {v === "deals" && <DealsView state={state} month={sum.month} onEdit={onEdit} onTogglePaid={onTogglePaid} />}
+      {v === "deals" && <DealsView state={state} month={sum.month} today={today} onEdit={onEdit} onTogglePaid={onTogglePaid} onTogglePayment={onTogglePayment} />}
       {v === "rates" && <RatesView state={state} onEdit={onEdit} />}
       {v === "folio" && <FolioView state={state} onEdit={onEdit} />}
       {v === "roadmap" && <RoadmapView state={state} today={today} onOpen={onOpenMilestone} onSeed={onSeedRoadmap} />}
@@ -7442,7 +7530,10 @@ function DealModal({ deal, onClose, onAdd, onUpdate, onRemove }) {
   const [costMonthly, setCostMonthly] = useState(deal?.costMonthly == null ? "" : String(deal.costMonthly));
   const [note, setNote] = useState(deal?.note || "");
   const [track, setTrack] = useState(deal?.track || "biz");
+  // Payment lines (v28): the form's rows keep their `id` and `paidAt`; the amount is edited as text.
+  const [pays, setPays] = useState(() => dealPayments(deal).map((p) => ({ ...p, amount: p.amount == null ? "" : String(p.amount) })));
   const [err, setErr] = useState("");
+  const setPay = (id, patch) => setPays((cur) => cur.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
   const submit = () => {
     if (!client.trim()) { setErr("고객사를 입력해 주세요."); return; }
@@ -7456,7 +7547,10 @@ function DealModal({ deal, onClose, onAdd, onUpdate, onRemove }) {
     if (Number.isNaN(price)) { setErr("월 청구액은 0 이상 숫자로 입력해 주세요."); return; }
     const cost = numField(costMonthly);
     if (Number.isNaN(cost)) { setErr("월 원가는 0 이상 숫자로 입력해 주세요."); return; }
-    // A blank number field stores nothing at all — a lead and a quote may carry no numbers.
+    const bad = pays.findIndex((p) => !p.due || !(numField(p.amount) > 0));
+    if (bad >= 0) { setErr(`입금 예정 ${bad + 1}번째 항목의 날짜와 금액을 입력해 주세요.`); return; }
+    const payments = pays.map((p) => ({ id: p.id, kind: p.kind, due: p.due, amount: numField(p.amount), ...(p.paidAt ? { paidAt: p.paidAt } : {}) }));
+    // A blank number field stores nothing at all — a lead and a quote may carry no numbers. A cleared payment list drops the key.
     const next = {
       client: client.trim(), title: title.trim(), status,
       ...(startMonth ? { startMonth } : {}),
@@ -7464,9 +7558,11 @@ function DealModal({ deal, onClose, onAdd, onUpdate, onRemove }) {
       ...(price == null ? {} : { monthly: price }),
       ...(cost == null ? {} : { costMonthly: cost }),
       ...(note.trim() ? { note: note.trim() } : {}),
+      ...(payments.length ? { payments } : {}),
       track,
     };
-    if (deal) onUpdate(deal.id, next); else onAdd(next);
+    const refused = deal ? onUpdate(deal.id, next) : onAdd(next);
+    if (refused) setErr(refused);
   };
 
   return (
@@ -7484,6 +7580,32 @@ function DealModal({ deal, onClose, onAdd, onUpdate, onRemove }) {
         <BizField value={monthly} onChange={setMonthly} placeholder="월 청구액 (원)" num />
         <BizField value={costMonthly} onChange={setCostMonthly} placeholder="월 원가 (원, 선택)" num />
         <BizField value={note} onChange={setNote} placeholder="메모 (선택)" />
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-bold tracking-widest text-zinc-500">입금 예정 (선택)</span>
+            <span className="text-xs font-mono text-zinc-500">{pays.length} / {DEAL_PAYMENTS_MAX}</span>
+          </div>
+          <div className="space-y-1.5">
+            {pays.map((p) => (
+              <div key={p.id} className="bg-zinc-950 rounded-xl p-2 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <BizChips options={Object.entries(PAYMENT_KIND)} value={p.kind} onPick={(k) => setPay(p.id, { kind: k })} />
+                  {p.paidAt && <span className="ml-auto shrink-0 text-xs font-mono text-emerald-300">입금 확인 {p.paidAt}</span>}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input type="date" aria-label="입금 예정일" value={p.due} onChange={(e) => setPay(p.id, { due: e.target.value })}
+                    className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-xl px-2 py-2 text-sm font-mono" />
+                  <div className="flex-1 min-w-0"><BizField value={p.amount} onChange={(v) => setPay(p.id, { amount: v })} placeholder="금액 (원)" num /></div>
+                  <button aria-label="입금 예정 삭제" onClick={() => setPays((cur) => cur.filter((x) => x.id !== p.id))}
+                    className="shrink-0 w-8 h-8 rounded-lg border border-zinc-700 text-zinc-400 flex items-center justify-center active:translate-y-0.5"><X size={14} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setPays((cur) => [...cur, { id: uid(), kind: "deposit", due: "", amount: "" }])} disabled={pays.length >= DEAL_PAYMENTS_MAX}
+            className="w-full mt-1.5 py-2 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">항목 추가</button>
+          {pays.length >= DEAL_PAYMENTS_MAX && <p className="text-xs text-zinc-500 mt-1">입금 예정은 12건까지예요.</p>}
+        </div>
         <TrackRow value={track} onPick={setTrack} />
         <BizFormFoot err={err} edit={!!deal} onSubmit={submit} onRemove={() => onRemove(deal.id)} />
       </div>
@@ -8731,6 +8853,28 @@ const WORK_KIND_WORD = { goal: "목표", meeting: "회의록", project: "프로�
 // The title as the duplicate check sees it: trimmed, every space removed, lower-cased (`parseWorkReply`).
 const normWorkTitle = (t) => String(t || "").trim().replace(/\s+/g, "").toLowerCase();
 
+/* ── Time budget and time log (v28) ── */
+/* The weekly business budget is a setting the user types (`settings.bizHoursPerWeek`), never a measure (rule 8). The
+   time log is the single source of every weekly sum: a completion with minutes writes one entry (`workId`) and the
+   quick entry writes one without; the sums never read `work[].minutes`, so nothing is counted twice. Every sum is
+   derived at render (rule 9). Storage: an entry ≈ 85 chars (+ 22 with `workId`); one a working day ≈ 27 k a year. */
+const TIME_LOG_MAX_MINUTES = 1440;
+// Minutes logged from `weekOf` (a Monday) to the Sunday after it, of one track when `track` is given.
+const weekMinutes = (state, weekOf, track) => {
+  const end = shiftDay(weekOf, 6);
+  return (state?.timeLog || [])
+    .filter((e) => e.date >= weekOf && e.date <= end && (!track || trackOf(e) === track))
+    .reduce((sum, e) => sum + (Number(e.minutes) || 0), 0);
+};
+// Days from today to Sunday, both included.
+const weekDaysLeft = (today) => daysBetween(today, shiftDay(mondayOf(today), 6)) + 1;
+// Hours with one decimal when not whole: `12.5h`, `20h`.
+const hoursText = (min) => { const h = Math.round((Number(min) || 0) / 6) / 10; return Number.isInteger(h) ? `${h}h` : `${h.toFixed(1)}h`; };
+const bizHoursOf = (state) => (Number.isFinite(state?.settings?.bizHoursPerWeek) ? state.settings.bizHoursPerWeek : 20);
+// The one line the work tab, the time-log sheet and the reader print.
+const timeLine = (state, today) =>
+  `이번 주 사업 ${hoursText(weekMinutes(state, mondayOf(today), "biz"))}/${bizHoursOf(state)}h · 남은 날 ${weekDaysLeft(today)}`;
+
 // The day's items: `createdAt` ascending, then stored order (a stable sort keeps a done item in its place). On today's
 // view (`date === today`) every undone item dated earlier comes first — `date` ascending, then `createdAt` — so the
 // oldest carried item leads. Derived only: nothing is moved or rewritten (rule 9).
@@ -8849,7 +8993,7 @@ function MeetingPrepCard({ state, today, onOpenMeeting, onOpenDocument, onAddChe
   );
 }
 
-function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMeeting, onOpenDocument, onAddCheck, onToggleCheck, onRemoveCheck, onAskAi }) {
+function WorkTab({ state, today, onAdd, onOpen, onBridge, onTimeLog, onRemoveMany, onOpenMeeting, onOpenDocument, onAddCheck, onToggleCheck, onRemoveCheck, onAskAi }) {
   const [viewDate, setViewDate] = useState(today); // the day shown — component state only, never stored (rule 9)
   // Select mode for deleting several items at once: component state only, cleared when the day changes.
   const [selecting, setSelecting] = useState(false);
@@ -8916,6 +9060,9 @@ function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMe
           <span className="whitespace-nowrap">AI 제안 {ai}건</span>{" · "}
           <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / 3.5MB</span>
         </p>
+        {/* This week's business time against the budget (v28) — always today's week, whatever day the pager shows */}
+        <button onClick={onTimeLog} className="w-full text-left text-xs font-mono text-zinc-400 mt-1.5 active:opacity-70">
+          {`${timeLine(state, today)} ›`}</button>
       </section>
 
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
@@ -8957,6 +9104,7 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
   const [result, setResult] = useState(work?.result || "");
   const [link, setLink] = useState(linkKey(work?.link));
   const [track, setTrack] = useState(work?.track || "work");
+  const [minutes, setMinutes] = useState(work?.minutes ? String(work.minutes) : "");
   const [err, setErr] = useState("");
   const options = useMemo(() => workLinkOptions(state), [state]);
   // A link whose target was deleted stays selectable as itself, so saving the sheet does not silently drop it.
@@ -8969,10 +9117,14 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
     if (t.length > WORK_LIMITS.title) return `업무 제목은 ${WORK_LIMITS.title}자까지예요 — 지금 ${t.length}자예요.`;
     if (n.length > WORK_LIMITS.note) return `메모는 ${WORK_LIMITS.note}자까지예요 — 지금 ${n.length}자예요.`;
     if (r.length > WORK_LIMITS.result) return `처리 내용은 ${WORK_LIMITS.result}자까지예요 — 지금 ${r.length}자예요.`;
+    // Minutes (v28): a whole number 1..1440, or nothing.
+    const mt = minutes.trim();
+    if (mt && !(/^\d+$/.test(mt) && Number(mt) >= 1 && Number(mt) <= TIME_LOG_MAX_MINUTES)) return "걸린 시간은 1 이상 1440 이하 분으로 입력해 주세요.";
     const sep = link.indexOf(":");
     const picked = sep > 0 ? { kind: link.slice(0, sep), id: link.slice(sep + 1) } : null;
-    // Only non-empty optional fields are written, so a cleared note, result or link disappears from the record.
-    return { date: work?.date || date || today, title: t, ...(n ? { note: n } : {}), ...(r ? { result: r } : {}), ...(picked ? { link: picked } : {}), track };
+    // Only non-empty optional fields are written, so a cleared note, result, link or minutes disappears from the record.
+    return { date: work?.date || date || today, title: t, ...(n ? { note: n } : {}), ...(r ? { result: r } : {}), ...(picked ? { link: picked } : {}),
+      ...(mt ? { minutes: Number(mt) } : {}), track };
   };
   const submit = () => {
     const next = draft();
@@ -8993,7 +9145,7 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
           <div className="space-y-1.5">
             <CvFact label="날짜"><span className="font-mono">{work.date}{!work.done && work.date < today ? ` · 이월 ${daysBetween(work.date, today)}일` : ""}</span></CvFact>
             <CvFact label="출처">{work.source === "ai" ? "AI 제안" : work.source === "meeting" ? "회의 후속" : "수기"}</CvFact>
-            <CvFact label="상태">{work.done ? "완료" : "미완료"}</CvFact>
+            <CvFact label="상태">{work.done ? "완료" : "미완료"}{work.minutes ? <span className="font-mono">{` · ${work.minutes}분`}</span> : null}</CvFact>
             <CvFact label="연결" wrap>{workLinkText(state, work) || "연결 없음"}</CvFact>
             {/* Opens the meeting's view in place of this sheet — the root has one modal slot — so the transcript and the
                 progress notes are one tap from the item; closing the view lands on the tab (TD-58). Live links only. */}
@@ -9009,6 +9161,13 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
         <MeetingText value={note} onChange={setNote} placeholder="메모 (선택)" rows={3} cap={WORK_LIMITS.note} />
         {work && (
           <MeetingText value={result} onChange={setResult} placeholder="처리 내용 (선택) — 어떻게 처리했는지 적어요" rows={4} cap={WORK_LIMITS.result} />
+        )}
+        {work && (
+          <label className="flex items-center gap-2 text-xs text-zinc-500">
+            <span className="shrink-0">걸린 시간 (분, 선택)</span>
+            <input type="number" inputMode="numeric" aria-label="걸린 시간" value={minutes} onChange={(e) => setMinutes(e.target.value)}
+              className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm font-mono" />
+          </label>
         )}
         {work?.source === "meeting" ? (
           // A follow-up's item: the link is owned by the follow-up, so the sheet offers no picker (v26).
@@ -9089,6 +9248,59 @@ function WorkBridgeModal({ state, today, onClose, onImport, onToast }) {
           <button onClick={confirm} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">선택한 업무 등록</button>
         </div>
       )}
+    </Modal>
+  );
+}
+
+/* ── Time log — `사업 시간 기록` (v28): this week's line, a quick entry by date, minutes and track, and this week's
+   entries. An entry a work completion wrote (`workId`) is edited on the work sheet, never here. A record only: it pays
+   nothing and moves no goal, grade or streak (rules 1, 8, 18); every sum is derived at render (rule 9). ── */
+function TimeLogModal({ state, today, onClose, onAdd, onRemove }) {
+  const [date, setDate] = useState(today);
+  const [minutes, setMinutes] = useState("");
+  const [track, setTrack] = useState("biz");
+  const [err, setErr] = useState("");
+  const week = mondayOf(today);
+  const weekEnd = shiftDay(week, 6);
+  const entries = (state.timeLog || []).filter((e) => e.date >= week && e.date <= weekEnd)
+    .slice().sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const titleOf = (e) => (state.work || []).find((w) => w.id === e.workId)?.title || "연결 대상이 삭제됐어요";
+  const submit = () => {
+    const t = minutes.trim();
+    if (!date) { setErr("날짜를 선택해 주세요."); return; }
+    if (!(/^\d+$/.test(t) && Number(t) >= 1 && Number(t) <= TIME_LOG_MAX_MINUTES)) { setErr("분을 1 이상 1440 이하로 입력해 주세요."); return; }
+    const refused = onAdd({ date, track, minutes: Number(t) });
+    if (refused) { setErr(refused); return; }
+    setErr("");
+    setMinutes("");
+  };
+  return (
+    <Modal title="사업 시간 기록" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="space-y-0.5">
+          <p className="text-xs font-mono text-zinc-300">{timeLine(state, today)}</p>
+          <p className="text-xs font-mono text-zinc-500">
+            {`직장 ${hoursText(weekMinutes(state, week, "work"))} · 개인 ${hoursText(weekMinutes(state, week, "personal"))}`}</p>
+        </div>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        <BizField value={minutes} onChange={setMinutes} placeholder="분 — 예: 90" num />
+        <TrackRow value={track} onPick={setTrack} />
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">기록</button>
+        <div className="space-y-1.5">
+          {entries.length === 0 ? <p className="text-xs text-zinc-500">이번 주 기록이 없어요.</p> : entries.map((e) => (
+            <div key={e.id} className="flex items-center gap-2 bg-zinc-950 rounded-xl px-3 py-2">
+              <span className="flex-1 min-w-0 text-xs font-mono text-zinc-300 break-words">
+                {`${e.date} · ${TRACK_LABEL[trackOf(e)]} · ${e.minutes}분 · ${e.workId ? titleOf(e) : "직접 기록"}`}</span>
+              {e.workId ? <span className="shrink-0 text-xs text-zinc-500">업무에서 기록</span> : (
+                <button aria-label="시간 기록 삭제" onClick={() => { if (window.confirm("시간 기록을 삭제해요. 계속할까요?")) onRemove(e.id); }}
+                  className="shrink-0 w-8 h-8 rounded-lg border border-zinc-700 text-zinc-400 flex items-center justify-center active:translate-y-0.5"><X size={14} /></button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -9633,7 +9845,11 @@ export default function LifeManager() {
       : `저장 공간이 부족해요 — 현재 ${w.usedMB}MB 사용 중이라 이미지를 추가하지 않았어요. 기존 이미지를 지운 뒤 다시 시도해요.`;
     setTimeout(() => showToast({ msg }), 2700);
   };
+  // A deal carrying payment lines (v28) runs the storage guard first; the form stays open with the refusal.
+  const bizRefusal = (list, rec, prevLen) => (list === "deals" && rec.payments ? recordFits(rec, prevLen, "계약을") : "");
   const addBiz = (list, item, imgWarn) => {
+    const refused = bizRefusal(list, item, 0);
+    if (refused) return refused;
     setState((prev) => {
       const s = structuredClone(prev);
       s[list] = [{ id: uid(), createdAt: today, ...item }, ...(s[list] || [])];
@@ -9642,8 +9858,12 @@ export default function LifeManager() {
     setModal(null);
     showToast({ msg: `${BIZ_NOUN[list]} 등록했어요` });
     warnImage(imgWarn);
+    return "";
   };
   const updateBiz = (list, id, next, imgWarn) => {
+    const old = (state[list] || []).find((x) => x.id === id);
+    const refused = bizRefusal(list, next, old ? JSON.stringify(old).length : 0);
+    if (refused) return refused;
     setState((prev) => {
       const s = structuredClone(prev);
       const i = (s[list] || []).findIndex((x) => x.id === id);
@@ -9657,13 +9877,15 @@ export default function LifeManager() {
     setModal(null);
     showToast({ msg: `${BIZ_NOUN[list]} 수정했어요` });
     warnImage(imgWarn);
+    return "";
   };
   const removeBiz = (list, id) => {
     const item = (state[list] || []).find((x) => x.id === id);
     if (!item) return;
     // A rate carries neither a picture nor a stamp, so only these two ask first (the removeGoal precedent).
     if (list === "folio" && !window.confirm(`${item.title} 포트폴리오를 삭제해요. 등록한 대표 이미지도 함께 사라져요. 계속할까요?`)) return;
-    if (list === "deals" && !window.confirm(`${item.client} ${item.title} 계약 기록을 삭제해요. 입금 확인 표시 ${(item.paidMonths || []).length}건도 함께 사라져요. 계속할까요?`)) return;
+    const payNote = (item.payments || []).length ? ` 입금 예정 ${item.payments.length}건도 함께 사라져요.` : "";
+    if (list === "deals" && !window.confirm(`${item.client} ${item.title} 계약 기록을 삭제해요. 입금 확인 표시 ${(item.paidMonths || []).length}건도 함께 사라져요.${payNote} 계속할까요?`)) return;
     if (list === "folio") store.del(`liferpg-img-folio-${id}`);
     setState((prev) => ({ ...prev, [list]: (prev[list] || []).filter((x) => x.id !== id) }));
     setModal(null);
@@ -9679,6 +9901,20 @@ export default function LifeManager() {
       return s;
     });
     showToast({ msg: `${month} 입금 확인${wasPaid ? "을 취소했어요" : "으로 표시했어요"}` });
+  };
+  // A payment line's paid stamp (v28): `paidAt: today`, or removed. Writes `deals` only.
+  const toggleDealPayment = (dealId, paymentId) => {
+    const p = ((state.deals || []).find((d) => d.id === dealId)?.payments || []).find((x) => x.id === paymentId);
+    if (!p) return;
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const line = ((s.deals || []).find((d) => d.id === dealId)?.payments || []).find((x) => x.id === paymentId);
+      if (!line) return prev;
+      if (p.paidAt) delete line.paidAt; else line.paidAt = today;
+      return s;
+    });
+    const kind = PAYMENT_KIND[p.kind] || PAYMENT_KIND.other;
+    showToast({ msg: p.paidAt ? `${kind} 입금 확인을 취소했어요` : `${kind} 입금 확인으로 표시했어요` });
   };
   // The chosen business view is a preference, not derived data: only the string is stored (schema v20).
   const setBizView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), bizView: v } }));
@@ -9791,7 +10027,7 @@ export default function LifeManager() {
       if (!f) return prev;
       f.done = done;
       const w = f.workId ? (s.work || []).find((x) => x.id === f.workId) : null;
-      if (w) w.done = done;
+      if (w) { w.done = done; syncTimeLog(s, w); } // v28: the mirrored item's time-log entry follows its done state
       return s;
     });
     showToast({ msg: done ? "후속 항목을 완료로 표시했어요" : "후속 항목 완료를 취소했어요" });
@@ -9926,8 +10162,8 @@ export default function LifeManager() {
   };
 
   /* Daily work — dated work items (v25). A record, never a task: these handlers write `work`, plus the `done` state or
-     the `workId` of the follow-up an item mirrors (v26), and nothing else — no act, tasks, goals, areas, room, exams or
-     events (rules 1, 9, 18). No streak, no trophy, no KR. */
+     the `workId` of the follow-up an item mirrors (v26), plus the item's own `timeLog` entry (v28, `syncTimeLog`), and
+     nothing else — no act, tasks, goals, areas, room, exams or events (rules 1, 9, 18). No streak, no trophy, no KR. */
   const writeWork = (fn) => setState((prev) => {
     const s = structuredClone(prev);
     s.work = fn(s.work || []);
@@ -9949,10 +10185,16 @@ export default function LifeManager() {
     // its link whatever the sheet sends: the link is owned by the follow-up (v26).
     const link = cur.source === "meeting" ? cur.link : next.link;
     const rec = { id: cur.id, date: cur.date, title: next.title, ...(next.note ? { note: next.note } : {}),
-      ...(next.result ? { result: next.result } : {}), ...(link ? { link } : {}), done: cur.done, source: cur.source, track: trackOf(next, cur.track), createdAt: cur.createdAt };
+      ...(next.result ? { result: next.result } : {}), ...(link ? { link } : {}), ...(next.minutes ? { minutes: next.minutes } : {}),
+      done: cur.done, source: cur.source, track: trackOf(next, cur.track), createdAt: cur.createdAt };
     const refused = recordFits(rec, JSON.stringify(cur).length, "업무를");
     if (refused) return refused;
-    writeWork((list) => list.map((w) => (w.id === id ? rec : w)));
+    setState((prev) => {
+      const s = structuredClone(prev);
+      s.work = (s.work || []).map((w) => (w.id === id ? rec : w));
+      syncTimeLog(s, rec);
+      return s;
+    });
     setModal(null);
     showToast({ msg: "업무를 수정했어요" });
     return "";
@@ -9961,12 +10203,25 @@ export default function LifeManager() {
   const mirroredFollowUp = (s, w) => (w?.link?.kind === "meeting" && w.link.followUpId
     ? ((s.meetings || []).find((m) => m.id === w.link.id)?.followUps || []).find((f) => f.id === w.link.followUpId) || null
     : null);
-  // Flips done. From the sheet, `next` carries what the sheet shows (title, note, result, link), written in the same
-  // update so a result typed before completing is kept; answers an error string when storage refuses it.
+  // The time log follows a work item (v28): every entry naming the item is removed and, when the item is done with
+  // minutes, exactly one entry is written — the stored one kept when its date, track and minutes already match, so a
+  // plain re-save does not churn ids. Runs inside a clone update; `w` is the item as it now stands.
+  const syncTimeLog = (s, w) => {
+    const log = s.timeLog || [];
+    const had = log.find((e) => e.workId === w.id);
+    const kept = log.filter((e) => e.workId !== w.id);
+    if (w.done && w.minutes > 0) {
+      const same = had && had.date === w.date && had.track === trackOf(w) && had.minutes === w.minutes;
+      kept.push(same ? had : { id: uid(), date: w.date, track: trackOf(w), minutes: w.minutes, workId: w.id, createdAt: today });
+    }
+    if (had || kept.length !== log.length) s.timeLog = kept;
+  };
+  // Flips done. From the sheet, `next` carries what the sheet shows (title, note, result, link, minutes), written in the
+  // same update so a result or minutes typed before completing are kept; answers an error string when storage refuses it.
   const toggleWork = (id, next) => {
     const cur = (state.work || []).find((w) => w.id === id);
     if (!cur) return "";
-    const fields = next ? { title: next.title, note: next.note, result: next.result, track: trackOf(next, cur.track), ...(cur.source === "meeting" ? {} : { link: next.link }) } : {};
+    const fields = next ? { title: next.title, note: next.note, result: next.result, minutes: next.minutes, track: trackOf(next, cur.track), ...(cur.source === "meeting" ? {} : { link: next.link }) } : {};
     if (next) {
       const refused = recordFits({ ...cur, ...fields }, JSON.stringify(cur).length, "업무를");
       if (refused) return refused;
@@ -9979,6 +10234,7 @@ export default function LifeManager() {
       w.done = !w.done;
       const fu = mirroredFollowUp(s, w);
       if (fu) fu.done = w.done;
+      syncTimeLog(s, w);
       return s;
     });
     setModal(null);
@@ -9993,8 +10249,30 @@ export default function LifeManager() {
       if (fu && fu.workId === w.id) delete fu.workId;
     }
     s.work = (s.work || []).filter((x) => !drop.has(x.id));
+    // v28: the time-log entries of the deleted items go with them.
+    if ((s.timeLog || []).some((e) => drop.has(e.workId))) s.timeLog = s.timeLog.filter((e) => !drop.has(e.workId));
     return s;
   });
+  /* Time log and budget (v28) — records and a setting, never measures (rules 8, 9). `addTimeLog` / `removeTimeLog` write
+     `timeLog` only; `setBizHours` writes `settings` only. */
+  const addTimeLog = (next) => {
+    const rec = { id: uid(), date: next.date, track: trackOf(next, "biz"), minutes: next.minutes, createdAt: today };
+    const refused = recordFits(rec, 0, "시간 기록을");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, timeLog: [...(prev.timeLog || []), rec] }));
+    showToast({ msg: `시간 ${rec.minutes}분을 기록했어요` });
+    return "";
+  };
+  // Confirmed in the sheet.
+  const removeTimeLog = (id) => {
+    setState((prev) => ({ ...prev, timeLog: (prev.timeLog || []).filter((e) => e.id !== id) }));
+    showToast({ msg: "시간 기록을 삭제했어요" });
+  };
+  const setBizHours = (n) => {
+    setState((prev) => ({ ...prev, settings: { ...(prev.settings || {}), bizHoursPerWeek: n } }));
+    setModal(null);
+    showToast({ msg: `주간 사업 시간을 ${n}시간으로 저장했어요` });
+  };
   const removeWork = (id) => {
     const cur = (state.work || []).find((w) => w.id === id);
     if (!cur) return;
@@ -10262,7 +10540,7 @@ export default function LifeManager() {
           <WorkTab state={state} today={today}
             onAdd={(date) => setModal({ type: "work", date })}
             onOpen={(workId) => setModal({ type: "work", workId })}
-            onBridge={() => setModal({ type: "workBridge" })} onRemoveMany={removeWorkMany}
+            onBridge={() => setModal({ type: "workBridge" })} onTimeLog={() => setModal({ type: "timeLog" })} onRemoveMany={removeWorkMany}
             onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })}
             onOpenDocument={(docId) => setModal({ type: "document", docId })}
             onAddCheck={addCheck} onToggleCheck={toggleCheck} onRemoveCheck={removeCheck}
@@ -10289,7 +10567,7 @@ export default function LifeManager() {
             view={state.ui?.bizView} onView={setBizView}
             onAdd={(list) => setModal({ type: BIZ_ADD_MODAL[list] })}
             onEdit={(list, item) => setModal({ type: list, item })}
-            onTogglePaid={toggleDealPaid}
+            onTogglePaid={toggleDealPaid} onTogglePayment={toggleDealPayment}
             onOpenMilestone={(id) => setModal({ type: "milestone", milestoneId: id })}
             onSeedRoadmap={seedRoadmap} />
         )}
@@ -10417,6 +10695,9 @@ export default function LifeManager() {
       {modal?.type === "workBridge" && (
         <WorkBridgeModal state={state} today={today} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
       )}
+      {modal?.type === "timeLog" && (
+        <TimeLogModal state={state} today={today} onClose={() => setModal(null)} onAdd={addTimeLog} onRemove={removeTimeLog} />
+      )}
       {modal?.type === "prepBridge" && (
         <PrepBridgeModal state={state} today={today} eventId={modal.eventId} date={modal.date} onClose={() => setModal(null)}
           onImport={importChecks} onToast={(msg) => showToast({ msg })} />
@@ -10449,7 +10730,7 @@ export default function LifeManager() {
           after the next onboarding or demo entry. The reset itself still asks nothing (TD-26). */}
       {modal?.type === "settings" && (
         <SettingsModal state={state} onClose={() => setModal(null)}
-          onRoleModel={() => setModal({ type: "role" })}
+          onRoleModel={() => setModal({ type: "role" })} onSetBizHours={setBizHours}
           onExport={exportBackup} onImport={askImport}
           onReset={() => { setModal(null); resetAll(); }} />
       )}

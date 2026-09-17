@@ -1296,4 +1296,160 @@ module.exports = async (h) => {
     }, KEY, JOB);
     await h.reload();
   });
+
+  /* ── Time budget and time log (schema v28, Phase 3, 2026-09-18). A time-log entry is a record: a completion with minutes
+     writes exactly one entry and nothing but `work` and `timeLog` moves; the quick entry writes `timeLog` only; the budget
+     writes `settings` only. Written under the standing instruction; not run. Each step starts from an empty time log and
+     the default budget and puts the save's own `timeLog` and `settings` back at the end. ── */
+  // The work tab's week line (`이번 주 사업 {h}/{budget}h · 남은 날 {d} ›`), whitespace-normalised.
+  const weekLine = () => page.evaluate(() => {
+    const b = [...document.querySelectorAll("main button")].find((x) => (x.innerText || "").trim().startsWith("이번 주 사업"));
+    return b ? b.innerText.replace(/\s+/g, " ").trim() : "";
+  });
+  // Days from today to Sunday, both included, from the page's own clock.
+  const daysLeftIn = () => page.evaluate(() => 7 - ((new Date().getDay() + 6) % 7));
+  // The top-level keys whose JSON differs, `lastTick` excepted.
+  const changedKeys = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter((k) => k !== "lastTick" && JSON.stringify(a[k]) !== JSON.stringify(b[k])).sort();
+  const resetTime = (log, settings) => page.evaluate((k, l, s) => {
+    const st = JSON.parse(localStorage.getItem(k));
+    st.timeLog = l;
+    st.settings = s;
+    localStorage.setItem(k, JSON.stringify(st));
+  }, KEY, log, settings);
+  const MIN_ID = "e2e-min-work", MIN_TITLE = "E2E 시간 업무";
+
+  await step("completing a work item with minutes writes one time-log entry, un-completing removes it, and the week line moves", async () => {
+    const today = await dstrIn(0);
+    const saved = await readState();
+    const keep = { log: saved.timeLog || [], settings: saved.settings || { bizHoursPerWeek: 20 } };
+    try {
+      await resetTime([], { ...keep.settings, bizHoursPerWeek: 20 });
+      await page.evaluate((k, id, title, d) => {
+        const st = JSON.parse(localStorage.getItem(k));
+        st.work = [{ id, date: d, title, done: false, source: "manual", createdAt: d, track: "biz" }, ...(st.work || []).filter((w) => w.id !== id)];
+        localStorage.setItem(k, JSON.stringify(st));
+      }, KEY, MIN_ID, MIN_TITLE, today);
+      await h.reload();
+      const d = await daysLeftIn();
+      await clickTab("업무");
+      if ((await weekLine()) !== `이번 주 사업 0h/20h · 남은 날 ${d} ›`) throw new Error("the week line before: " + JSON.stringify(await weekLine()));
+      await openTodo(MIN_TITLE);
+      await expectText("걸린 시간 (분, 선택)");
+      await setValue('.fixed.inset-0 input[aria-label="걸린 시간"]', "90");
+      const before = await readState();
+      await clickInModalExact("완료로 표시");
+      await sleep(500);
+      let after = await readState();
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["timeLog", "work"])) throw new Error("the completion moved: " + JSON.stringify(changedKeys(before, after)));
+      const item = after.work.find((w) => w.id === MIN_ID);
+      if (!item || !item.done || item.minutes !== 90) throw new Error("the completed item: " + JSON.stringify(item));
+      const entries = (after.timeLog || []).filter((e) => e.workId === MIN_ID);
+      if (entries.length !== 1 || entries[0].track !== "biz" || entries[0].minutes !== 90 || entries[0].date !== today) throw new Error("the time-log entries: " + JSON.stringify(after.timeLog));
+      if ((await weekLine()) !== `이번 주 사업 1.5h/20h · 남은 날 ${d} ›`) throw new Error("the week line after the completion: " + JSON.stringify(await weekLine()));
+      await openTodo(MIN_TITLE);
+      await expectText("완료 · 90분");
+      await clickInModalExact("완료 취소");
+      await sleep(500);
+      after = await readState();
+      if ((after.timeLog || []).some((e) => e.workId === MIN_ID)) throw new Error("un-completing left the entry: " + JSON.stringify(after.timeLog));
+      if (after.work.find((w) => w.id === MIN_ID)?.minutes !== 90) throw new Error("un-completing dropped the item's minutes");
+      if ((await weekLine()) !== `이번 주 사업 0h/20h · 남은 날 ${d} ›`) throw new Error("the week line after un-completing: " + JSON.stringify(await weekLine()));
+      await openTodo(MIN_TITLE);
+      await setValue('.fixed.inset-0 input[aria-label="걸린 시간"]', "1441");
+      await clickInModalExact("완료로 표시");
+      if ((await modalError()) !== "걸린 시간은 1 이상 1440 이하 분으로 입력해 주세요.") throw new Error("the minutes refusal: " + (await modalError()));
+      if ((await readState()).work.find((w) => w.id === MIN_ID)?.done) throw new Error("the refused completion was written");
+      // Completed again, then deleted: the entry goes with the item.
+      await setValue('.fixed.inset-0 input[aria-label="걸린 시간"]', "90");
+      await clickInModalExact("완료로 표시");
+      await sleep(500);
+      if (((await readState()).timeLog || []).filter((e) => e.workId === MIN_ID).length !== 1) throw new Error("the second completion wrote no single entry");
+      await openTodo(MIN_TITLE);
+      await page.evaluate(() => { window.confirm = () => true; });
+      await clickInModalExact("삭제");
+      await sleep(500);
+      after = await readState();
+      if (after.work.some((w) => w.id === MIN_ID) || (after.timeLog || []).some((e) => e.workId === MIN_ID)) throw new Error("the deleted item left an entry: " + JSON.stringify(after.timeLog));
+    } finally {
+      await closeModal();
+      await page.evaluate((k, id) => {
+        const st = JSON.parse(localStorage.getItem(k));
+        st.work = (st.work || []).filter((w) => w.id !== id);
+        localStorage.setItem(k, JSON.stringify(st));
+      }, KEY, MIN_ID);
+      await resetTime(keep.log, keep.settings);
+      await h.reload();
+    }
+  });
+
+  await step("the quick entry records minutes by track and the settings budget changes the line", async () => {
+    const today = await dstrIn(0);
+    const saved = await readState();
+    const keep = { log: saved.timeLog || [], settings: saved.settings || { bizHoursPerWeek: 20 } };
+    try {
+      await resetTime([], { ...keep.settings, bizHoursPerWeek: 20 });
+      await h.reload();
+      const d = await daysLeftIn();
+      await clickTab("업무");
+      await clickMain(`이번 주 사업 0h/20h · 남은 날 ${d} ›`);
+      await sleep(300);
+      await expectText("사업 시간 기록");
+      await expectText("이번 주 기록이 없어요.");
+      if ((await chipOn("사업")) !== true) throw new Error("the quick entry does not open on the business track");
+      await setValue('.fixed.inset-0 input[placeholder="분 — 예: 90"]', "0");
+      await clickInModalExact("기록");
+      if ((await modalError()) !== "분을 1 이상 1440 이하로 입력해 주세요.") throw new Error("the quick-entry refusal: " + (await modalError()));
+      await setValue('.fixed.inset-0 input[placeholder="분 — 예: 90"]', "120");
+      let before = await readState();
+      await clickInModalExact("기록");
+      await sleep(300);
+      await expectText("시간 120분을 기록했어요");
+      let after = await readState();
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["timeLog"])) throw new Error("the quick entry moved: " + JSON.stringify(changedKeys(before, after)));
+      const entry = (after.timeLog || [])[0];
+      if (after.timeLog.length !== 1 || entry.workId || entry.minutes !== 120 || entry.track !== "biz" || entry.date !== today) throw new Error("the quick entry: " + JSON.stringify(after.timeLog));
+      if (!(await overlayText()).includes(`${today} · 사업 · 120분 · 직접 기록`)) throw new Error("the sheet does not list the entry");
+      await closeModal();
+      if ((await weekLine()) !== `이번 주 사업 2h/20h · 남은 날 ${d} ›`) throw new Error("the week line after the entry: " + JSON.stringify(await weekLine()));
+      // The budget: a whole number of hours, 0 to 168, written to `settings` only.
+      await h.openSettings();
+      await expectText("사업 시간 — 주간 예산");
+      await setValue('.fixed.inset-0 input[aria-label="주간 사업 시간"]', "10");
+      before = await readState();
+      await clickInModalExact("저장");
+      await sleep(300);
+      await expectText("주간 사업 시간을 10시간으로 저장했어요");
+      after = await readState();
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["settings"]) || after.settings.bizHoursPerWeek !== 10) throw new Error("the budget save: " + JSON.stringify(after.settings));
+      await clickTab("업무");
+      if ((await weekLine()) !== `이번 주 사업 2h/10h · 남은 날 ${d} ›`) throw new Error("the week line after the budget: " + JSON.stringify(await weekLine()));
+      await h.openSettings();
+      await setValue('.fixed.inset-0 input[aria-label="주간 사업 시간"]', "169");
+      await clickInModalExact("저장");
+      if ((await modalError()) !== "0 이상 168 이하 정수로 입력해 주세요.") throw new Error("the budget refusal: " + (await modalError()));
+      if ((await readState()).settings.bizHoursPerWeek !== 10) throw new Error("the refused budget was written");
+      await closeModal();
+      // The typed entry is deleted from the sheet after the confirm.
+      await clickTab("업무");
+      await clickMain(`이번 주 사업 2h/10h · 남은 날 ${d} ›`);
+      await sleep(300);
+      await page.evaluate(() => { window.confirm = () => true; });
+      before = await readState();
+      const tapped = await page.evaluate(() => {
+        const b = document.querySelector('.fixed.inset-0 button[aria-label="시간 기록 삭제"]');
+        if (!b) return false;
+        b.click(); return true;
+      });
+      if (!tapped) throw new Error("the typed entry has no delete button");
+      await sleep(400);
+      await expectText("이번 주 기록이 없어요.");
+      after = await readState();
+      if ((after.timeLog || []).length !== 0 || JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["timeLog"])) throw new Error("the delete: " + JSON.stringify(after.timeLog));
+    } finally {
+      await closeModal();
+      await resetTime(keep.log, keep.settings);
+      await h.reload();
+    }
+  });
 };

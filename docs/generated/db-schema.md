@@ -248,8 +248,12 @@ const demoState = () => {
     },
   ];
   s.deals = [
-    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140), track: "biz" },
-    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6), track: "biz" },
+    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140), track: "biz",
+      // A final lump sum (v28), paid two days after its date: the row's emerald chip and a paid packet line.
+      payments: [{ id: uid(), kind: "final", due: shiftDay(today, -20), amount: 600000, paidAt: shiftDay(today, -18) }] },
+    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6), track: "biz",
+      // An unpaid deposit due in five days (v28): the header's `일시금 미확인 1건` and the briefing's payment line.
+      payments: [{ id: uid(), kind: "deposit", due: shiftDay(today, 5), amount: 3000000 }] },
     { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9), track: "biz" },
     { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3), track: "biz" },
   ];
@@ -327,7 +331,8 @@ const demoState = () => {
   s.work = [
     { id: uid(), date: today, title: "○○물산 유지보수 견적서 송부", note: "월 10시간 · 초과분 시간 단가", done: false,
       link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today, track: "biz" },
-    { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today, track: "biz" },
+    { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today, track: "biz",
+      minutes: 180 }, // v28: the minutes typed on completion; its time-log entry is below
     workFromFollowUp,
     // A done item dated yesterday with a result, so the reader's `오늘 업무` section states a `처리:` line; not in
     // today's view, so the demo counts line is unchanged.
@@ -336,6 +341,14 @@ const demoState = () => {
     // The day-job project's two items for today (v28): the follow-up mirror and one typed by hand.
     workFromJob,
     { id: uid(), date: today, title: "프로파일링 리포트 초안", done: false, source: "manual", createdAt: today, track: "work" },
+  ];
+  // The time log (v28), every entry dated today so the week holds them whatever weekday the demo runs: the done AI item's
+  // 180 minutes (its `workId`), a 90-minute business entry typed by hand and a 60-minute day-job entry — `이번 주 사업 4.5h/20h`.
+  const doneAi = s.work.find((w) => w.minutes);
+  s.timeLog = [
+    { id: uid(), date: today, track: "biz", minutes: 180, workId: doneAi.id, createdAt: today },
+    { id: uid(), date: today, track: "biz", minutes: 90, createdAt: today },
+    { id: uid(), date: today, track: "work", minutes: 60, createdAt: today },
   ];
   // The seeded roadmap (v28): the first milestone done yesterday, the second active and linked to the first demo contract
   // and the open manual business work item, so the view shows all three groups and a linked-work count of 0/1.
@@ -391,19 +404,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 5458 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 5458 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 5458 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 7237 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 7546 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 9235 | App root |
-| `liferpg-img-${slot}` | 9275 | App root |
-| `liferpg-img-ev-${id}` | 9298 | App root |
-| `liferpg-img-ev-${q.id}` | 9483 | App root |
-| `liferpg-img-ev-${t.id}` | 10141 | App root |
-| `liferpg-img-study-${t.id}-1` | 10141 | App root |
-| `liferpg-img-study-${t.id}-2` | 10141 | App root |
-| `liferpg-img-folio-${f.id}` | 10147 | App root |
+| `liferpg-img-ev-${task.id}` | 5504 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 5504 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 5504 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 7320 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 7668 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 9447 | App root |
+| `liferpg-img-${slot}` | 9487 | App root |
+| `liferpg-img-ev-${id}` | 9510 | App root |
+| `liferpg-img-ev-${q.id}` | 9695 | App root |
+| `liferpg-img-ev-${t.id}` | 10419 | App root |
+| `liferpg-img-study-${t.id}-1` | 10419 | App root |
+| `liferpg-img-study-${t.id}-2` | 10419 | App root |
+| `liferpg-img-folio-${f.id}` | 10425 | App root |
 
 ## Demo data (`demoState`)
 

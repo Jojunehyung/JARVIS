@@ -379,6 +379,8 @@ module.exports = async (h) => {
         // Five rows today: the day job's two open items, the business's two open items and its one done item.
         await expectText("직장 2건");
         await expectText("사업 3건");
+        // v28 Phase 3: the demo's time log holds 180 + 90 business minutes and 60 day-job minutes, all dated today.
+        await expectText("이번 주 사업 4.5h/20h");
       }
       if (tab === "미팅") {
         await expectText("프로젝트 3개 · 회의록 5건 · 문서 2건");
@@ -396,6 +398,13 @@ module.exports = async (h) => {
       }
       // v28 Phase 2: the seeded roadmap — stage 1 done, stage 2 active, the other seven planned.
       if (tab === "사업") {
+        // v28 Phase 3: one unpaid deposit due in 5 days; the paid final line was stamped 18 days back, so this month's
+        // lump-sum figure is 600,000 won only when that date falls in the current month.
+        const paidThisMonth = await page.evaluate(() => {
+          const t = new Date(); t.setHours(12, 0, 0, 0); const m = t.getMonth(); t.setDate(t.getDate() - 18);
+          return t.getMonth() === m;
+        });
+        await expectText(`일시금 미확인 1건 · 이번 달 일시금 입금 ${paidThisMonth ? "60만원" : "0원"}`);
         await clickExact("로드맵");
         await expectText("예정 7 · 진행 중 1 · 완료 1");
         await expectText("계약금 입금 확인 — ETL 고도화 계약");

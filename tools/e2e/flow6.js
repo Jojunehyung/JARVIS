@@ -117,6 +117,9 @@ module.exports = async (h) => {
     if (data.state?.v !== 28) throw new Error("backup schema version " + data.state?.v + " (expected 28)");
     if (!Array.isArray(data.state?.tasks) || !data.state.tasks.length) throw new Error("backup carries no tasks");
     if (typeof data.images !== "object") throw new Error("backup carries no image map");
+    // v28 Phase 3: the time log and the weekly budget travel with the save.
+    if (!Array.isArray(data.state?.timeLog)) throw new Error("backup carries no time log");
+    if (!Number.isFinite(data.state?.settings?.bizHoursPerWeek)) throw new Error("backup carries no weekly business budget: " + JSON.stringify(data.state?.settings));
     await page.evaluate((d) => { window.__savedBackup = d; }, dump);
     await closeModal();
   });
@@ -146,5 +149,12 @@ module.exports = async (h) => {
     await closeModal();
     const after = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).tasks.length);
     if (after !== before) errors.push(`restored task count ${after}, expected ${before}`);
+    // v28 Phase 3: the restored save states the backup's time log and budget.
+    const travelled = await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      const b = JSON.parse(window.__savedBackup).state;
+      return JSON.stringify(s.timeLog) === JSON.stringify(b.timeLog) && JSON.stringify(s.settings) === JSON.stringify(b.settings);
+    });
+    if (!travelled) errors.push("the restored save does not carry the backup's timeLog and settings");
   });
 };
