@@ -232,6 +232,65 @@ module.exports = async (h) => {
     if (st.events.some((x) => x.title === "면접 리허설")) throw new Error("the old title is still stored");
   });
 
+  // Event `projectId` (secretary stage 1-A, 2026-09-17, written, not run): an optional reference to a meeting project,
+  // written only when chosen; the prep card reads it and nothing else does.
+  await step("the event form offers a project picker and stores projectId only when chosen", async () => {
+    const TITLE = "E2E 프로젝트 일정";
+    // Puppeteer's own select fires the change event React reads; the answer is the chosen option's label.
+    const PICKER = '.fixed.inset-0 select[aria-label="프로젝트 (선택)"]';
+    const pickProject = async (value) => {
+      await page.select(PICKER, value);
+      return page.$eval(PICKER, (sel) => (sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : null));
+    };
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      s.meetingProjects = [...(s.meetingProjects || []).filter((p) => p.id !== "pE"), { id: "pE", name: "E2E 일정 프로젝트", createdAt: "2026-01-01" }];
+      localStorage.setItem("liferpg-state-v1", JSON.stringify(s));
+    });
+    await h.reload();
+    const before = await readState();
+    await showDay(await dstrIn(0));
+    await openEventModal();
+    await expectText("프로젝트 (선택)");
+    await typeInto("일정 이름", TITLE);
+    const label = await pickProject("pE");
+    if (label !== "E2E 일정 프로젝트") throw new Error("the project picker lacks the planted project: " + JSON.stringify(label));
+    await clickInModalExact("등록");
+    await sleep(700);
+    let ev = ((await readState()).events || []).find((x) => x.title === TITLE);
+    if (!ev || ev.projectId !== "pE") throw new Error("the chosen project was not stored: " + JSON.stringify(ev));
+    await showDay(await dstrIn(0));
+    const r = await rows([TITLE], "수정");
+    if (!r.clicked) throw new Error("the project event row has no edit button: " + r.rows.join(" | "));
+    await sleep(400);
+    await expectText("일정 수정");
+    const shown = await page.evaluate(() => [...document.querySelectorAll(".fixed.inset-0")].pop()?.querySelector('select[aria-label="프로젝트 (선택)"]')?.value);
+    if (shown !== "pE") throw new Error("the edit form did not open on the stored project: " + JSON.stringify(shown));
+    if ((await pickProject("")) !== "연결 안 함") throw new Error("the picker has no unlinked option");
+    await clickInModalExact("저장");
+    await sleep(800);
+    const after = await readState();
+    ev = (after.events || []).find((x) => x.title === TITLE);
+    if (!ev || "projectId" in ev) throw new Error("clearing the pick left projectId on the event: " + JSON.stringify(ev));
+    for (const key of ["meetings", "meetingProjects", "tasks", "goals"]) {
+      if (JSON.stringify(after[key] || []) !== JSON.stringify(before[key] || [])) throw new Error(`the project picker changed ${key}`);
+    }
+    await showDay(await dstrIn(0));
+    const del = await rows([TITLE], "수정");
+    if (!del.clicked) throw new Error("the project event row has no edit button for the delete");
+    await sleep(400);
+    await clickInModalExact("삭제");
+    await sleep(700);
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      s.meetingProjects = (s.meetingProjects || []).filter((p) => p.id !== "pE");
+      localStorage.setItem("liferpg-state-v1", JSON.stringify(s));
+    });
+    await h.reload();
+    const st = await readState();
+    if ((st.events || []).some((x) => x.title === TITLE) || (st.meetingProjects || []).some((p) => p.id === "pE")) throw new Error("the planted project or its event survived the cleanup");
+  });
+
   await step("deleting removes the event from the tab", async () => {
     await showDay(await dstrIn(1));
     const r = await rows(["면접 리허설 2차"], "수정");

@@ -2609,6 +2609,24 @@ const buildBriefing = (state, today) => {
   add("events", "오늘 일정", (eventItems.length ? eventItems : [{ kind: "none", severity: 1, text: "해당 없음" }])
     .map((it) => ({ ...it, action: { type: "schedule" } })));
 
+  /* Meeting preparation — counts, never a title: the prep rows `MeetingPrepCard` shows for today and tomorrow, and the
+     follow-up items past their due date across every meeting. Derived (rule 9); the prep line is stated even at zero
+     (rule 13). `buildAssistantPacket`'s `## 오늘 브리핑` carries every severity ≥ 2 line, so the daily packet now states
+     these counts too — never a title. */
+  const prep = meetingPrepOf(state, today);
+  const prepToday = prep.filter((r) => r.date === today).length;
+  const prepTomorrow = prep.length - prepToday;
+  const overdueFollowUps = (state.meetings || []).flatMap((m) => m.followUps || []).filter((f) => !f.done && f.due && f.due < today);
+  const prepItems = [{
+    kind: "prep", severity: prep.length > 0 ? 2 : 1, action: { type: "work" },
+    text: `오늘 회의 준비 ${prepToday}건${prepTomorrow > 0 ? ` · 내일 ${prepTomorrow}건` : ""}`,
+  }];
+  if (overdueFollowUps.length > 0) {
+    prepItems.push({ kind: "followup", severity: 3, action: { type: "meetings" },
+      text: `후속 기한 지남 ${overdueFollowUps.length}건 · 내 담당 ${overdueFollowUps.filter((f) => f.mine).length}건` });
+  }
+  add("prep", "회의 준비", prepItems);
+
   /* Streak — mirrors the rule completeTask applies */
   const streakItem = act.lastActive === today
     ? { severity: 1, text: `오늘 완료 기록 있음 · 🔥 ${act.streak}일` }
@@ -2760,7 +2778,8 @@ const WORK_PACKET_CLIP = 600;      // chars of decisions, follow-ups and a progr
 const WORK_PACKET_NOTE = 200;      // chars of a work item's note — its whole text (WORK_LIMITS.note)
 const WORK_PACKET_TASKS = 10;      // open task rows
 const WORK_PACKET_EVENTS = 8;      // schedule rows inside PACKET_EVENT_DAYS
-const WORK_PACKET_RECORDS = 20;    // yesterday's and today's work items
+const WORK_PACKET_RECORDS = 20;    // carried, yesterday's and today's work items
+const WORK_PACKET_FOLLOWUPS = 30;  // follow-up items per visible meeting, done ones dropped first when trimming
 const WORK_PACKET_HEAD = [
   "역할: 이 사용자의 목표·회의록·진행사항·기록을 근거로 오늘 처리할 업무를 제안하는 비서예요. 아래 데이터만 근거로 답해요.",
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
@@ -2772,6 +2791,9 @@ const WORK_PACKET_HEAD = [
   '{"work":[{"title":"...","note":"근거 한 줄","link":{"kind":"goal|meeting|project","title":"<이름 그대로>"}}],"note":"한 줄"}',
   "```",
 ];
+// One line of a free text: newlines folded to ` / `, clipped at `n` with `…`, so a reader knows more was written than
+// it sees. The work packet and the meeting-prep card read it.
+const oneLineText = (t, n) => { const s = String(t || "").trim().replace(/\s*\n+\s*/g, " / "); return s.length > n ? `${s.slice(0, n)}…` : s; };
 // One packet section: the heading and its lines, or `- 없음` when there is nothing to state. Both packets use it.
 const packetSection = (title, lines) => (lines.length ? [`## ${title}`, ...lines] : [`## ${title}`, "- 없음"]);
 // Contract facts only, read from the same `bizSummary` the tab and the briefing state. Neither parser reads a business
@@ -2885,11 +2907,12 @@ const parseAssistantReply = (text, state) => {
 /* The work packet (`오늘 업무 만들기`, 2026-09-17 amendment): the same facts the daily packet states — the CV at the level
    `cvSummaryOf` shares (never `profile.name`, `birth`, `email`, `phone`, a school or an employer), the goals, the open
    tasks, the schedule, the contracts — plus what the daily packet never reads: the newest meeting minutes with their
-   progress entries, and yesterday's and today's work items so the assistant does not propose them again. A meeting
+   progress entries and follow-up items, and the carried, yesterday's and today's work items so the assistant does not
+   propose them again. A meeting
    flagged `aiHidden` contributes its date and title only. No photo, no evidence text, no journal entry.
    Summaries, decisions, follow-ups, progress entries and notes go whole (widened 2026-09-17). When the text exceeds
    WORK_PACKET_MAX the reductions below run one step at a time, rebuilding after each, until it fits: the summary clip
-   5,000 → 1,500, then meetings 10 → 2 (oldest first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
+   5,000 → 1,500, then meetings 10 → 2 (oldest first), then follow-up items 30 → 5 per meeting (open ones kept first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
    then the business lines to the first, then the open tasks, then the work records (the parser dedupes by title on its
    own), and last meetings 2 → 0. The header, the CV line and the goals are never dropped — about 800 chars of header
    and 40 per goal line, far under the cap — so the packet always fits. */
@@ -2910,46 +2933,54 @@ const buildWorkPacket = (state, today) => {
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
   const bizLines = bizPacketLines(state, today);
   const meetings = (state.meetings || []).slice().sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
-  // A clipped text ends in `…`, so the assistant knows more was written than it sees.
-  const oneLine = (t, n) => { const s = String(t || "").trim().replace(/\s*\n+\s*/g, " / "); return s.length > n ? `${s.slice(0, n)}…` : s; };
-  const meetingLines = (list, summaryCap, progressN) => list.flatMap((m) => {
+  const meetingLines = (list, summaryCap, progressN, followUpN) => list.flatMap((m) => {
     if (m.aiHidden) return [`- ${m.date} ${m.title}`, "  내용 비공개 (AI에 보내지 않기)"];
     const project = (state.meetingProjects || []).find((p) => p.id === m.projectId)?.name || "프로젝트 없음";
-    const body = [["요약", m.summary, summaryCap], ["결정", m.decisions, WORK_PACKET_CLIP], ["후속", m.actions, WORK_PACKET_CLIP]]
+    // Follow-up items (v26) after the decisions, open first and done last, so the trim drops the done ones first. The
+    // free-text `후속` line stays only for a meeting with text and no items — with items it would state them twice.
+    const fus = m.followUps || [];
+    const body = [["요약", m.summary, summaryCap], ["결정", m.decisions, WORK_PACKET_CLIP], ...(fus.length ? [] : [["후속", m.actions, WORK_PACKET_CLIP]])]
       .filter(([, text]) => String(text || "").trim())
-      .map(([label, text, cap]) => `  ${label}: ${oneLine(text, cap)}`);
+      .map(([label, text, cap]) => `  ${label}: ${oneLineText(text, cap)}`);
+    const followUps = fus.length === 0 ? [] : [`  후속 ${fus.length}건:`,
+      ...[...fus.filter((f) => !f.done), ...fus.filter((f) => f.done)].slice(0, followUpN)
+        .map((f) => `  - ${f.mine ? "내 담당" : "타인"} · ${f.due ? `기한 ${f.due}` : "기한 없음"} · ${f.done ? "완료" : "미완료"} · ${oneLineText(f.text, MEETING_LIMITS.followUp)}`)];
     const progress = (m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, progressN)
-      .map((e) => `  진행 ${e.date}: ${oneLine(e.text, WORK_PACKET_CLIP)}`);
+      .map((e) => `  진행 ${e.date}: ${oneLineText(e.text, WORK_PACKET_CLIP)}`);
     // What the meeting view states besides the minutes (added 2026-09-17 — the packet had left them out): attendees,
     // the linked schedule entry and every linked task with its state, read live like `MeetingViewModal`.
     const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
       .map((q) => `${q.title} (${q.type === "daily" ? "매일 · 오늘 " : ""}${taskClosedOn(q, today) ? "완료" : "미완료"})`);
     const facts = [
-      String(m.attendees || "").trim() && `  참석: ${oneLine(m.attendees, MEETING_LIMITS.attendees)}`,
+      String(m.attendees || "").trim() && `  참석: ${oneLineText(m.attendees, MEETING_LIMITS.attendees)}`,
       m.eventId && `  일정: ${meetingEventText(state, m)}`,
       linked.length > 0 && `  연결된 할 일: ${linked.join(" · ")}`,
     ].filter(Boolean);
-    return [`- ${m.date} [${project}] ${m.title}`, ...facts, ...body, ...progress];
+    return [`- ${m.date} [${project}] ${m.title}`, ...facts, ...body, ...followUps, ...progress];
   });
+  // Today's carried view (every undone item from earlier days, then today's) plus yesterday's items, deduped by id, by date
+  // then `createdAt` — the list `parseWorkReply` dedupes against, so rule 3 of the head covers a carried item too.
   const yesterday = shiftDay(today, -1);
-  const recordLines = (state.work || []).filter((w) => w.date === yesterday || w.date === today)
-    .sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || "").localeCompare(b.createdAt || ""))
-    .map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"} ${w.title}${w.note ? ` · 메모: ${oneLine(w.note, WORK_PACKET_NOTE)}` : ""}`);
+  const recordItems = [...workOn(state, today, today), ...(state.work || []).filter((w) => w.date === yesterday)]
+    .filter((w, i, all) => all.findIndex((x) => x.id === w.id) === i)
+    .sort((a, b) => a.date.localeCompare(b.date) || byCreated(a, b));
+  const recordLines = recordItems.map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"}${!w.done && w.date < today ? ` · 이월 ${daysBetween(w.date, today)}일` : ""} ${w.title}${w.note ? ` · 메모: ${oneLineText(w.note, WORK_PACKET_NOTE)}` : ""}`);
 
   // The knobs the reductions turn; `build` reads them fresh each time.
   const k = { meetings: meetings.length, summary: WORK_PACKET_SUMMARY, progress: WORK_PACKET_PROGRESS,
-    events: WORK_PACKET_EVENTS, biz: PACKET_BIZ_LINES, tasks: WORK_PACKET_TASKS, records: WORK_PACKET_RECORDS };
+    events: WORK_PACKET_EVENTS, biz: PACKET_BIZ_LINES, tasks: WORK_PACKET_TASKS, records: WORK_PACKET_RECORDS, followUps: WORK_PACKET_FOLLOWUPS };
   const build = () => [
     `[인생 관리 — 오늘 업무 제안 요청 ${today}]`, ...WORK_PACKET_HEAD, "",
     ...packetSection("이력", cvLines), ...packetSection("목표", goalLines), ...packetSection("열린 할 일", taskLines.slice(0, k.tasks)),
     ...packetSection(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines.slice(0, k.events)), ...packetSection("사업 (계약·매출)", bizLines.slice(0, k.biz)),
-    ...packetSection(`최근 회의록 (${k.meetings}건)`, meetingLines(meetings.slice(0, k.meetings), k.summary, k.progress)),
-    ...packetSection("업무 기록 (어제·오늘)", recordLines.slice(0, k.records)),
+    ...packetSection(`최근 회의록 (${k.meetings}건)`, meetingLines(meetings.slice(0, k.meetings), k.summary, k.progress, k.followUps)),
+    ...packetSection("업무 기록 (이월·어제·오늘)", recordLines.slice(0, k.records)),
   ].join("\n");
   // Each reduction answers true when it tightened something and false once it has nothing left to give.
   const reductions = [
     () => k.summary > WORK_PACKET_SUMMARY_TRIM && (k.summary = WORK_PACKET_SUMMARY_TRIM, true),
     () => k.meetings > 2 && (k.meetings -= 1, true),
+    () => k.followUps > 5 && (k.followUps = 5, true),
     () => (k.summary > 500 || k.progress > 1) && (k.summary = 500, k.progress = 1, true),
     () => k.events > 0 && (k.events = 0, true),
     () => k.biz > 1 && (k.biz = 1, true),
@@ -6259,7 +6290,7 @@ function ScheduleTab({ state, today, onAdd, onEdit, onToggleDone, onSkip, onExpo
 }
 
 /* ── Event modal — one form for add and edit. No goal, no difficulty, no evidence: an event is only a record ── */
-function EventModal({ event, initialDate, onClose, onAdd, onUpdate, onRemove }) {
+function EventModal({ event, initialDate, projects, onClose, onAdd, onUpdate, onRemove }) {
   const [title, setTitle] = useState(event?.title || "");
   const [kind, setKind] = useState(event?.kind || "appt");
   const [date, setDate] = useState(event?.date || initialDate || ""); // add mode opened from a calendar day starts on that day
@@ -6268,7 +6299,10 @@ function EventModal({ event, initialDate, onClose, onAdd, onUpdate, onRemove }) 
   const [until, setUntil] = useState(event?.repeat?.until || "");
   const [place, setPlace] = useState(event?.place || "");
   const [note, setNote] = useState(event?.note || "");
+  const [projectId, setProjectId] = useState(event?.projectId || "");
   const [err, setErr] = useState("");
+  // A project deleted later stays selectable as itself, so saving the form does not silently drop the reference.
+  const staleProject = projectId && !projects.some((p) => p.id === projectId) ? projectId : "";
 
   const submit = () => {
     if (!title.trim()) { setErr("일정 이름을 입력해 주세요."); return; }
@@ -6280,6 +6314,7 @@ function EventModal({ event, initialDate, onClose, onAdd, onUpdate, onRemove }) 
       ...(place.trim() ? { place: place.trim() } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
       ...(freq ? { repeat: { freq, ...(until ? { until } : {}) } } : {}),
+      ...(projectId ? { projectId } : {}),
     };
     if (event) onUpdate(event.id, next); else onAdd(next);
   };
@@ -6319,6 +6354,21 @@ function EventModal({ event, initialDate, onClose, onAdd, onUpdate, onRemove }) 
           className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="메모 (선택)"
           className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+        {/* The meeting project this event belongs to — a reference the prep card reads, nothing else; the export never
+            reads it. `updateEvent` spreads the form's record over the stamps, so a cleared pick leaves the save. */}
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">프로젝트 (선택)</div>
+          {projects.length === 0 && !staleProject ? (
+            <p className="text-xs text-zinc-500">프로젝트가 없어요 — 미팅 탭에서 만들어요.</p>
+          ) : (
+            <select value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="프로젝트 (선택)"
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm">
+              <option value="">연결 안 함</option>
+              {staleProject && <option value={staleProject}>연결 대상이 삭제됐어요</option>}
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          )}
+        </div>
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
           {event ? "저장" : "등록"}
@@ -6940,6 +6990,12 @@ const MEETING_FOLLOWUPS_MAX = 30;  // follow-up items per meeting before `후속
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
+// The meeting-prep card (`오늘 회의 준비`): the window and how much of the last meeting it states.
+const PREP_DAYS = 2;             // today and tomorrow
+const PREP_FOLLOWUPS = 10;       // open follow-up lines before `{k}건 더`
+const PREP_PROGRESS = 3;         // newest progress entries
+const PREP_TASKS = 5;            // linked task lines
+const PREP_DECISION_CLIP = 200;  // chars of the last meeting's decisions
 const mbText = (chars) => (chars / 1048576).toFixed(1);
 const meetingOrder = (a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || "");
 
@@ -7029,6 +7085,32 @@ const meetingsOfTask = (state, taskId) => (state.meetings || []).filter((m) => (
 
 // One linked task as a to-do row: `완료` when closed, otherwise the to-do row's own lead chip.
 const linkedTaskLead = (q, today) => todoLeadOf({ kind: "task", task: q, date: q.due || null }, today);
+
+// The meeting-prep rows: every open schedule occurrence today and tomorrow that belongs to a live meeting project — by
+// the event's own `projectId`, else by a previous meeting whose trimmed title equals the event's (the newest such
+// meeting names the project). Each row carries the project's newest meeting, its open follow-ups (mine first, stable),
+// its newest progress entries and its live linked tasks. Pure and derived at render, never stored (rule 9); the card
+// and the briefing read the same rows. Date ascending, then `eventsOn`'s order.
+const meetingPrepOf = (state, today) => {
+  const projects = state.meetingProjects || [];
+  const liveProject = (id) => (id ? projects.find((p) => p.id === id) || null : null);
+  const meetings = (state.meetings || []).slice().sort(meetingOrder);
+  return upcomingEvents(state, today, PREP_DAYS).filter((o) => !o.done).flatMap(({ ev, date }) => {
+    const title = String(ev.title || "").trim();
+    const project = liveProject(ev.projectId)
+      || liveProject(meetings.find((m) => m.title.trim() === title)?.projectId);
+    if (!project) return [];
+    const last = meetings.find((m) => m.projectId === project.id) || null;
+    const fus = (last?.followUps || []).filter((f) => !f.done);
+    return [{
+      ev, date, project, last,
+      followUps: [...fus.filter((f) => f.mine), ...fus.filter((f) => !f.mine)],
+      progress: (last?.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, PREP_PROGRESS),
+      tasks: (last?.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
+        .map((q) => ({ q, closed: taskClosedOn(q, today) })),
+    }];
+  });
+};
 
 // A minutes row's marker: `진행 {n}건` and `후속 {open}/{total}`, each only when its total is above zero. Derived (rule 9).
 const meetingRowMarker = (m) => {
@@ -7625,7 +7707,69 @@ const workLinkOptions = (state) => {
   ];
 };
 
-function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany }) {
+/* ── Meeting-prep card (`오늘 회의 준비`) — the first section of the `업무` tab: one block per open schedule occurrence
+   today and tomorrow that belongs to a meeting project (`meetingPrepOf`), stating the last meeting's decisions, open
+   follow-ups, progress and linked tasks; a tap opens that meeting's view. On-device only, so a meeting flagged
+   `aiHidden` is stated in full here. Derived at render, stores nothing (rule 9); renders nothing without a row. ── */
+function MeetingPrepCard({ state, today, onOpenMeeting }) {
+  const prep = useMemo(() => meetingPrepOf(state, today), [state, today]);
+  if (!prep.length) return null;
+  const head = "block text-xs font-bold text-zinc-500 pt-1";
+  const line = "block text-xs text-zinc-300 break-words";
+  const workState = (f) => {
+    const w = f.workId ? (state.work || []).find((x) => x.id === f.workId) : null;
+    return w ? (w.done ? "완료" : "미완료") : "없음";
+  };
+  return (
+    <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+      <div className="flex items-center justify-between gap-2">
+        <SectionLabel tone="text-cyan-400">오늘 회의 준비</SectionLabel>
+        <span className="text-xs font-mono text-zinc-400 mb-2">{prep.length}건</span>
+      </div>
+      <div className="space-y-2">
+        {prep.map((row) => {
+          const { ev, date, project, last } = row;
+          const Tag = last ? "button" : "div";
+          const hidden = row.followUps.length - PREP_FOLLOWUPS;
+          return (
+            <Tag key={`${ev.id}|${date}`} {...(last ? { onClick: () => onOpenMeeting(last.id) } : {})}
+              className="bg-zinc-950 rounded-xl p-3 space-y-1.5 text-left w-full block active:opacity-70">
+              <span className="block text-sm font-bold truncate">{project.name}</span>
+              <span className="block font-mono text-xs text-zinc-400 break-words">{`${date === today ? "오늘" : "내일"} ${ev.time || "시간 미정"} · ${ev.title}`}</span>
+              <span className={line}>{last ? <>마지막 회의 <span className="font-mono">{last.date}</span> · {last.title}</> : "이전 회의록 없음"}</span>
+              {last && (
+                <>
+                  <span className={line}>{`결정: ${oneLineText(last.decisions, PREP_DECISION_CLIP) || "없음"}`}</span>
+                  <span className={head}>후속 <span className="font-mono">{row.followUps.length}</span>건</span>
+                  {row.followUps.slice(0, PREP_FOLLOWUPS).map((f) => (
+                    <span key={f.id} className={line}>
+                      {`${f.mine ? "내 담당" : "타인"} · ${f.text} · 기한 ${f.due || "없음"} · 업무 ${workState(f)}`}</span>
+                  ))}
+                  {hidden > 0 && <span className="block text-xs font-mono text-zinc-500">{hidden}건 더</span>}
+                  <span className={head}>진행</span>
+                  {row.progress.length === 0 ? <span className="block text-xs text-zinc-500">진행사항 없음</span>
+                    : row.progress.map((e) => (
+                      <span key={e.id} className={line}><span className="font-mono">{e.date}</span> {oneLineText(e.text, 100)}</span>
+                    ))}
+                  {row.tasks.length > 0 && (
+                    <>
+                      <span className={head}>할 일</span>
+                      {row.tasks.slice(0, PREP_TASKS).map(({ q, closed }) => (
+                        <span key={q.id} className={line}>{`${q.title} · ${closed ? "완료" : "미완료"}`}</span>
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </Tag>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMeeting }) {
   const [viewDate, setViewDate] = useState(today); // the day shown — component state only, never stored (rule 9)
   // Select mode for deleting several items at once: component state only, cleared when the day changes.
   const [selecting, setSelecting] = useState(false);
@@ -7660,6 +7804,7 @@ function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany }) {
 
   return (
     <>
+      <MeetingPrepCard state={state} today={today} onOpenMeeting={onOpenMeeting} />
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         <div className="flex items-center justify-between gap-2">
           <SectionLabel tone="text-cyan-400">{isToday ? `오늘 업무 — ${today}` : `업무 — ${viewDate}`}</SectionLabel>
@@ -8794,7 +8939,8 @@ export default function LifeManager() {
           <WorkTab state={state} today={today}
             onAdd={(date) => setModal({ type: "work", date })}
             onOpen={(workId) => setModal({ type: "work", workId })}
-            onBridge={() => setModal({ type: "workBridge" })} onRemoveMany={removeWorkMany} />
+            onBridge={() => setModal({ type: "workBridge" })} onRemoveMany={removeWorkMany}
+            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}
@@ -8885,7 +9031,7 @@ export default function LifeManager() {
           onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir} />
       )}
       {modal?.type === "event" && (
-        <EventModal event={modal.event} initialDate={modal.date} onClose={() => setModal(null)}
+        <EventModal event={modal.event} initialDate={modal.date} projects={state.meetingProjects || []} onClose={() => setModal(null)}
           onAdd={addEvent} onUpdate={updateEvent} onRemove={removeEvent} />
       )}
       {modal?.type === "deals" && (

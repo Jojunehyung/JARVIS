@@ -621,6 +621,51 @@ module.exports = async (h) => {
     if (addDisabled !== true) throw new Error("the form's add-row button is not disabled at 30 items: " + addDisabled);
     if (!(await overlayText()).includes("후속 항목은 30건까지예요.")) throw new Error("the form does not state the follow-up cap");
     await closeModal();
+  });
+
+  // Phase 3 (written 2026-09-17, not run): the work packet states follow-ups as items. It reads the step-16 meeting, so
+  // the cleanup that used to end the previous step runs at the end of this one.
+  await step("the work packet states each follow-up with owner, due and state, and keeps the raw line only for a meeting without items", async () => {
+    const today = await dstrIn(0);
+    const RAW_ID = "e2e-raw-mtg", RAW_TITLE = "E2E 원문 후속 회의";
+    const HIDDEN_ID = "e2e-hidden-fu-mtg", HIDDEN_TITLE = "E2E 비공개 후속 회의";
+    await plantMeetingRecord({ id: RAW_ID, date: today, title: RAW_TITLE, summary: "원문 확인", actions: "원문 후속",
+      createdAt: today, taskIds: [], progress: [], aiHidden: false, followUps: [] });
+    await plantMeetingRecord({ id: HIDDEN_ID, date: today, title: HIDDEN_TITLE, summary: "비공개 요약", actions: "비공개 원문 후속",
+      createdAt: today, taskIds: [], progress: [], aiHidden: true, followUps: [{ id: "e2e-hidden-fu", text: "비공개 후속 항목", mine: true, done: false }] });
+    await clickTab("업무");
+    await clickText("AI로 만들기 ›");
+    await sleep(400);
+    await expectText("오늘 업무 만들기");
+    const txt = await page.evaluate(() => document.querySelector(".fixed.inset-0 textarea")?.value || "");
+    await closeModal();
+    // One meeting's lines: its `- {date} …{title}` heading and every indented line under it.
+    const blockOf = (title) => {
+      const lines = txt.split(NL);
+      const i = lines.findIndex((l) => l.startsWith("- ") && l.endsWith(" " + title));
+      if (i < 0) return null;
+      const out = [lines[i]];
+      for (let j = i + 1; j < lines.length && lines[j].startsWith("  "); j++) out.push(lines[j]);
+      return out;
+    };
+    if (txt.length > 20000) throw new Error("the work packet exceeds the 20000-char cap: " + txt.length);
+    if (!txt.includes("## 업무 기록 (이월·어제·오늘)")) throw new Error("the work-record heading is not 업무 기록 (이월·어제·오늘)");
+    const m = await fuMeeting();
+    const fus = [...m.followUps.filter((f) => !f.done), ...m.followUps.filter((f) => f.done)];
+    const line = (f) => `  - ${f.mine ? "내 담당" : "타인"} · ${f.due ? `기한 ${f.due}` : "기한 없음"} · ${f.done ? "완료" : "미완료"} · ${f.text}`;
+    const fuBlock = blockOf(FU_MEETING);
+    if (!fuBlock) throw new Error("the packet lacks the follow-up meeting: " + txt.slice(0, 300));
+    const at = fuBlock.indexOf(`  후속 ${fus.length}건:`);
+    if (fus.length !== 2 || at < 0) throw new Error("the follow-up meeting's item heading: " + fuBlock.join(" | "));
+    const want = fus.map(line);
+    if (!want.includes(`  - 내 담당 · 기한 ${m.followUps[0].due} · 미완료 · 견적서 송부`) || !want.includes("  - 타인 · 기한 없음 · 미완료 · 단가표 회신")) throw new Error("the saved follow-ups drifted from the earlier steps: " + want.join(" | "));
+    if (fuBlock.slice(at + 1, at + 3).join(NL) !== want.join(NL)) throw new Error("the item lines: " + fuBlock.slice(at + 1, at + 3).join(" | ") + " — expected " + want.join(" | "));
+    if (fuBlock.some((l) => l.startsWith("  후속: "))) throw new Error("a meeting with items still carries the raw follow-up line: " + fuBlock.join(" | "));
+    const rawBlock = blockOf(RAW_TITLE);
+    if (!rawBlock || !rawBlock.includes("  후속: 원문 후속") || rawBlock.some((l) => /^  후속 \d+건:$/.test(l))) throw new Error("the meeting without items: " + JSON.stringify(rawBlock));
+    const hidden = blockOf(HIDDEN_TITLE);
+    if (!hidden || hidden.length !== 2 || hidden[1] !== "  내용 비공개 (AI에 보내지 않기)") throw new Error("the hidden meeting's lines: " + JSON.stringify(hidden));
+    if (txt.includes("비공개 후속 항목") || txt.includes("비공개 원문 후속")) throw new Error("the hidden meeting's follow-ups reached the packet");
     // Leave the save as flow11 expects it: the planted and form-made meetings gone, with every work item they created.
     await page.evaluate((k, ids, title) => {
       const s = JSON.parse(localStorage.getItem(k));
@@ -628,7 +673,7 @@ module.exports = async (h) => {
       s.meetings = s.meetings.filter((x) => !gone.has(x.id));
       s.work = (s.work || []).filter((w) => !(w.link?.kind === "meeting" && gone.has(w.link.id)));
       localStorage.setItem(k, JSON.stringify(s));
-    }, KEY, [SPLIT_ID, CAP_ID], FU_MEETING);
+    }, KEY, [SPLIT_ID, CAP_ID, RAW_ID, HIDDEN_ID], FU_MEETING);
     await h.reload();
   });
 };

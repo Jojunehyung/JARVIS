@@ -380,6 +380,87 @@ module.exports = async (h) => {
     await h.reload();
   });
 
+  // The meeting-prep card and the briefing's `회의 준비` section (secretary stage 1-A Phase 3, 2026-09-17, written, not run).
+  await step("an event linked to a project, or titled like a previous meeting, gets a prep block that opens the last meeting", async () => {
+    const P = { id: "e2e-prep-proj", name: "E2E 준비 프로젝트" };
+    const M = { id: "e2e-prep-mtg", title: "E2E 준비 회의" };
+    const E1 = { id: "e2e-prep-ev1", title: "E2E 준비 점검" };
+    const FU_TEXT = "E2E 준비 자료 송부";
+    const today = await dstrIn(0), tomorrow = await dstrIn(1), yesterday = await dstrIn(-1);
+    M.date = await dstrIn(-3);
+    await page.evaluate((k, p, m, e1, fu, t, tm) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetingProjects = [...(st.meetingProjects || []), { id: p.id, name: p.name, createdAt: m.date }];
+      st.meetings = [...(st.meetings || []), { id: m.id, projectId: p.id, date: m.date, title: m.title, summary: "준비 카드 확인용 회의",
+        decisions: "월 10시간", createdAt: m.date, taskIds: [], aiHidden: false,
+        progress: [{ id: "e2e-prep-prog", date: m.date, text: "견적 초안 작성" }],
+        followUps: [{ id: "e2e-prep-fu", text: fu, mine: true, done: false }] }];
+      st.events = [...(st.events || []),
+        { id: e1.id, title: e1.title, kind: "appt", date: t, time: "10:00", projectId: p.id, createdAt: t },
+        { id: "e2e-prep-ev2", title: m.title, kind: "appt", date: tm, createdAt: t }];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, P, M, E1, FU_TEXT, today, tomorrow);
+    await h.reload();
+    const before = await readState();
+    const cardText = () => page.evaluate(() => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+      return sec ? { first: document.querySelector("main section") === sec, text: sec.innerText.replace(/[ \t]+/g, " ") } : null;
+    });
+    await clickTab("업무");
+    await expectText("오늘 회의 준비");
+    const card = await cardText();
+    if (!card || !card.first) throw new Error("the prep card is not the first section of the work tab: " + JSON.stringify(card));
+    const lines = card.text.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines[1] !== "2건") throw new Error("the prep card count: " + JSON.stringify(lines.slice(0, 2)));
+    for (const t of [P.name, `오늘 10:00 · ${E1.title}`, `내일 시간 미정 · ${M.title}`, `마지막 회의 ${M.date} · ${M.title}`, "결정: 월 10시간",
+      `내 담당 · ${FU_TEXT} · 기한 없음 · 업무 없음`, `${M.date} 견적 초안 작성`]) {
+      if (!lines.includes(t)) throw new Error(`the prep card lacks "${t}": ` + lines.join(" | "));
+    }
+    if (lines.indexOf(`오늘 10:00 · ${E1.title}`) > lines.indexOf(`내일 시간 미정 · ${M.title}`)) throw new Error("today's block is not listed before tomorrow's");
+    await page.evaluate(() => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+      sec.querySelector("button").click();
+    });
+    await sleep(500);
+    const view = await overlayText();
+    if (!view.startsWith(M.title)) throw new Error("tapping the first block did not open the last meeting: " + view.slice(0, 120));
+    await closeModal();
+    await clickTab("할 일");
+    await clickMain("브리핑 열기 ›");
+    await sleep(400);
+    await expectText("오늘 회의 준비 1건 · 내일 1건");
+    if ((await overlayText()).includes("후속 기한 지남")) throw new Error("the briefing states an overdue follow-up before any due date is set");
+    await closeModal();
+    await page.evaluate((k, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetings.find((m) => m.id === "e2e-prep-mtg").followUps[0].due = d;
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, yesterday);
+    await h.reload();
+    await clickTab("할 일");
+    await clickMain("브리핑 열기 ›");
+    await sleep(400);
+    await expectText("후속 기한 지남 1건 · 내 담당 1건");
+    await h.clickInModal("후속 기한 지남 1건 · 내 담당 1건");
+    await sleep(400);
+    if (await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length)) throw new Error("the briefing stayed open after the overdue line was tapped");
+    const active = await page.evaluate(() => [...document.querySelectorAll("nav button")].filter((b) => /text-cyan-300/.test(b.className)).map((b) => (b.innerText || "").trim()).join("·"));
+    if (active !== "미팅") throw new Error("the overdue follow-up line opened the tab: " + (active || "none"));
+    const after = await readState();
+    for (const key of ["work", "tasks", "goals", "events", "meetingProjects"]) {
+      if (JSON.stringify(after[key] || []) !== JSON.stringify(before[key] || [])) throw new Error(`the prep card or the briefing changed ${key}`);
+    }
+    // Clean up the plants so the backup step and flow4 see the save they used to.
+    await page.evaluate((k) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetingProjects = st.meetingProjects.filter((p) => p.id !== "e2e-prep-proj");
+      st.meetings = st.meetings.filter((m) => m.id !== "e2e-prep-mtg");
+      st.events = st.events.filter((e) => !["e2e-prep-ev1", "e2e-prep-ev2"].includes(e.id));
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY);
+    await h.reload();
+  });
+
   await step("work items and meeting progress travel in the backup file", async () => {
     const st = await readState();
     if (!(st.work || []).length) throw new Error("no work item to export");
@@ -437,15 +518,17 @@ module.exports = async (h) => {
     if (!linkedTitle) throw new Error("no task to link, so the linked-task line would prove nothing");
     if (!txt.startsWith("[인생 관리 — 오늘 업무 제안 요청 " + today + "]")) throw new Error("the packet does not open with the work request line: " + txt.slice(0, 80));
     if (txt.length > 20000) throw new Error("the work packet exceeds the 20000-char cap: " + txt.length);
-    for (const t of ["## 이력", "## 목표", "## 열린 할 일", "## 최근 회의록", "## 업무 기록 (어제·오늘)",
+    for (const t of ["## 이력", "## 목표", "## 열린 할 일", "## 최근 회의록", "## 업무 기록 (이월·어제·오늘)",
       `[${PROJECT}] ${MTG_A}`, "참석: E2E 참석 2명", `연결된 할 일: ${linkedTitle} (`, "요약: 검색 범위 협의 완료", `진행 ${today}: 색인 스크립트 초안 작성`,
       `${twoDaysAgo} ${MTG_B}`, "내용 비공개 (AI에 보내지 않기)", `${today} 미완료 ${WORK_TITLE}`]) {
       if (!txt.includes(t)) throw new Error(`the work packet lacks "${t}" (${txt.length} chars)`);
     }
-    // The carried item is in the work-record section, stated with its age. Phase 3 of the 2026-09-17 secretary plan
-    // renders this line (records built from today's carried view); until then this assertion fails.
+    // The carried item is in the work-record section, stated with its age as `- {date} 미완료 · 이월 {n}일 {title}` — the
+    // records are built from today's carried view plus yesterday's items.
     const recordSection = txt.slice(txt.indexOf("## 업무 기록")).split("\n## ")[0];
-    if (!recordSection.includes("이월 ") || !recordSection.includes(PAST_TITLE)) throw new Error("the work-record section lacks the carried item: " + recordSection.slice(0, 300));
+    const pastItem = ((await readState()).work || []).find((w) => w.id === PAST_ID);
+    if (!pastItem) throw new Error("the carried item is not in the save, so the record line would prove nothing");
+    if (!recordSection.includes(`- ${pastItem.date} 미완료 · 이월 3일 ${PAST_TITLE}`)) throw new Error("the work-record section lacks the carried item: " + recordSection.slice(0, 300));
     // The hidden meeting: its body stays out, and its line names no project either — date and title only.
     if (txt.includes(HIDDEN_SUMMARY) || txt.includes("단가 조정") || txt.includes("비공개 참석자")) throw new Error("the hidden meeting's minutes reached the packet");
     if (txt.includes(`[${PROJECT}] ${MTG_B}`)) throw new Error("the hidden meeting's line names its project");
