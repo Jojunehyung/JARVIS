@@ -6843,23 +6843,23 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    stored — only a hand-written or pasted summary, capped below.
    Storage arithmetic (the budget is counted in string length, like `storageUsedBytes`: 3.5 × 1,048,576 = 3,672,064
    chars shared with the rest of the save and every thumbnail). An empty record costs about 190 chars (ids, both
-   dates, keys, the comma); a record with every field full costs 40 + 80 + 1,500 + 600 + 600 + 190 = 3,010 chars plus one
-   per newline (caps widened at the user's request on 2026-09-16 and 2026-09-17, from 800 / 200 / 200); a typical one (25 / 30 / 400 / 100 /
+   dates, keys, the comma); a record with every field full costs 40 + 80 + 5,000 + 600 + 600 + 190 = 6,510 chars plus one
+   per newline (caps widened at the user's request on 2026-09-16 and twice on 2026-09-17, from 800 / 200 / 200); a typical one (25 / 30 / 400 / 100 /
    100) stays about 850, since a higher cap does not make minutes longer. At three a working day (750 a year) typical
    minutes use 0.64 M chars a year — 52 % of the budget after three years, 87 % after five; completely full records use
-   2.26 M a year and cross the budget in about a year and seven months.
+   4.88 M a year and cross the budget in about nine months.
    So the caps alone promise nothing, and two facts guard the rest: the tab always states the storage in use, and a
    save that would cross the budget is refused with the form kept open (`recordFits` in the root).
    Task links (v24) add `,"taskIds":[]` = 13 chars to every record and 12 per linked id (a 10-char uid, two quotes,
-   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 3,142. `recordFits` measures the
+   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 6,642. `recordFits` measures the
    serialised record, `taskIds` included, so the same guard covers it.
    Progress entries and the AI flag (v25) add `,"progress":[]` (14) + `,"aiHidden":false` (17) = 31 chars to every
    record. One entry is `{"id":"…","date":"YYYY-MM-DD","text":""}` ≈ 45 chars + its text (+ 1 comma): a typical
    80-char entry ≈ 125, a full 300-char entry ≈ 345, and thirty full entries ≈ 10,380 — so a completely full meeting
-   with ten links and thirty full entries ≈ 3,142 + 31 + 10,380 ≈ 13,550 chars. Typical minutes with three typical
+   with ten links and thirty full entries ≈ 6,642 + 31 + 10,380 ≈ 17,050 chars. Typical minutes with three typical
    entries ≈ 850 + 31 + 375 ≈ 1,260 chars; three a working day ≈ 0.95 M chars a year (26 % of the budget a year,
    about 3 years 10 months before the guard applies). `recordFits` measures the whole record, `progress` included. */
-const MEETING_LIMITS = { title: 40, attendees: 80, summary: 1500, decisions: 600, actions: 600, tasks: 10, progress: 300 };
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300 };
 const MEETING_PROGRESS_MAX = 30;   // progress entries per meeting before `진행사항은 30건까지예요.`
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
