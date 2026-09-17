@@ -1091,7 +1091,7 @@ const GATE_CHIPS = {
   9: ["정상급 위치의 공적 증거"],
 };
 const AREA_PRESETS = ["사업", "직업·커리어", "기본지식", "건강", "어학", "인맥", "자산", "취미·창작"];
-const ROLE_PRESETS = ["대기업 현직 전문가", "월 500 1인 사업가", "프리랜서 전문가", "창업가·대표"];
+const ROLE_PRESETS = ["대기업 현직 전문가", "월 500 1인 사업가", "프리랜서 전문가", "창업가·대표", "의료 AI 솔루션 대표"];
 const TASK_TEMPLATES = [
   { t: "아침 운동 30분", kind: "fit", diff: "E", type: "daily" },
   { t: "독서 30분", kind: "book", diff: "E", type: "daily" },
@@ -2474,6 +2474,104 @@ const milestoneTrack = (state, m) => {
 };
 
 /* ───────────────────────── Daily assistant — agenda · briefing · bridge ───────────────────────── */
+// Everything below reads the save and states facts: the role stages, the direction advice, the agenda, the briefing,
+// the reader and the copy/paste packets. Nothing here pays, promotes or completes (rules 1, 7, 9).
+/* ── Role stages (v28) ── */
+/* The role model's optional stages: each stage is a list of fact conditions `{ type, arg?, min }` the app evaluates
+   from its own records; a stage is met when every condition is met, and the current stage is the first unmet one.
+   Only the user's stage definitions are stored (`role.stages`); every value, the current stage and the quit condition
+   are derived at render (rule 9). The stage count is a second number beside `roleGap`, never merged into it (rule 14),
+   and nothing here pays, promotes or moves a grade (rule 1). Storage: nine stages with two conditions each ≈ 1.5 k. */
+const ROLE_STAGES_MAX = 12;
+const STAGE_CONDS_MAX = 5;
+const ROLE_STAGE_NAME = 40;
+// Pipeline and notice stages in order — read by the evaluator; the screens that write them arrive with the pipeline.
+const LEAD_STAGES = ["potential", "contact", "demo", "proposal", "quote", "won"];
+const NOTICE_STAGES = ["review", "writing", "submitted", "selected"];
+// [type, label, argument hint]; an empty hint means the type takes no argument.
+const COND_TYPES = [
+  ["deals_won", "계약 체결 수", "고객사·일감에 포함된 글자 (선택)"],
+  ["deals_active", "진행·예정 계약 수", "고객사·일감에 포함된 글자 (선택)"],
+  ["monthly_revenue", "이번 달 계약 매출 (원)", ""],
+  ["payment_paid", "입금 확인된 일시금 수", "deposit · interim · final · other (선택)"],
+  ["folio_match", "포트폴리오 항목 수", "제목·설명·기술에 포함된 글자 (선택)"],
+  ["milestone_done", "완료 마일스톤 수", "단계 번호 또는 제목에 포함된 글자 (선택)"],
+  ["leads_stage", "리드 수 (단계 이상)", "potential · contact · demo · proposal · quote · won"],
+  ["notice_status", "공고 수 (상태 이상)", "review · writing · submitted · selected · rejected"],
+  ["cert_held", "보유 자격", "자격 이름 그대로"],
+];
+// The user's own situation, 2026-09-17; stage 7's revenue threshold is a draft the user edits.
+const ROLE_STAGE_SEED = [
+  { name: "계약 기반 개발자", conds: [{ type: "deals_active", min: 1 }, { type: "payment_paid", arg: "deposit", min: 1 }] },
+  { name: "과업 확장 협상", conds: [{ type: "milestone_done", arg: "2", min: 1 }] },
+  { name: "세부 계약 체결", conds: [{ type: "milestone_done", arg: "3", min: 1 }, { type: "deals_won", min: 2 }] },
+  { name: "AI 개발 실적", conds: [{ type: "milestone_done", arg: "4", min: 1 }, { type: "folio_match", arg: "AI", min: 1 }] },
+  { name: "세일즈 개시", conds: [{ type: "leads_stage", arg: "contact", min: 5 }, { type: "leads_stage", arg: "demo", min: 1 }] },
+  { name: "첫 병원 계약", conds: [{ type: "deals_won", arg: "병원", min: 1 }] },
+  { name: "반복 매출", conds: [{ type: "deals_won", arg: "병원", min: 3 }, { type: "monthly_revenue", min: 5000000 }] },
+  { name: "국가사업 도전", conds: [{ type: "notice_status", arg: "submitted", min: 1 }] },
+  { name: "국가사업 수주 — 전환 조건", conds: [{ type: "notice_status", arg: "selected", min: 1 }] },
+];
+const seedStages = () => ROLE_STAGE_SEED.map((st) => ({ id: uid(), name: st.name, conds: st.conds.map((c) => ({ ...c })) }));
+// One condition's value, pure, reading only the save. An unknown type is 0.
+const condValue = (state, today, c) => {
+  const arg = c?.arg == null ? "" : String(c.arg).trim();
+  const won = (state?.deals || []).filter((d) => d.status === "won" && (!arg || `${d.client || ""} ${d.title || ""}`.includes(arg)));
+  const atOrPast = (order, v) => (order.includes(arg) ? order.indexOf(v) >= order.indexOf(arg) : true);
+  switch (c?.type) {
+    case "deals_won": return won.length;
+    case "deals_active": {
+      const month = String(today).slice(0, 7);
+      return won.filter((d) => ["active", "upcoming"].includes(dealPhase(d, month))).length;
+    }
+    case "monthly_revenue": return bizSummary(state, today).thisMonth;
+    case "payment_paid":
+      return (state?.deals || []).reduce((n, d) => n + (d.payments || []).filter((p) => p.paidAt && (!arg || p.kind === arg)).length, 0);
+    case "folio_match": {
+      const q = arg.toLowerCase();
+      return (state?.folio || []).filter((f) => !q || [f.title, f.summary, ...(f.stack || [])].join(" ").toLowerCase().includes(q)).length;
+    }
+    case "milestone_done": {
+      const done = (state?.milestones || []).filter((m) => m.status === "done");
+      if (!arg) return done.length;
+      return /^\d+$/.test(arg) ? done.filter((m) => m.stage === Number(arg)).length : done.filter((m) => String(m.title || "").includes(arg)).length;
+    }
+    // An unknown or missing stage argument counts every lead.
+    case "leads_stage": return (state?.leads || []).filter((l) => atOrPast(LEAD_STAGES, l.stage)).length;
+    // `rejected` is outside the order and counts only itself; an unknown or missing argument counts every notice.
+    case "notice_status":
+      return (state?.notices || []).filter((n) => (arg === "rejected" ? n.status === "rejected" : atOrPast(NOTICE_STAGES, n.status))).length;
+    case "cert_held": return arg && heldCertsOf(state).some((h) => h.n === arg) ? 1 : 0;
+    default: return 0;
+  }
+};
+const condText = (state, today, c) => {
+  const label = COND_TYPES.find((t) => t[0] === c?.type)?.[1] || "알 수 없는 조건";
+  const value = condValue(state, today, c);
+  const money = c?.type === "monthly_revenue";
+  const arg = c?.arg == null ? "" : String(c.arg).trim();
+  return `${label}${arg ? ` '${arg}'` : ""} ${money ? wonText(value) : value}/${money ? wonText(c?.min) : Number(c?.min) || 0}`;
+};
+// Derived at render, never stored (rule 9); a second number beside `roleGap`, never merged into it (rule 14).
+const roleStageOf = (state, today) => {
+  const list = state?.role?.stages;
+  if (!Array.isArray(list) || !list.length) return null;
+  const stages = list.map((s) => {
+    const results = (s.conds || []).map((c) => {
+      const value = condValue(state, today, c);
+      return { c, value, met: value >= (Number(c.min) || 0), text: condText(state, today, c) };
+    });
+    return { s, results, met: results.every((r) => r.met) };
+  });
+  const n = stages.length;
+  const first = stages.findIndex((x) => !x.met);
+  const k = first < 0 ? n + 1 : first + 1;
+  const all = stages.flatMap((x) => x.results);
+  return { n, k, condsMet: all.filter((r) => r.met).length, condsTotal: all.length, quit: stages[n - 1].met, current: first < 0 ? null : stages[first], stages };
+};
+const quitText = (rs) => (rs.quit ? "전환 조건 충족 (1/1)" : "전환 조건 미충족 (0/1)");
+const stageLine = (rs) => `롤모델 ${Math.min(rs.k, rs.n)}/${rs.n}단계 · 조건 ${rs.condsMet}/${rs.condsTotal} · ${quitText(rs)}`;
+
 // Standard achievements that would close each role-model gap. Shared by RoleAdviceModal and the briefing;
 // the tiering and payout logic is unchanged (rules 14, 15).
 const roleRecommendations = (state) => {
@@ -2870,7 +2968,10 @@ const buildBriefing = (state, today) => {
     const g0 = gaps[0];
     const r = g0.recs[0];
     const e = g0.examRecs[0];
-    const tail = r ? `추천: ${r.jw?.tier || "—"} ${r.c.n} D${r.c.d} +${r.gain.toLocaleString()}P`
+    // The business area with stages states the stage instead of a certification; stage names are the user's own words.
+    const rs = g0.area.name === "사업" ? roleStageOf(state, today) : null;
+    const tail = rs ? "다음: " + Math.min(rs.k, rs.n) + "단계 " + (rs.current ? rs.current.s.name : "전환 조건 충족") + " · 조건 " + rs.condsMet + "/" + rs.condsTotal
+      : r ?`추천: ${r.jw?.tier || "—"} ${r.c.n} D${r.c.d} +${r.gain.toLocaleString()}P`
       : e ? `추천: ${e.e.n} ${e.band?.[0] ?? ""} D${e.band?.[1] ?? ""} +${(e.payout || 0).toLocaleString()}P`
         : "매칭되는 표준 성취 없음 — 도감에서 직접 찾아요";
     nextItem = { kind: "next", severity: 2, text: `${g0.area.name} ${RANKS[g0.have].name}→${RANKS[g0.need].name} · ${tail}`, action: { type: "roleAdvice" } };
@@ -4143,7 +4244,9 @@ const demoState = () => {
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
-  s.role = { name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 } };
+  // The seeded stages (v28): the upcoming contract, two won contracts and the AI portfolio entry meet 3 of 14 conditions,
+  // and the unpaid deposit keeps stage 1 current.
+  s.role = { name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 }, stages: seedStages() };
   return s;
 };
 
@@ -4750,6 +4853,7 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
   const trophies = (state.room?.trophies || []).length;
   const achTotal = (state.areas || []).reduce((n, p) => n + (p.achievements || []).length, 0);
   const rg = roleGap(state);
+  const rs = roleStageOf(state, today);
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
@@ -4815,6 +4919,15 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
         </button>
       ) : (
         <p className="px-1 text-xs text-zinc-500">롤모델 미설정 — 근접도 계산 대상 없음</p>
+      )}
+      {/* The stage count is a second, separate figure (rule 14): it never enters the percentage above */}
+      {rs && (
+        <button onClick={onRoleAdvice} title={stageLine(rs)} className="w-full text-left flex items-center gap-1.5 px-1 text-xs active:opacity-70">
+          <span className="text-zinc-500 shrink-0">단계</span>
+          <span className="font-mono font-bold text-cyan-300 shrink-0">{Math.min(rs.k, rs.n)}/{rs.n}</span>
+          <span className="text-zinc-500 truncate">· 조건 <span className="font-mono">{rs.condsMet}/{rs.condsTotal}</span> · {quitText(rs)}</span>
+          <span className="text-zinc-600 shrink-0">›</span>
+        </button>
       )}
     </>
   );
@@ -5621,8 +5734,30 @@ function CatalogModal({ state, initialCat, onClose }) {
 }
 
 /* ── Role-model direction advice ── */
-function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
+/* The current stage, its conditions and the next milestone — the advice sheet's stage block and the business area's
+   gap block print the same lines. Every line is derived at render (rule 9); unmet conditions are rose, met emerald. */
+function RoleStageLines({ state, rs, today }) {
+  const next = (state.milestones || []).filter((m) => m.status !== "done").sort(milestoneOrder)[0];
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-zinc-300">
+        {rs.current
+          ? <><span className="font-mono">{rs.k}/{rs.n}</span>단계 · {rs.current.s.name}</>
+          : <>전환 조건 충족 — <span className="font-mono">{rs.n}/{rs.n}</span>단계</>}
+      </div>
+      {(rs.current?.results || []).map((r, j) => (
+        <div key={j} className={`text-xs font-mono ${r.met ? "text-emerald-400" : "text-rose-400"}`}>- {r.text}</div>
+      ))}
+      <div className="text-xs text-zinc-500">
+        {next ? <>다음 마일스톤: {milestoneLine(state, next, today)}</> : "다음 마일스톤 없음 — 로드맵에서 추가해요"}
+      </div>
+    </div>
+  );
+}
+
+function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpenRoadmap }) {
   const { rg, gaps } = roleRecommendations(state);
+  const rs = roleStageOf(state, today);
   // The one surface that draws and explains the proximity bars, one tap from the home line that states the number (rule 14).
   const legend = <p className="text-xs text-zinc-600">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.</p>;
   return (
@@ -5651,6 +5786,14 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
         ))}
         {legend}
       </div>
+      {rs && (
+        <div className="bg-zinc-950 rounded-xl p-3 mb-3">
+          <SectionLabel>단계</SectionLabel>
+          <RoleStageLines state={state} rs={rs} today={today} />
+          <button onClick={onOpenRoadmap}
+            className="mt-2 px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70">로드맵 열기 ›</button>
+        </div>
+      )}
       {gaps.length === 0 ? (
         <div className="space-y-2">
           <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다. 근접도 {rg?.match}%.</p>
@@ -5659,6 +5802,8 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
         <div className="space-y-3">
           {gaps.map((i) => {
             const { h, recs, examRecs } = i;
+            // With stages, the business area is advanced by records, not certifications: the stage lines replace them
+            const staged = rs && i.area.name === "사업";
             return (
               <div key={i.area.id} className="bg-zinc-950 rounded-xl p-3">
                 <div className="flex items-center justify-between gap-2 text-sm">
@@ -5666,6 +5811,7 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
                   <span className="font-mono text-xs text-rose-400 shrink-0">{RANKS[i.have].name} → {RANKS[i.need].name} · {i.gap}단계</span>
                 </div>
                 <div className="text-xs text-zinc-600 mt-1">다음 관문: {RANKS[i.have + 1].name} 승급 — 이 영역의 성취·증거가 필요합니다.</div>
+                {staged && <div className="mt-2"><RoleStageLines state={state} rs={rs} today={today} /></div>}
                 <div className="flex flex-wrap gap-1 mt-2">
                   {JOB_FIELDS.map((d) => {
                     const on = normDirs(i.area).includes(d);
@@ -5679,7 +5825,7 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
                   })}
                 </div>
                 <p className="text-xs text-zinc-700 mt-1">복수 선택 시 교집합으로 평가합니다 — 지정한 모든 직무에서 통하는 자격이 상위에 옵니다.</p>
-                {recs.length > 0 && (
+                {!staged && recs.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {recs.map(({ c, jw, gain }) => (
                       <div key={c.n} className="flex items-center justify-between gap-2 text-xs">
@@ -5691,7 +5837,7 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
                     ))}
                   </div>
                 )}
-                {examRecs.length > 0 && (
+                {!staged && examRecs.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {examRecs.map(({ e, band, payout }) => (
                       <div key={e.id} className="flex items-center justify-between gap-2 text-xs">
@@ -5701,10 +5847,10 @@ function RoleAdviceModal({ state, onClose, onOpenCatalog, onSetDir }) {
                     ))}
                   </div>
                 )}
-                {recs.length === 0 && examRecs.length === 0 && (
+                {!staged && recs.length === 0 && examRecs.length === 0 && (
                   <p className="text-xs text-zinc-600 mt-2">매칭되는 표준 성취가 없습니다 — 이 영역은 프로젝트·실적 증거로 승급을 진행하세요.</p>
                 )}
-                {h.cats.length > 0 && (
+                {!staged && h.cats.length > 0 && (
                   <button onClick={() => onOpenCatalog(i.area.dir?.length === 1 ? h.cats[0] : null)} className="mt-2 text-xs text-cyan-300">도감에서 더 보기 ›</button>
                 )}
               </div>
@@ -6624,14 +6770,44 @@ function PromoteModal({ area, onClose, onSubmit }) {
   );
 }
 
+// A stored stage as the editor holds it: the argument and the threshold are kept as typed strings until save.
+const stageDraft = (st) => ({ id: st.id || uid(), name: st.name || "", conds: (st.conds || []).map((c) => ({ type: c.type, arg: c.arg == null ? "" : String(c.arg), min: String(c.min ?? "") })) });
+const ROLE_STAGE_PRESET = "의료 AI 솔루션 대표"; // the preset that seeds the nine stages
+
 function RoleModelModal({ state, onClose, onSave }) {
   const [name, setName] = useState(state.role?.name || "");
   const [targets, setTargets] = useState(state.role?.targets || {});
+  const [stages, setStages] = useState(() => (state.role?.stages || []).map(stageDraft));
+  const [err, setErr] = useState("");
+  const pickPreset = (r) => {
+    setName(r);
+    if (r !== ROLE_STAGE_PRESET) return;
+    if (stages.length && !window.confirm("단계를 기본 9단계로 바꿔요. 계속할까요?")) return;
+    setStages(seedStages().map(stageDraft));
+  };
+  const editStage = (i, fn) => setStages((list) => list.map((st, k) => (k === i ? fn(st) : st)));
+  const editCond = (i, j, patch) => editStage(i, (st) => ({ ...st, conds: st.conds.map((c, k) => (k === j ? { ...c, ...patch } : c)) }));
+  const hintOf = (type) => COND_TYPES.find((t) => t[0] === type)?.[2] ?? "";
+  const save = () => {
+    const out = [];
+    for (const [i, st] of stages.entries()) {
+      if (!st.name.trim()) { setErr(`단계 이름을 입력해 주세요 — ${i + 1}번째 단계`); return; }
+      const conds = [];
+      for (const [j, c] of st.conds.entries()) {
+        const min = Number(c.min);
+        if (String(c.min).trim() === "" || !Number.isFinite(min) || min < 0) { setErr(`기준은 0 이상 숫자예요 — ${i + 1}단계 ${j + 1}번째 조건`); return; }
+        const arg = hintOf(c.type) ? c.arg.trim() : "";
+        conds.push({ type: c.type, ...(arg ? { arg } : {}), min });
+      }
+      out.push({ id: st.id, name: st.name.trim(), conds });
+    }
+    onSave({ name: name.trim() || "롤모델", targets, ...(out.length ? { stages: out } : {}) });
+  };
   return (
     <Modal title="롤모델 설정" onClose={onClose}>
       <div className="flex flex-wrap gap-1.5 mb-2">
         {ROLE_PRESETS.map((r) => (
-          <Chip key={r} on={name === r} onClick={() => setName(r)}>{r}</Chip>
+          <Chip key={r} on={name === r} onClick={() => pickPreset(r)}>{r}</Chip>
         ))}
       </div>
       <input value={name} onChange={(e) => setName(e.target.value)}
@@ -6657,8 +6833,61 @@ function RoleModelModal({ state, onClose, onSave }) {
           </div>
         ))}
       </div>
-      <button
-        onClick={() => onSave({ name: name.trim() || "롤모델", targets })}
+      {/* Stages are optional fact conditions; the proximity above never reads them (rule 14) */}
+      <div className="mt-4">
+        <div className="flex items-center justify-between gap-2">
+          <SectionLabel>단계 (선택)</SectionLabel>
+          <span className="text-xs font-mono text-zinc-500 mb-2">{stages.length} / {ROLE_STAGES_MAX}</span>
+        </div>
+        <div className="space-y-2">
+          {stages.map((st, i) => (
+            <div key={st.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="shrink-0 text-xs font-mono text-cyan-300">{i + 1}단계</span>
+                <input value={st.name} maxLength={ROLE_STAGE_NAME} onChange={(e) => editStage(i, (x) => ({ ...x, name: e.target.value }))}
+                  placeholder="단계 이름 — 예: 첫 병원 계약" aria-label="단계 이름"
+                  className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-xs outline-none focus:border-cyan-500" />
+                <button onClick={() => setStages((list) => list.filter((_, k) => k !== i))} aria-label="단계 삭제"
+                  className="shrink-0 p-1 text-zinc-500 active:opacity-70"><X size={13} /></button>
+              </div>
+              {st.conds.map((c, j) => {
+                const hint = hintOf(c.type);
+                return (
+                  <div key={j} className="flex items-center gap-1">
+                    <select value={c.type} aria-label="조건 종류"
+                      onChange={(e) => editCond(i, j, { type: e.target.value, ...(hintOf(e.target.value) ? {} : { arg: "" }) })}
+                      className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-1 py-1 text-xs outline-none">
+                      {COND_TYPES.map(([t, label]) => <option key={t} value={t}>{label}</option>)}
+                    </select>
+                    <input value={c.arg} disabled={!hint} onChange={(e) => editCond(i, j, { arg: e.target.value })}
+                      placeholder={hint || "조건 값 없음"} aria-label="조건 값"
+                      className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-1.5 py-1 text-xs outline-none disabled:opacity-30" />
+                    <input value={c.min} type="number" min="0" onChange={(e) => editCond(i, j, { min: e.target.value })} aria-label="기준"
+                      className="shrink-0 w-16 bg-zinc-900 border border-zinc-700 rounded-lg px-1.5 py-1 text-xs font-mono outline-none" />
+                    <button onClick={() => editStage(i, (x) => ({ ...x, conds: x.conds.filter((_, k) => k !== j) }))} aria-label="조건 삭제"
+                      className="shrink-0 p-1 text-zinc-500 active:opacity-70"><X size={13} /></button>
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-2">
+                <button disabled={st.conds.length >= STAGE_CONDS_MAX}
+                  onClick={() => editStage(i, (x) => ({ ...x, conds: [...x.conds, { type: COND_TYPES[0][0], arg: "", min: "1" }] }))}
+                  className="shrink-0 px-2 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 disabled:opacity-30">조건 추가</button>
+                {st.conds.length >= STAGE_CONDS_MAX && <span className="text-xs text-zinc-500">조건은 단계당 5개까지예요.</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 mt-2">
+          <button disabled={stages.length >= ROLE_STAGES_MAX}
+            onClick={() => setStages((list) => [...list, { id: uid(), name: "", conds: [] }])}
+            className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-xs text-zinc-300 disabled:opacity-30">단계 추가</button>
+          {stages.length >= ROLE_STAGES_MAX && <span className="text-xs text-zinc-500">단계는 12개까지예요.</span>}
+        </div>
+        <p className="text-xs text-zinc-600 mt-2">조건은 앱의 기록으로 계산돼요 — 근접도와는 별개예요.</p>
+      </div>
+      {err && <div className="text-xs text-rose-400 mt-2">{err}</div>}
+      <button onClick={save}
         className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm mt-4">
         저장
       </button>
@@ -10636,8 +10865,9 @@ export default function LifeManager() {
         <CatalogModal state={state} initialCat={modal.cat} onClose={() => setModal(null)} />
       )}
       {modal?.type === "roleAdvice" && (
-        <RoleAdviceModal state={state} onClose={() => setModal(null)}
-          onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir} />
+        <RoleAdviceModal state={state} today={today} onClose={() => setModal(null)}
+          onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir}
+          onOpenRoadmap={() => { setModal(null); setBizView("roadmap"); setTab("biz"); }} />
       )}
       {modal?.type === "event" && (
         <EventModal event={modal.event} initialDate={modal.date} projects={state.meetingProjects || []} onClose={() => setModal(null)}

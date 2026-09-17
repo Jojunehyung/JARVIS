@@ -180,6 +180,9 @@ module.exports = async (h) => {
     const shown = res.text.match(/(\d+)%/);
     if (!shown) throw new Error("the proximity line states no percentage: " + res.text);
     if (Number(shown[1]) !== res.match) throw new Error(`the proximity line states ${shown[1]}%, roleGap computes ${res.match}% — ${res.text}`);
+    // A role model saved without stages has no stage line (v28): the stage count renders only beside stored stages.
+    const stageLine = await page.evaluate(() => [...document.querySelectorAll("main button")].some((b) => /^단계\s*\d+\/\d+/.test((b.innerText || "").trim())));
+    if (stageLine) throw new Error("a stage line renders for a role model without stages");
   });
   await shot("rolemodel");
 

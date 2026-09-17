@@ -207,4 +207,5 @@ Option lists and rule tables as defined in source. Korean values are UI copy and
 - 월 500 1인 사업가
 - 프리랜서 전문가
 - 창업가·대표
+- 의료 AI 솔루션 대표
 

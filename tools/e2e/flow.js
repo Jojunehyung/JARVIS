@@ -411,6 +411,13 @@ module.exports = async (h) => {
       }
       if (tab === "프로필") {
         await expectText("TOEIC L&R 735");
+        // v28 role stages: the demo seeds the nine stages. Three of 14 conditions are met — the upcoming contract,
+        // two won contracts and the AI portfolio entry — and the unpaid deposit keeps stage 1 current.
+        const stageLine = await page.evaluate(() => {
+          const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
+          return b ? b.innerText.replace(/\s+/g, " ").trim() : null;
+        });
+        if (stageLine !== "단계 1/9 · 조건 3/14 · 전환 조건 미충족 (0/1) ›") throw new Error("the demo stage line reads: " + stageLine);
         // v27: entering the demo opens nothing, so the daily reader is opened from the CV card's own button.
         await clickText("오늘 읽을 것");
         await sleep(400);

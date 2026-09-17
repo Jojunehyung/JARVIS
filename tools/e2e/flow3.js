@@ -1,4 +1,4 @@
-// Remaining paths — exam KR and score report, exercise activity, the activity-kind gate, profile photo, direction advice, task and goal deletion, streak after a day gap
+// Remaining paths — exam KR and score report, exercise activity, the activity-kind gate, profile photo, direction advice, role-model stages and their editor, task and goal deletion, streak after a day gap
 module.exports = async (h) => {
   const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, openTodo } = h;
   // ── Profile photo upload (resizeImage path). The picker lives in the profile modal now, but the file input
@@ -182,6 +182,126 @@ module.exports = async (h) => {
     if (bar.cyan !== Math.min(bar.have, need)) throw new Error(`${bar.cyan} filled cell(s), expected min(grade ${bar.have}, requirement ${need})`);
     try { await clickText("도감에서 더 보기"); await sleep(600); } catch {}
     await closeModal(); await closeModal();
+  });
+
+  // ── Role-model stages (v28): a second figure beside proximity, derived from the save's own records and never merged
+  // into the percentage (rule 14). The CV button's children are flex items, so its text is read whitespace-normalised.
+  const stageLineText = () => page.evaluate(() => {
+    const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
+    return b ? b.innerText.replace(/\s+/g, " ").trim() : null;
+  });
+  const proximityFigure = () => page.evaluate(() => {
+    const b = [...document.querySelectorAll("main button")].find((x) => (x.innerText || "").includes("롤모델 근접도"));
+    return b ? ((b.innerText.match(/(\d+)%/) || [])[1] ?? null) : null;
+  });
+  // Plants the role model and appends the stage fixtures' contracts and portfolio entries; `null` lists remove them.
+  const patchSave = (patch) => page.evaluate((p) => {
+    const k = "liferpg-state-v1";
+    const s = JSON.parse(localStorage.getItem(k));
+    if ("role" in p) s.role = p.role;
+    for (const key of ["deals", "folio"]) {
+      if (!(key in p)) continue;
+      const kept = (s[key] || []).filter((x) => !String(x.id).startsWith("e2e-stage-"));
+      s[key] = p[key] ? [...(s[key] || []), ...p[key]] : kept;
+    }
+    localStorage.setItem(k, JSON.stringify(s));
+  }, patch);
+  await step("the stage line states the current stage, the condition count and the quit condition, and the advice lists the unmet conditions", async () => {
+    await clickTab("프로필"); await sleep(300);
+    const before = await proximityFigure();
+    if (before == null) throw new Error("no proximity figure on the CV before the stages are planted");
+    const saved = await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      return { role: s.role, held: (s.profile?.certs || [])[0] || null };
+    });
+    if (!saved.held) throw new Error("the save holds no declared certification for the cert_held condition");
+    try {
+      // Stage 1 needs a won contract the save does not have; stage 2 is a held certification (met) plus a portfolio
+      // entry (unmet); stage 3 needs a second won contract — so the quit condition starts unmet.
+      await patchSave({ role: { ...saved.role, stages: [
+        { id: "e2e-st1", name: "E2E 첫 계약", conds: [{ type: "deals_won", arg: "E2E단계고객", min: 1 }] },
+        { id: "e2e-st2", name: "E2E 실적", conds: [{ type: "cert_held", arg: saved.held, min: 1 }, { type: "folio_match", arg: "E2E단계포트폴리오", min: 1 }] },
+        { id: "e2e-st3", name: "E2E 전환", conds: [{ type: "deals_won", arg: "E2E단계고객", min: 2 }] },
+      ] } });
+      await h.reload(); await clickTab("프로필"); await sleep(300);
+      let line = await stageLineText();
+      if (!line || !line.includes("단계 1/3") || !line.includes("조건 1/4") || !line.includes("전환 조건 미충족 (0/1)")) throw new Error("the planted stages read: " + line);
+      if ((await proximityFigure()) !== before) throw new Error(`proximity moved from ${before}% to ${await proximityFigure()}% when stages were planted`);
+      await page.evaluate(() => [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim())).click());
+      await sleep(500);
+      const sheet = await h.overlayText();
+      for (const t of ["방향 제안 —", "단계", "1/3단계 · E2E 첫 계약", "- 계약 체결 수 'E2E단계고객' 0/1", "로드맵 열기 ›"]) {
+        if (!sheet.includes(t)) throw new Error(`direction advice does not state "${t}": ` + sheet.slice(0, 300));
+      }
+      await closeModal();
+      const month = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+      const deal = (id) => ({ id, client: "E2E단계고객", title: "단계 확인", status: "won", monthly: 1000000, months: 1, startMonth: month, paidMonths: [], createdAt: `${month}-01`, track: "biz" });
+      await patchSave({ deals: [deal("e2e-stage-deal-1")] });
+      await h.reload(); await clickTab("프로필"); await sleep(300);
+      line = await stageLineText();
+      if (!line || !line.includes("단계 2/3") || !line.includes("조건 2/4") || !line.includes("전환 조건 미충족 (0/1)")) throw new Error("after one won contract the line reads: " + line);
+      await patchSave({ deals: [deal("e2e-stage-deal-2")], folio: [{ id: "e2e-stage-folio", title: "E2E단계포트폴리오", summary: "", stack: [], createdAt: `${month}-01` }] });
+      await h.reload(); await clickTab("프로필"); await sleep(300);
+      line = await stageLineText();
+      if (!line || !line.includes("단계 3/3") || !line.includes("조건 4/4") || !line.includes("전환 조건 충족 (1/1)")) throw new Error("with every condition met the line reads: " + line);
+      if ((await proximityFigure()) !== before) throw new Error(`proximity moved from ${before}% to ${await proximityFigure()}% while conditions were met`);
+    } finally {
+      await patchSave({ role: saved.role, deals: null, folio: null });
+      await h.reload();
+    }
+  });
+
+  await step("the medical-AI preset seeds nine editable stages, the editor saves only role, and removing every stage drops the key", async () => {
+    const original = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).role);
+    if (!original || original.stages) throw new Error("the step expects a role model without stages: " + JSON.stringify(original));
+    const stageInputs = () => page.evaluate(() => document.querySelectorAll(".fixed.inset-0 input[aria-label='단계 이름']").length);
+    const openEditor = async () => {
+      await h.openSettings();
+      await clickInModalExact("롤모델 수정"); await sleep(400);
+    };
+    try {
+      await page.evaluate(() => { window.confirm = () => true; });
+      await openEditor();
+      await clickInModalExact("의료 AI 솔루션 대표"); await sleep(300);
+      if ((await stageInputs()) !== 9) throw new Error(`the preset seeded ${await stageInputs()} stage cards`);
+      if (!(await h.overlayText()).includes("9 / 12")) throw new Error("the stage count is not stated as 9 / 12");
+      // An empty stage name is refused with its position
+      await h.setValue(".fixed.inset-0 input[aria-label='단계 이름']", "", 0);
+      await clickInModalExact("저장"); await sleep(300);
+      const refusal = await modalError();
+      if (!refusal.includes("단계 이름을 입력해 주세요 — 1번째 단계")) throw new Error("an empty stage name was not refused: " + refusal);
+      await h.setValue(".fixed.inset-0 input[aria-label='단계 이름']", "E2E 편집 단계", 0);
+      await page.evaluate(() => document.querySelectorAll(".fixed.inset-0 button[aria-label='조건 삭제']")[0].click());
+      await sleep(200);
+      const before = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")));
+      await clickInModalExact("저장"); await sleep(600);
+      const after = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")));
+      const r = after.role || {};
+      if (!Array.isArray(r.stages) || r.stages.length !== 9) throw new Error("role.stages is not nine stages: " + JSON.stringify(r.stages));
+      if (r.stages[0].name !== "E2E 편집 단계") throw new Error("the first stage name was not edited: " + r.stages[0].name);
+      if (r.stages[0].conds.length !== 1) throw new Error(`the first stage keeps ${r.stages[0].conds.length} conditions, expected 1 after removing one of 2`);
+      if (JSON.stringify(r.targets) !== JSON.stringify(original.targets)) throw new Error("saving the stages changed role.targets");
+      const changed = Object.keys({ ...before, ...after }).filter((k) => k !== "role" && k !== "lastTick" && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+      if (changed.length) throw new Error("saving the role model wrote other keys: " + changed.join(", "));
+      try { await closeModal(); } catch {}
+      // Remove every stage and restore the name: the saved role carries no stages key
+      await openEditor();
+      for (let i = 0; i < 9; i++) {
+        await page.evaluate(() => document.querySelectorAll(".fixed.inset-0 button[aria-label='단계 삭제']")[0].click());
+        await sleep(80);
+      }
+      if ((await stageInputs()) !== 0) throw new Error("stage cards remain after removing every stage");
+      await h.setValue(".fixed.inset-0 input", original.name, 0);
+      await clickInModalExact("저장"); await sleep(600);
+      const cleared = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).role);
+      if ("stages" in cleared) throw new Error("a role model without stages still stores a stages key");
+      if (cleared.name !== original.name || JSON.stringify(cleared.targets) !== JSON.stringify(original.targets)) throw new Error("the restored role model differs: " + JSON.stringify(cleared));
+      try { await closeModal(); } catch {}
+      if (await stageLineText()) throw new Error("the stage line still renders without stages");
+    } finally {
+      await patchSave({ role: original });
+      await h.reload();
+    }
   });
 
   // ── Task deletion / goal removal
