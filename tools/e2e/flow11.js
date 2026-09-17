@@ -446,10 +446,8 @@ module.exports = async (h) => {
       if (!lines.includes(t)) throw new Error(`the prep card lacks "${t}": ` + lines.join(" | "));
     }
     if (lines.indexOf(`오늘 10:00 · ${E1.title}`) > lines.indexOf(`내일 시간 미정 · ${M.title}`)) throw new Error("today's block is not listed before tomorrow's");
-    await page.evaluate(() => {
-      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
-      sec.querySelector("button").click();
-    });
+    // The block is a div since v27 (its checklist has controls of its own); the first `회의록 열기 ›` is today's block.
+    await clickMain("회의록 열기 ›");
     await sleep(500);
     const view = await overlayText();
     if (!view.startsWith(M.title)) throw new Error("tapping the first block did not open the last meeting: " + view.slice(0, 120));
@@ -518,7 +516,8 @@ module.exports = async (h) => {
     return { text: label.innerText.replace(/\s+/g, " ").trim(), disabled: !!box?.disabled, checked: !!box?.checked };
   }, title);
   const openWorkBridge = async () => { await clickTab("업무"); await clickMain("AI로 만들기 ›"); await sleep(400); await expectText("오늘 업무 만들기"); };
-  const pasteWorkReply = async (reply) => {
+  // The paste pane is shared by the work and prep bridges.
+  const pasteReply = async (reply) => {
     await clickInModalExact("AI 답변 붙여넣기 ›");
     await sleep(300);
     await setValue(".fixed.inset-0 textarea", reply);
@@ -587,7 +586,7 @@ module.exports = async (h) => {
       ], note: "세 건을 제안해요." }),
       "```",
     ].join("\n");
-    await pasteWorkReply(reply);
+    await pasteReply(reply);
     await expectText("제안 업무 확인 — 3건");
     await expectText("세 건을 제안해요.");
     const dup = await proposalRow(WORK_TITLE);
@@ -627,7 +626,7 @@ module.exports = async (h) => {
     await openWorkBridge();
     // Twelve proposals: more than the old limit of 8, all listed (the limit is the per-day cap of 20).
     const many = Array.from({ length: 12 }, (_, n) => ({ title: n ? `펜스 없는 답변 ${n + 1}` : "펜스 없는 답변 확인", note: "코드블록 복사" }));
-    await pasteWorkReply(`분석 한 줄이에요.\n${JSON.stringify({ work: many, note: "한 줄" }, null, 2)}`);
+    await pasteReply(`분석 한 줄이에요.\n${JSON.stringify({ work: many, note: "한 줄" }, null, 2)}`);
     await expectText("제안 업무 확인 — 12건");
     await expectText("펜스 없는 답변 확인");
     await expectText("펜스 없는 답변 12");
@@ -637,7 +636,7 @@ module.exports = async (h) => {
   await step("a work reply naming tasks, deals, events and meetings creates none of them", async () => {
     const before = await readState();
     await openWorkBridge();
-    await pasteWorkReply('```json\n{"tasks":[{"goal":"x","title":"독서 30분"}],"deals":[{"client":"c"}],"events":[{"title":"e"}],"meetings":[{"title":"m"}],"work":[]}\n```');
+    await pasteReply('```json\n{"tasks":[{"goal":"x","title":"독서 30분"}],"deals":[{"client":"c"}],"events":[{"title":"e"}],"meetings":[{"title":"m"}],"work":[]}\n```');
     await expectText("제안 업무 없음 — 등록할 항목이 없어요.");
     await clickInModalExact("선택한 업무 등록");
     await sleep(500);
@@ -721,6 +720,305 @@ module.exports = async (h) => {
       s.work = (s.work || []).filter((w) => !wids.includes(w.id));
       localStorage.setItem(k, JSON.stringify(s));
     }, KEY, MEMO_ID, [MEMO_WORK_ID, GOAL_WORK_ID]);
+    await h.reload();
+  });
+
+  /* ── Pre-meeting checks and the prep packet (schema v27, Phase 2, 2026-09-17): `확인할 것` on a project event, the third
+     bridge packet and its reply, and `확인할 것 가져오기` into a new meeting's follow-up rows. Written, not run. The prep
+     step above cleaned up its plants, so these steps plant their own: the project name contains the client word of the
+     contract planted in the packet step. */
+  const CHECK_A = "E2E 기존 확인", CHECK_B = "단가표 회신 여부", CHECK_C = "리스크: 일정 지연 가능성";
+  const PP = { id: "e2e-prep-proj", name: "E2E물산 준비 프로젝트" };
+  const PM = { id: "e2e-prep-mtg", title: "E2E 준비 회의" };
+  const PE1 = { id: "e2e-prep-ev1", title: "E2E 준비 점검" };
+  const DOC_P = { id: "e2e-prep-doc", title: "E2E 준비 문서" };
+  const DOC_SENTINEL = "E2E-PREP-DOC-SENTINEL-2d9e";
+  const HIDDEN = { id: "e2e-prep-hidden", title: "E2E 숨긴 회의" };
+  const HIDDEN_SENTINEL = "E2E-HIDDEN-SENTINEL-4c11";
+  const TRANSCRIPT_SENTINEL = "E2E-PREP-TRANSCRIPT-8a20";
+  const PREP_DEAL_ID = "e2e-prep-deal", PLAIN_EVENT_ID = "e2e-prep-plain", CHECK_MEETING = "E2E 확인 회의";
+  const eventOf = async (id) => ((await readState()).events || []).find((e) => e.id === id);
+  // The prep card's text, whitespace-normalised, and its rose refusal line.
+  const prepCardText = () => page.evaluate(() => {
+    const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+    return sec ? sec.innerText.replace(/\s+/g, " ").trim() : "";
+  });
+  const prepCardError = () => page.evaluate(() => {
+    const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+    const el = sec && [...sec.querySelectorAll(".text-rose-400")].find((e) => (e.innerText || "").trim());
+    return el ? el.innerText.trim() : "";
+  });
+  const prepAiTags = () => page.evaluate(() => {
+    const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+    return sec ? [...sec.querySelectorAll("span")].filter((s) => (s.innerText || "").trim() === "AI").length : -1;
+  });
+  // A check write moves `events` only: every other top-level key, and every other event, stays byte-identical.
+  const assertChecksOnly = (before, after, eventId, what) => {
+    for (const key of Object.keys({ ...before, ...after })) {
+      if (key === "events" || key === "lastTick") continue;
+      if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) throw new Error(`${what} changed ${key}`);
+    }
+    const rest = (st) => JSON.stringify((st.events || []).map((e) => (e.id === eventId ? { ...e, checks: null } : e)));
+    if (rest(before) !== rest(after)) throw new Error(`${what} changed another event or another field of the event`);
+  };
+  // A proposal row of the prep confirm view whose text starts with `prefix`: `{ text, disabled, checked }`.
+  const prepProposal = (prefix) => page.evaluate((t) => {
+    const label = [...document.querySelectorAll(".fixed.inset-0 label")].find((l) => (l.querySelector(".text-sm")?.textContent || "").startsWith(t));
+    if (!label) return null;
+    const box = label.querySelector('input[type="checkbox"]');
+    return { text: label.innerText.replace(/\s+/g, " ").trim(), disabled: !!box?.disabled, checked: !!box?.checked };
+  }, prefix);
+  const openPrepBridge = async () => { await clickTab("업무"); await clickMain("AI에게 회의 준비 묻기"); await sleep(400); await expectText("AI에게 회의 준비 묻기"); };
+
+  await step("a check is added, ticked and deleted on the prep card, and only that event's checks change", async () => {
+    const today = await dstrIn(0);
+    PM.date = await dstrIn(-3);
+    const hiddenCreated = await dstrIn(-4);
+    await page.evaluate((k, pp, pm, pe1, doc, docSentinel, hidden, hiddenSentinel, trSentinel, t, hc) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetingProjects = [...(st.meetingProjects || []).filter((p) => p.id !== pp.id), { id: pp.id, name: pp.name, createdAt: pm.date }];
+      st.meetings = [...(st.meetings || []).filter((m) => ![pm.id, hidden.id].includes(m.id)),
+        { id: pm.id, projectId: pp.id, date: pm.date, title: pm.title, summary: "준비 카드 확인용 회의", decisions: "월 10시간", transcript: trSentinel,
+          createdAt: pm.date, taskIds: [], aiHidden: false, progress: [], followUps: [{ id: "e2e-prep-fu", text: "E2E 준비 자료 송부", mine: false, done: false }] },
+        // Same date as PM but created earlier, so PM stays the project's last meeting on the card.
+        { id: hidden.id, projectId: pp.id, date: pm.date, title: hidden.title, summary: "숨김 요약 " + hiddenSentinel, decisions: hiddenSentinel,
+          createdAt: hc, taskIds: [], aiHidden: true, progress: [], followUps: [] }];
+      st.documents = [...(st.documents || []).filter((d) => d.id !== doc.id),
+        { id: doc.id, projectId: pp.id, title: doc.title, summary: "요구사항 요약 " + docSentinel, addedAt: t }];
+      st.events = [...(st.events || []).filter((e) => e.id !== pe1.id),
+        { id: pe1.id, title: pe1.title, kind: "appt", date: t, time: "10:00", projectId: pp.id, createdAt: t }];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PP, PM, PE1, DOC_P, DOC_SENTINEL, HIDDEN, HIDDEN_SENTINEL, TRANSCRIPT_SENTINEL, today, hiddenCreated);
+    await h.reload();
+    await clickTab("업무");
+    let card = await prepCardText();
+    for (const t of ["문서 1건", `${DOC_P.title} — `, "확인할 것 0/0", "확인할 것이 없어요.", "회의록 열기 ›", "AI에게 회의 준비 묻기",
+      "확인할 것은 이 일정에 저장돼요 — 회의록을 쓸 때 후속 항목으로 가져올 수 있어요."]) {
+      if (!card.includes(t)) throw new Error(`the prep card lacks "${t}": ` + card.slice(0, 400));
+    }
+    let before = await readState();
+    await clickMain("추가");
+    if ((await prepCardError()) !== "확인할 것을 입력해 주세요.") throw new Error("an empty check gave: " + ((await prepCardError()) || "no error"));
+    await setValue('main input[placeholder^="확인할 것"]', "가".repeat(201));
+    await clickMain("추가");
+    if ((await prepCardError()) !== "확인할 것은 200자까지예요 — 지금 201자예요.") throw new Error("a 201-char check gave: " + ((await prepCardError()) || "no error"));
+    if (JSON.stringify(await readState()) !== JSON.stringify(before)) throw new Error("a refused check reached the save");
+    await setValue('main input[placeholder^="확인할 것"]', CHECK_A);
+    await clickMain("추가");
+    await expectText("확인할 것을 추가했어요");
+    let after = await readState();
+    const checks = (after.events.find((e) => e.id === PE1.id) || {}).checks || [];
+    if (checks.length !== 1 || checks[0].text !== CHECK_A || checks[0].done !== false || checks[0].source !== "manual" || Object.keys(checks[0]).join() !== "id,text,done,source") {
+      throw new Error("the stored check: " + JSON.stringify(checks));
+    }
+    const stray = after.events.filter((e) => e.id !== PE1.id && "checks" in e && !(before.events.find((b) => b.id === e.id) || {}).checks);
+    if (stray.length) throw new Error("another event gained a checks key: " + stray.map((e) => e.title).join(", "));
+    assertChecksOnly(before, after, PE1.id, "adding a check");
+    if (JSON.stringify(h.recordBoundary(before)) !== JSON.stringify(h.recordBoundary(after))) throw new Error("adding a check moved the record boundary");
+    if (await page.evaluate(() => document.querySelector('main input[placeholder^="확인할 것"]')?.value)) throw new Error("the check input was not cleared");
+    if (!(await prepCardText()).includes("확인할 것 1/1")) throw new Error("the counter after the add: " + (await prepCardText()).slice(0, 300));
+    before = after;
+    await page.evaluate(() => document.querySelector('main input[aria-label="확인 완료"]').click());
+    await sleep(400);
+    await expectText("확인 완료로 표시했어요");
+    after = await readState();
+    if (after.events.find((e) => e.id === PE1.id).checks[0].done !== true) throw new Error("ticking did not store done");
+    if (!(await prepCardText()).includes("확인할 것 0/1")) throw new Error("the counter after the tick: " + (await prepCardText()).slice(0, 300));
+    assertChecksOnly(before, after, PE1.id, "ticking a check");
+    await page.evaluate(() => document.querySelector('main input[aria-label="확인 완료"]').click());
+    await sleep(400);
+    await expectText("확인 완료를 취소했어요");
+    if ((await eventOf(PE1.id)).checks[0].done !== false) throw new Error("unticking did not store done: false");
+    before = await readState();
+    await page.evaluate(() => {
+      window.__confirmText = null;
+      window.confirm = (msg) => { window.__confirmText = msg; return true; };
+      document.querySelector('main button[aria-label="확인할 것 삭제"]').click();
+    });
+    await sleep(400);
+    const asked = await page.evaluate(() => window.__confirmText);
+    if (asked !== "확인할 것을 삭제해요. 계속할까요?") throw new Error("the delete confirm text: " + JSON.stringify(asked));
+    await expectText("확인할 것을 삭제했어요");
+    after = await readState();
+    if (JSON.stringify(after.events.find((e) => e.id === PE1.id).checks) !== "[]") throw new Error("the deleted check stayed: " + JSON.stringify(after.events.find((e) => e.id === PE1.id).checks));
+    assertChecksOnly(before, after, PE1.id, "deleting a check");
+    // The packet step needs one existing check.
+    await setValue('main input[placeholder^="확인할 것"]', CHECK_A);
+    await clickMain("추가");
+    card = await prepCardText();
+    if (!card.includes("확인할 것 1/1") || !card.includes(CHECK_A)) throw new Error("the re-added check: " + card.slice(0, 300));
+  });
+
+  await step("the event sheet shows the same checklist for a project-linked event and nothing for a plain appointment", async () => {
+    await clickTab("할 일");
+    await openTodo(PE1.title);
+    const sheet = await overlayText();
+    for (const t of [`프로젝트 · ${PP.name}`, "확인할 것 1/1", CHECK_A, "목표 기여 없음"]) if (!sheet.includes(t)) throw new Error(`the event sheet lacks "${t}": ` + sheet.slice(0, 300));
+    if (sheet.indexOf("확인할 것 1/1") > sheet.indexOf("목표 기여 없음")) throw new Error("the checklist is not above the no-goal line");
+    await closeModal();
+    const today = await dstrIn(0);
+    await page.evaluate((k, id, t) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.events = [...(st.events || []).filter((e) => e.id !== id), { id, title: "E2E 일반 약속", kind: "appt", date: t, time: "15:00", createdAt: t }];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PLAIN_EVENT_ID, today);
+    await h.reload();
+    await clickTab("할 일");
+    await openTodo("E2E 일반 약속");
+    const plain = await overlayText();
+    if (!plain.startsWith("일정 — E2E 일반 약속")) throw new Error("the plain appointment's sheet did not open: " + plain.slice(0, 120));
+    if (plain.includes("확인할 것") || plain.includes("프로젝트 ·")) throw new Error("a plain appointment's sheet shows a checklist: " + plain.slice(0, 300));
+    await closeModal();
+    await page.evaluate((k, id) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.events = (st.events || []).filter((e) => e.id !== id);
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PLAIN_EVENT_ID);
+    await h.reload();
+  });
+
+  await step("the prep packet carries the event line, the existing checks, the project's minutes, the document summary and the same-client contract, and none of a hidden meeting's body, a transcript or a profile identifier", async () => {
+    const today = await dstrIn(0);
+    await openPrepBridge();
+    if (!(await overlayText()).includes("녹취록·이름·연락처·문서 출처는 실리지 않아요.")) throw new Error("the prep bridge caption does not state what stays out");
+    let txt = await packetText();
+    for (const t of [`[인생 관리 — 회의 준비 요청 ${today}]`, "## 회의", `- ${today} 10:00 · ${PE1.title} · 프로젝트 ${PP.name}`, "## 확인할 것 (이미 있음)", `- ${CHECK_A} · 미완료`,
+      "## 최근 회의록 (", `[${PP.name}] ${PM.title}`, "결정: 월 10시간", "## 문서 (1건)", `- ${today} ${DOC_P.title}`, DOC_SENTINEL, "## 열린 할 일 (회의록 연결)", "## 계약 (같은 고객사)"]) {
+      if (!txt.includes(t)) throw new Error(`the prep packet lacks "${t}" (${txt.length} chars)`);
+    }
+    const iHidden = txt.indexOf(`- ${PM.date} ${HIDDEN.title}`);
+    if (iHidden < 0 || !txt.slice(iHidden).split("\n")[1].includes("내용 비공개 (AI에 보내지 않기)")) throw new Error("the hidden meeting is not stated as date and title only");
+    if (txt.includes(HIDDEN_SENTINEL)) throw new Error("the hidden meeting's body reached the prep packet");
+    if (txt.includes(TRANSCRIPT_SENTINEL)) throw new Error("a transcript reached the prep packet");
+    if (txt.includes("## 이력")) throw new Error("the prep packet carries a CV section");
+    const p = (await readState()).profile || {};
+    for (const t of [p.name, p.email, p.phone].filter(Boolean)) if (txt.includes(t)) throw new Error("the prep packet carries a profile identifier: " + t);
+    if (txt.length > 20000) throw new Error("the prep packet exceeds the 20000-char cap: " + txt.length);
+    await closeModal();
+    // A won contract whose client is part of the project name, billed from this month.
+    const month = today.slice(0, 7);
+    await page.evaluate((k, id, m, t) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.deals = [...(st.deals || []).filter((d) => d.id !== id),
+        { id, client: "E2E물산", title: "E2E 준비 계약", status: "won", monthly: 1000000, months: 3, startMonth: m, paidMonths: [], createdAt: t }];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PREP_DEAL_ID, month, today);
+    await h.reload();
+    await openPrepBridge();
+    txt = await packetText();
+    const deals = txt.slice(txt.indexOf("## 계약 (같은 고객사)")).split("\n## ")[0];
+    if (!deals.includes(`- 진행 중 · E2E물산 E2E 준비 계약 · ${month} ~ `) || !deals.includes(`  미수 ${month} 100만원`)) throw new Error("the same-client contract section: " + deals.slice(0, 300));
+    await closeModal();
+    await page.evaluate((k, id) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.deals = (st.deals || []).filter((d) => d.id !== id);
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PREP_DEAL_ID);
+    await h.reload();
+  });
+
+  await step("a pasted prep reply imports the ticked checks with source ai, folds the basis, refuses a duplicate, and a reply carrying tasks, work and deals keys creates nothing", async () => {
+    const before = await readState();
+    const reply = ["분석 두 줄이에요.", "회의 준비 항목이에요.", "```json", JSON.stringify({
+      checks: [{ text: CHECK_A, basis: "x" }, { text: CHECK_B, basis: "유지보수 범위 협의 " + PM.date }, { text: CHECK_C }],
+      tasks: [{ title: "독서 30분" }], work: [{ title: "E2E 업무" }], deals: [{ client: "X" }], note: "세 건을 제안해요.",
+    }), "```"].join("\n");
+    await openPrepBridge();
+    await pasteReply(reply);
+    await expectText("확인할 것 제안 — 3건");
+    await expectText("세 건을 제안해요.");
+    const dup = await prepProposal(CHECK_A);
+    if (!dup || !dup.disabled || dup.checked || !dup.text.includes("이미 확인할 것에 있어요")) throw new Error("the duplicate row is not refused: " + JSON.stringify(dup));
+    const folded = await prepProposal(CHECK_B);
+    if (!folded || folded.disabled || !folded.checked || !folded.text.includes(`근거: 유지보수 범위 협의 ${PM.date}`)) throw new Error("the row with a basis: " + JSON.stringify(folded));
+    const bare = await prepProposal(CHECK_C);
+    if (!bare || bare.disabled || !bare.checked || !bare.text.includes("근거 없음")) throw new Error("the row without a basis: " + JSON.stringify(bare));
+    await clickInModalExact("선택한 항목 등록");
+    await expectText("AI 제안 확인할 것 2건 등록");
+    await sleep(500);
+    const after = await readState();
+    const checks = after.events.find((e) => e.id === PE1.id).checks;
+    if (checks.length !== 3) throw new Error("checks after the import: " + JSON.stringify(checks));
+    const made = checks.slice(1);
+    if (!made.every((c) => c.source === "ai" && c.done === false)) throw new Error("an imported check is not an open AI item: " + JSON.stringify(made));
+    if (made[0].text !== `${CHECK_B} — 유지보수 범위 협의 ${PM.date}` || made[1].text !== CHECK_C) throw new Error("the imported texts: " + JSON.stringify(made.map((c) => c.text)));
+    for (const key of ["tasks", "work", "deals", "meetings", "documents", "journal"]) {
+      if (JSON.stringify(after[key] || []) !== JSON.stringify(before[key] || [])) throw new Error(`a prep reply changed ${key}`);
+    }
+    assertChecksOnly(before, after, PE1.id, "importing prep proposals");
+    const card = await prepCardText();
+    if (!card.includes("확인할 것 3/3")) throw new Error("the prep card after the import: " + card.slice(0, 300));
+    if ((await prepAiTags()) !== 2) throw new Error("AI tags on the prep card: " + (await prepAiTags()));
+    // At the 30-item cap a ticked proposal is refused in the confirm view and nothing is written.
+    const three = checks;
+    await page.evaluate((k, id) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.events.find((e) => e.id === id).checks = Array.from({ length: 30 }, (_, n) => ({ id: `e2e-cap-check-${n}`, text: `E2E 한도 확인 ${n + 1}`, done: false, source: "manual" }));
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PE1.id);
+    await h.reload();
+    await openPrepBridge();
+    await pasteReply('```json\n{"checks":[{"text":"E2E 한도 넘는 제안"}]}\n```');
+    await clickInModalExact("선택한 항목 등록");
+    const e = await modalError();
+    if (e !== "확인할 것은 30건까지예요 — 0건만 등록할 수 있어요.") throw new Error("the cap refusal: " + (e || "no error"));
+    if ((await eventOf(PE1.id)).checks.length !== 30) throw new Error("an over-cap import reached the save");
+    await closeModal();
+    await page.evaluate((k, id, list) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.events.find((x) => x.id === id).checks = list;
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PE1.id, three);
+    await h.reload();
+  });
+
+  await step("the import-checks button copies the event's checks into a new meeting's follow-up rows without changing the event", async () => {
+    const before = await readState();
+    const checks = before.events.find((e) => e.id === PE1.id).checks;
+    await clickTab("미팅");
+    const opened = await page.evaluate((n) => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.querySelector(".font-bold.truncate")?.innerText || "").trim() === n);
+      const b = sec && [...sec.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "회의록 추가");
+      if (!b) return false;
+      b.click(); return true;
+    }, PP.name);
+    if (!opened) throw new Error("no add-minutes button in the project's section");
+    await sleep(400);
+    await expectText("새 회의록");
+    if ((await overlayText()).includes("확인할 것 가져오기")) throw new Error("the import button shows before an event is linked");
+    await clickInModalExact(`10:00 ${PE1.title}`);
+    const label = `확인할 것 가져오기 (${checks.length}건)`;
+    await clickInModalExact(label);
+    const rowsOf = () => page.evaluate(() => [...document.querySelectorAll('.fixed.inset-0 input[placeholder^="후속 항목"]')].map((i) => {
+      const chip = [...i.closest(".space-y-1\\.5").querySelectorAll("button")].find((b) => (b.innerText || "").trim() === "내 담당");
+      return { text: i.value, mine: !!chip && /bg-cyan-400/.test(chip.className) };
+    }));
+    let rows = await rowsOf();
+    if (JSON.stringify(rows.map((r) => r.text)) !== JSON.stringify(checks.map((c) => c.text)) || rows.some((r) => r.mine)) throw new Error("the copied follow-up rows: " + JSON.stringify(rows));
+    if (!(await overlayText()).includes(`확인할 것 ${checks.length}건을 가져왔어요 — 이미 있는 0건은 건너뛰었어요.`)) throw new Error("the first copy line is missing");
+    await clickInModalExact(label);
+    if (!(await overlayText()).includes(`이미 있는 ${checks.length}건은 건너뛰었어요`)) throw new Error("the second copy does not state the skipped rows");
+    rows = await rowsOf();
+    if (rows.length !== checks.length) throw new Error("the second copy appended rows: " + rows.length);
+    await typeInto("회의 이름", CHECK_MEETING);
+    await setValue('.fixed.inset-0 textarea[placeholder^="회의 요약"]', "확인할 것 가져오기 확인");
+    await clickInModalExact("등록");
+    await sleep(600);
+    const after = await readState();
+    const m = (after.meetings || []).find((x) => x.title === CHECK_MEETING);
+    if (!m || m.followUps.length !== checks.length || !m.followUps.every((f) => f.mine === false && f.done === false)) throw new Error("the saved follow-ups: " + JSON.stringify(m?.followUps));
+    if (m.eventId !== PE1.id) throw new Error("the meeting is not linked to the event: " + m.eventId);
+    if (JSON.stringify(after.events.find((e) => e.id === PE1.id).checks) !== JSON.stringify(checks)) throw new Error("copying the checks changed the event's checks");
+    if (JSON.stringify(after.work || []) !== JSON.stringify(before.work || [])) throw new Error("copying the checks created a work item");
+    // Clean up every Phase 2 plant so flow4 sees the save it used to.
+    await page.evaluate((k, ids) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetingProjects = (st.meetingProjects || []).filter((p) => p.id !== ids.project);
+      st.meetings = (st.meetings || []).filter((x) => ![ids.meeting, ids.hidden].includes(x.id) && x.title !== ids.checkMeeting);
+      st.documents = (st.documents || []).filter((d) => d.id !== ids.doc);
+      st.events = (st.events || []).filter((e) => e.id !== ids.event);
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, { project: PP.id, meeting: PM.id, hidden: HIDDEN.id, checkMeeting: CHECK_MEETING, doc: DOC_P.id, event: PE1.id });
     await h.reload();
   });
 };

@@ -1,5 +1,6 @@
 // Schedule tab — appointments and deadlines. An event is a record, never a task: these steps assert that
 // registering, ticking and cancelling one changes `events` only, and never the tasks, streak or trophies.
+// The event sheet's `확인할 것` checklist (v27) is covered in flow11.js, next to the project fixtures it needs.
 module.exports = async (h) => {
   const { step, clickTab, clickText, clickExact, clickInModal, clickInModalExact, expectText, hasText, rows, todoRows, overlayText, typeInto, setValue, closeModal, modalError, sleep, page, errors } = h;
 

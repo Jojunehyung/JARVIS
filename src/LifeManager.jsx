@@ -2905,6 +2905,39 @@ const parseAssistantReply = (text, state) => {
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
 };
 
+/* The minutes lines of a packet, shared by the work packet and the prep packet: per meeting its date, project and title,
+   the facts the meeting view states, the summary (clipped at `summary`), decisions, follow-up items (`followUps` of them,
+   open first) and the newest `progress` entries. A meeting flagged `aiHidden` contributes its date and title only. */
+const meetingPacketLines = (state, list, today, { summary, progress: progressN, followUps: followUpN, openOnly = false }) => list.flatMap((m) => {
+  if (m.aiHidden) return [`- ${m.date} ${m.title}`, "  내용 비공개 (AI에 보내지 않기)"];
+  const project = (state.meetingProjects || []).find((p) => p.id === m.projectId)?.name || "프로젝트 없음";
+  // `transcript` is never read here — the packet states named fields only (SECURITY.md).
+  // Follow-up items (v26) after the decisions, open first and done last, so the trim drops the done ones first. The
+  // free-text `후속` line stays only for a meeting with text and no items — with items it would state them twice.
+  // `openOnly` (the prep packet) lists the open items only, and the head counts those; the free-text line still follows
+  // whether the meeting has items at all.
+  const all = m.followUps || [];
+  const fus = openOnly ? all.filter((f) => !f.done) : all;
+  const body = [["요약", m.summary, summary], ["결정", m.decisions, WORK_PACKET_CLIP], ...(all.length ? [] : [["후속", m.actions, WORK_PACKET_CLIP]])]
+    .filter(([, text]) => String(text || "").trim())
+    .map(([label, text, cap]) => `  ${label}: ${oneLineText(text, cap)}`);
+  const followUps = fus.length === 0 ? [] : [`  후속 ${fus.length}건:`,
+    ...[...fus.filter((f) => !f.done), ...fus.filter((f) => f.done)].slice(0, followUpN)
+      .map((f) => `  - ${f.mine ? "내 담당" : "타인"} · ${f.due ? `기한 ${f.due}` : "기한 없음"} · ${f.done ? "완료" : "미완료"} · ${oneLineText(f.text, MEETING_LIMITS.followUp)}`)];
+  const progress = (m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, progressN)
+    .map((e) => `  진행 ${e.date}: ${oneLineText(e.text, WORK_PACKET_CLIP)}`);
+  // What the meeting view states besides the minutes (added 2026-09-17 — the packet had left them out): attendees,
+  // the linked schedule entry and every linked task with its state, read live like `MeetingViewModal`.
+  const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
+    .map((q) => `${q.title} (${q.type === "daily" ? "매일 · 오늘 " : ""}${taskClosedOn(q, today) ? "완료" : "미완료"})`);
+  const facts = [
+    String(m.attendees || "").trim() && `  참석: ${oneLineText(m.attendees, MEETING_LIMITS.attendees)}`,
+    m.eventId && `  일정: ${meetingEventText(state, m)}`,
+    linked.length > 0 && `  연결된 할 일: ${linked.join(" · ")}`,
+  ].filter(Boolean);
+  return [`- ${m.date} [${project}] ${m.title}`, ...facts, ...body, ...followUps, ...progress];
+});
+
 /* The work packet (`오늘 업무 만들기`, 2026-09-17 amendment): the same facts the daily packet states — the CV at the level
    `cvSummaryOf` shares (never `profile.name`, `birth`, `email`, `phone`, a school or an employer), the goals, the open
    tasks, the schedule, the contracts — plus what the daily packet never reads: the newest meeting minutes with their
@@ -2934,32 +2967,6 @@ const buildWorkPacket = (state, today) => {
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
   const bizLines = bizPacketLines(state, today);
   const meetings = (state.meetings || []).slice().sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
-  const meetingLines = (list, summaryCap, progressN, followUpN) => list.flatMap((m) => {
-    if (m.aiHidden) return [`- ${m.date} ${m.title}`, "  내용 비공개 (AI에 보내지 않기)"];
-    const project = (state.meetingProjects || []).find((p) => p.id === m.projectId)?.name || "프로젝트 없음";
-    // `transcript` is never read here — the packet states named fields only (SECURITY.md).
-    // Follow-up items (v26) after the decisions, open first and done last, so the trim drops the done ones first. The
-    // free-text `후속` line stays only for a meeting with text and no items — with items it would state them twice.
-    const fus = m.followUps || [];
-    const body = [["요약", m.summary, summaryCap], ["결정", m.decisions, WORK_PACKET_CLIP], ...(fus.length ? [] : [["후속", m.actions, WORK_PACKET_CLIP]])]
-      .filter(([, text]) => String(text || "").trim())
-      .map(([label, text, cap]) => `  ${label}: ${oneLineText(text, cap)}`);
-    const followUps = fus.length === 0 ? [] : [`  후속 ${fus.length}건:`,
-      ...[...fus.filter((f) => !f.done), ...fus.filter((f) => f.done)].slice(0, followUpN)
-        .map((f) => `  - ${f.mine ? "내 담당" : "타인"} · ${f.due ? `기한 ${f.due}` : "기한 없음"} · ${f.done ? "완료" : "미완료"} · ${oneLineText(f.text, MEETING_LIMITS.followUp)}`)];
-    const progress = (m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, progressN)
-      .map((e) => `  진행 ${e.date}: ${oneLineText(e.text, WORK_PACKET_CLIP)}`);
-    // What the meeting view states besides the minutes (added 2026-09-17 — the packet had left them out): attendees,
-    // the linked schedule entry and every linked task with its state, read live like `MeetingViewModal`.
-    const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
-      .map((q) => `${q.title} (${q.type === "daily" ? "매일 · 오늘 " : ""}${taskClosedOn(q, today) ? "완료" : "미완료"})`);
-    const facts = [
-      String(m.attendees || "").trim() && `  참석: ${oneLineText(m.attendees, MEETING_LIMITS.attendees)}`,
-      m.eventId && `  일정: ${meetingEventText(state, m)}`,
-      linked.length > 0 && `  연결된 할 일: ${linked.join(" · ")}`,
-    ].filter(Boolean);
-    return [`- ${m.date} [${project}] ${m.title}`, ...facts, ...body, ...followUps, ...progress];
-  });
   // Today's carried view (every undone item from earlier days, then today's) plus yesterday's items, deduped by id, by date
   // then `createdAt` — the list `parseWorkReply` dedupes against, so rule 3 of the head covers a carried item too.
   const yesterday = shiftDay(today, -1);
@@ -2975,7 +2982,7 @@ const buildWorkPacket = (state, today) => {
     `[인생 관리 — 오늘 업무 제안 요청 ${today}]`, ...WORK_PACKET_HEAD, "",
     ...packetSection("이력", cvLines), ...packetSection("목표", goalLines), ...packetSection("열린 할 일", taskLines.slice(0, k.tasks)),
     ...packetSection(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines.slice(0, k.events)), ...packetSection("사업 (계약·매출)", bizLines.slice(0, k.biz)),
-    ...packetSection(`최근 회의록 (${k.meetings}건)`, meetingLines(meetings.slice(0, k.meetings), k.summary, k.progress, k.followUps)),
+    ...packetSection(`최근 회의록 (${k.meetings}건)`, meetingPacketLines(state, meetings.slice(0, k.meetings), today, k)),
     ...packetSection("업무 기록 (이월·어제·오늘)", recordLines.slice(0, k.records)),
   ].join("\n");
   // Each reduction answers true when it tightened something and false once it has nothing left to give.
@@ -3026,6 +3033,107 @@ const parseWorkReply = (text, state, today) => {
     else if (seen.has(normWorkTitle(title))) reject = "오늘 업무에 이미 있어요";
     else seen.add(normWorkTitle(title));
     return { key: `w${n}`, title, note, link, linkText, reject };
+  });
+  return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
+};
+
+// The prep packet (`AI에게 회의 준비 묻기`, rule 7 amendment 2026-09-17, the third packet): what it carries and how much.
+// Plain literals, so smoke-logic can lift them. Summary, progress, follow-up and clip knobs reuse the WORK_PACKET_* values.
+const PREP_PACKET_MAX = 20000;          // the prep packet's own cap, as the work packet's
+const PREP_PACKET_MEETINGS = 5;         // the project's newest meetings by `meetingOrder`
+const PREP_PACKET_DOCS = 10;            // the project's newest documents by `docOrder`
+const PREP_PACKET_DOC_CLIP = 1500;      // chars of a document's summary
+const PREP_PACKET_DOC_CLIP_TRIM = 500;  // the document clip once the packet runs over PREP_PACKET_MAX
+const PREP_PACKET_TASKS = 10;           // open task rows linked by those meetings
+const PREP_PACKET_DEALS = 6;            // contracts of the project's client
+const PREP_PACKET_HEAD = [
+  "역할: 이 사용자의 회의 준비를 돕는 비서예요. 아래 데이터만 근거로 답해요.",
+  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
+  "3) 제안은 이 회의에서 확인할 항목만이에요 — 질문, 미결 사항, 위험, 챙길 것. 항목당 200자 이내. 실행·일정·업무·계약·회의록을 만들거나 바꾸지 않아요. '확인할 것 (이미 있음)'에 있는 항목은 다시 제안하지 않아요.",
+  "4) 각 항목의 근거를 basis에 한 줄로 적어요 — 회의록 날짜나 문서 제목처럼 아래 데이터의 표기 그대로요. 근거가 없으면 basis를 비워요.",
+  "5) 답변 형식: ① 회의 내용 파악 5줄 이내 ② 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"checks\": []).",
+  "```json",
+  '{"checks":[{"text":"...","basis":"근거 한 줄"}],"note":"한 줄"}',
+  "```",
+];
+
+/* The prep packet for one schedule event of a meeting project: the event line (no place, no note), its existing checks,
+   the project's newest meetings through `meetingPacketLines` (open follow-ups only; a meeting flagged `aiHidden` states
+   its date and title only; the transcript is never read), the project's document titles and summaries (never `source`),
+   the open tasks the non-hidden meetings link, and the contracts of the project's client (`dealsOfProject`) with their
+   unpaid months. No `## 이력` line and no profile identifier: meeting preparation needs no CV (SECURITY.md). When the text
+   exceeds PREP_PACKET_MAX the reductions run one step at a time, rebuilding after each: the document clip 1,500 → 500,
+   meetings 5 → 2 (oldest first), follow-ups 30 → 5 per meeting, the summary clip 5,000 → 1,500, the summary → 500 and
+   progress 5 → 1, documents 10 → 3, tasks → 0, contracts → 0, documents 3 → 0, meetings 2 → 0. The header, the event
+   line and the existing checks are never dropped. Derived on demand, never stored (rule 9). */
+const buildPrepPacket = (state, ev, today, date = ev.date) => {
+  const project = eventProjectOf(state, ev);
+  const head = [`[인생 관리 — 회의 준비 요청 ${today}]`, ...PREP_PACKET_HEAD, ""];
+  const eventLine = `- ${date} ${ev.time || "시간 미정"} · ${ev.title}`;
+  if (!project) return [...head, ...packetSection("회의", [eventLine])].join("\n");
+  const checkLines = (ev.checks || []).map((c) => `- ${c.text} · ${c.done ? "완료" : "미완료"}`);
+  const meetings = (state.meetings || []).filter((m) => m.projectId === project.id).sort(meetingOrder).slice(0, PREP_PACKET_MEETINGS);
+  const docs = (state.documents || []).filter((d) => d.projectId === project.id).sort(docOrder);
+  const biz = bizSummary(state, today);
+  const dealLines = dealsOfProject(state, project).map((d) => [
+    `- ${DEAL_PHASE_LABEL[dealPhase(d, biz.month)] ?? DEAL_STATUS[d.status]} · ${d.client} ${d.title} · ${d.startMonth ? `${d.startMonth} ~ ${dealEnd(d) || "미정"}` : "기간 없음"} · 월 ${wonText(d.monthly)}`,
+    ...biz.unpaid.filter((u) => u.deal.id === d.id).map((u) => `  미수 ${u.month} ${wonText(u.amount)}`),
+  ]);
+  const k = { meetings: meetings.length, followUps: WORK_PACKET_FOLLOWUPS, summary: WORK_PACKET_SUMMARY, progress: WORK_PACKET_PROGRESS,
+    docs: PREP_PACKET_DOCS, docClip: PREP_PACKET_DOC_CLIP, tasks: PREP_PACKET_TASKS, deals: PREP_PACKET_DEALS, openOnly: true };
+  const build = () => {
+    const shown = meetings.slice(0, k.meetings);
+    // Tasks linked by the meetings in the packet, deduped; a hidden meeting's links stay out with its body.
+    const taskIds = [...new Set(shown.filter((m) => !m.aiHidden).flatMap((m) => m.taskIds || []))];
+    const taskLines = taskIds.map((id) => (state.tasks || []).find((q) => q.id === id))
+      .filter((q) => q && !taskClosedOn(q, today)).slice(0, k.tasks)
+      .map((q) => `- ${q.title} · ${(state.goals || []).find((g) => g.id === q.goalId)?.title || "목표 없음"} · 기한 ${q.due || "없음"}`);
+    const docLines = docs.slice(0, k.docs).flatMap((d) => [`- ${d.addedAt} ${d.title}`, `  요약: ${oneLineText(d.summary, k.docClip)}`]);
+    return [
+      ...head, ...packetSection("회의", [`${eventLine} · 프로젝트 ${project.name}`]),
+      ...packetSection("확인할 것 (이미 있음)", checkLines),
+      ...packetSection(`최근 회의록 (${shown.length}건)`, meetingPacketLines(state, shown, today, k)),
+      ...packetSection(`문서 (${Math.min(docs.length, k.docs)}건)`, docLines),
+      ...packetSection("열린 할 일 (회의록 연결)", taskLines),
+      ...packetSection("계약 (같은 고객사)", dealLines.slice(0, k.deals).flat()),
+    ].join("\n");
+  };
+  // Each reduction answers true when it tightened something and false once it has nothing left to give.
+  const reductions = [
+    () => k.docClip > PREP_PACKET_DOC_CLIP_TRIM && (k.docClip = PREP_PACKET_DOC_CLIP_TRIM, true),
+    () => k.meetings > 2 && (k.meetings -= 1, true),
+    () => k.followUps > 5 && (k.followUps = 5, true),
+    () => k.summary > WORK_PACKET_SUMMARY_TRIM && (k.summary = WORK_PACKET_SUMMARY_TRIM, true),
+    () => (k.summary > 500 || k.progress > 1) && (k.summary = 500, k.progress = 1, true),
+    () => k.docs > 3 && (k.docs = 3, true),
+    () => k.tasks > 0 && (k.tasks = 0, true),
+    () => k.deals > 0 && (k.deals = 0, true),
+    () => k.docs > 0 && (k.docs = 0, true),
+    () => k.meetings > 0 && (k.meetings -= 1, true),
+  ];
+  let out = build();
+  for (const reduce of reductions) while (out.length > PREP_PACKET_MAX && reduce()) out = build();
+  return out;
+};
+
+// Reads the JSON block a prep reply appends — `data.checks` and `data.note` only; `tasks`, `work`, `deals`, `events`,
+// `meetings` or any other key is ignored (rule 7 amendment, the third packet). A proposal is a check item: its text,
+// with the basis folded in as `{text} — {basis}` when that fits EVENT_CHECK_TEXT. A text already on the event, or
+// accepted earlier in the same reply, is refused by its normalised form. Nothing here writes state.
+const parsePrepReply = (text, ev) => {
+  const raw = String(text || "");
+  const data = replyJson(raw);
+  const seen = checkTexts(ev);
+  const proposals = (Array.isArray(data?.checks) ? data.checks : []).map((t, n) => {
+    const body = String(t?.text || "").trim();
+    const basis = String(t?.basis || "").trim();
+    const folded = body && basis && `${body} — ${basis}`.length <= EVENT_CHECK_TEXT ? `${body} — ${basis}` : body.slice(0, EVENT_CHECK_TEXT);
+    let reject = null;
+    if (!body) reject = "내용이 없어요";
+    else if (seen.has(normWorkTitle(folded)) || seen.has(normWorkTitle(body))) reject = "이미 확인할 것에 있어요";
+    else { seen.add(normWorkTitle(folded)); seen.add(normWorkTitle(body)); }
+    return { key: `c${n}`, text: folded, basis, reject };
   });
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
 };
@@ -3600,9 +3708,12 @@ const demoState = () => {
       progress: [], aiHidden: false, followUps: [] },
   ];
   // One demo event names its meeting project (schema v26), so the prep card has a project-linked event tomorrow. It is
-  // appended here, not in the schedule list above, because `mp1` is declared after that list.
+  // appended here, not in the schedule list above, because `mp1` is declared after that list. It carries two pre-meeting
+  // checks (v27): one typed, one imported from a prep reply with its basis folded in.
   s.events = [...s.events,
-    { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2) }];
+    { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2),
+      checks: [{ id: uid(), text: "초과분 시간 단가표 회신 여부 확인", done: false, source: "manual" },
+        { id: uid(), text: "월 리포트 양식 확정본 지참 — 유지보수 범위 협의 결정 사항", done: false, source: "ai" }] }];
   // Two document summaries (v27): one on the search project, one with no project — synthetic file names, no personal data.
   s.documents = [
     { id: uid(), projectId: mp2.id, title: "요구사항 정의서 v1", source: "requirements-v1.pdf", addedAt: shiftDay(today, -1),
@@ -5402,14 +5513,22 @@ function TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, 
 
 /* ── Event detail sheet — one occurrence, opened from the to-do list. Its only actions are the schedule's own
    `EventRow` buttons: an event is a record that pays nothing and moves no goal (rules 1, 13). ── */
-function EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit }) {
+function EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit, onAddCheck, onToggleCheck, onRemoveCheck }) {
   const ev = (state.events || []).find((x) => x.id === eventId);
   if (!ev) return null;
+  // The `확인할 것` checklist (v27) belongs to an event of a meeting project only; a plain appointment's sheet is unchanged.
+  const project = eventProjectOf(state, ev);
   return (
     <Modal title={`일정 — ${ev.title}`} onClose={onClose}>
       <div className="space-y-3">
         <EventRow ev={ev} date={date} done={(ev.doneDates || []).includes(date)} today={today}
           onToggleDone={onToggleDone} onSkip={onSkip} onEdit={onEdit} />
+        {project && (
+          <>
+            <p className="text-xs text-zinc-500 break-words">프로젝트 · {project.name}</p>
+            <EventChecks ev={ev} onAdd={onAddCheck} onToggle={onToggleCheck} onRemove={onRemoveCheck} />
+          </>
+        )}
         <p className="text-xs text-zinc-500">목표 기여 없음 — 일정은 기록이라 점수와 목표에 반영되지 않아요.</p>
       </div>
     </Modal>
@@ -6190,6 +6309,49 @@ function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
         <button onClick={() => onEdit(ev)}
           className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">수정</button>
       </div>
+    </div>
+  );
+}
+
+/* The `확인할 것` checklist of one event (v27), rendered by the meeting-prep card and the event detail sheet, so the two
+   surfaces cannot drift apart. `onAdd` answers "" when written or the refusal to show; the typed text is component
+   state only. A check pays nothing and completes nothing (rules 1, 18). */
+function EventChecks({ ev, onAdd, onToggle, onRemove }) {
+  const [text, setText] = useState("");
+  const [err, setErr] = useState("");
+  const checks = ev.checks || [];
+  const open = checks.filter((c) => !c.done).length;
+  const atCap = checks.length >= EVENT_CHECKS_MAX;
+  const add = () => {
+    const refused = onAdd(ev.id, text);
+    setErr(refused);
+    if (!refused) setText("");
+  };
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs tracking-widest font-semibold text-zinc-500">확인할 것</div>
+        <span className="text-xs font-mono text-zinc-400 shrink-0">{open}/{checks.length}</span>
+      </div>
+      {checks.length === 0 ? (
+        <p className="text-xs text-zinc-500">확인할 것이 없어요.</p>
+      ) : checks.map((c) => (
+        <div key={c.id} className="bg-zinc-950 rounded-xl px-3 py-2 flex items-start gap-2">
+          <input type="checkbox" aria-label="확인 완료" checked={!!c.done} onChange={() => onToggle(ev.id, c.id)} className="mt-0.5 shrink-0" />
+          <span className={`flex-1 min-w-0 text-sm break-words ${c.done ? "line-through text-zinc-500" : ""}`}>{c.text}</span>
+          {c.source === "ai" && <span className="text-xs font-mono font-bold text-violet-300 shrink-0">AI</span>}
+          <button aria-label="확인할 것 삭제" onClick={() => { if (window.confirm("확인할 것을 삭제해요. 계속할까요?")) onRemove(ev.id, c.id); }}
+            className="text-zinc-500 shrink-0 active:opacity-70"><X size={14} /></button>
+        </div>
+      ))}
+      <div className="flex items-center gap-1.5">
+        <input value={text} onChange={(e) => setText(e.target.value)} disabled={atCap} placeholder="확인할 것 — 예: 단가표 회신 여부"
+          className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1 text-sm disabled:opacity-30" />
+        <button onClick={add} disabled={atCap}
+          className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">추가</button>
+      </div>
+      {err && <p className="text-xs text-rose-400">{err}</p>}
+      {atCap && <p className="text-xs text-zinc-400">확인할 것은 {EVENT_CHECKS_MAX}건까지예요.</p>}
     </div>
   );
 }
@@ -7058,6 +7220,7 @@ const MEETING_FOLLOWUPS_MAX = 30;  // follow-up items per meeting before `후속
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
 const DOC_LIMITS = { title: 60, source: 120, summary: 5000 };
+const DOC_SUMMARY_CLIP = 100;    // chars of a document's summary on the prep card and the reader
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
 // The meeting-prep card (`오늘 회의 준비`): the window and how much of the last meeting it states.
 const PREP_DAYS = 2;             // today and tomorrow
@@ -7065,6 +7228,10 @@ const PREP_FOLLOWUPS = 10;       // open follow-up lines before `{k}건 더`
 const PREP_PROGRESS = 3;         // newest progress entries
 const PREP_TASKS = 5;            // linked task lines
 const PREP_DECISION_CLIP = 200;  // chars of the last meeting's decisions
+const PREP_DOCS = 5;             // document lines on the prep card before `{k}건 더`
+// Pre-meeting checks (v27) on one schedule event.
+const EVENT_CHECKS_MAX = 30;     // `확인할 것` items per event before `확인할 것은 30건까지예요.`
+const EVENT_CHECK_TEXT = 200;    // chars of one check item
 const mbText = (chars) => (chars / 1048576).toFixed(1);
 const meetingOrder = (a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || "");
 // Documents newest first; a stable sort keeps the handler's prepend order within one day.
@@ -7160,16 +7327,27 @@ const linkedTaskLead = (q, today) => todoLeadOf({ kind: "task", task: q, date: q
 // The meeting-prep rows: every open schedule occurrence today and tomorrow that belongs to a live meeting project — by
 // the event's own `projectId`, else by a previous meeting whose trimmed title equals the event's (the newest such
 // meeting names the project). Each row carries the project's newest meeting, its open follow-ups (mine first, stable),
-// its newest progress entries and its live linked tasks. Pure and derived at render, never stored (rule 9); the card
+// its newest progress entries, its live linked tasks and the project's documents (v27). Pure and derived at render, never stored (rule 9); the card
 // and the briefing read the same rows. Date ascending, then `eventsOn`'s order.
-const meetingPrepOf = (state, today) => {
+// The live meeting project an event belongs to, or null: the event's own `projectId` first, else the project of the
+// newest meeting whose trimmed title equals the event's. Derived at render, never stored (rule 9).
+const eventProjectOf = (state, ev) => {
   const projects = state.meetingProjects || [];
   const liveProject = (id) => (id ? projects.find((p) => p.id === id) || null : null);
+  const title = String(ev?.title || "").trim();
+  return liveProject(ev?.projectId)
+    || liveProject((state.meetings || []).slice().sort(meetingOrder).find((m) => m.title.trim() === title)?.projectId);
+};
+// The contracts of a project's client: a deal whose trimmed `client` is part of the project name. No stored link (TD-63).
+const dealsOfProject = (state, project) => (state.deals || []).filter((d) => String(d.client || "").trim() && project.name.includes(d.client.trim()));
+// The duplicate key of an event's checks — the same normalisation the work reply uses: trimmed, spaces removed, lower-cased.
+const checkTexts = (ev) => new Set((ev.checks || []).map((c) => normWorkTitle(c.text)));
+
+const meetingPrepOf = (state, today) => {
   const meetings = (state.meetings || []).slice().sort(meetingOrder);
+  const documents = state.documents || [];
   return upcomingEvents(state, today, PREP_DAYS).filter((o) => !o.done).flatMap(({ ev, date }) => {
-    const title = String(ev.title || "").trim();
-    const project = liveProject(ev.projectId)
-      || liveProject(meetings.find((m) => m.title.trim() === title)?.projectId);
+    const project = eventProjectOf(state, ev);
     if (!project) return [];
     const last = meetings.find((m) => m.projectId === project.id) || null;
     const fus = (last?.followUps || []).filter((f) => !f.done);
@@ -7179,6 +7357,7 @@ const meetingPrepOf = (state, today) => {
       progress: (last?.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, PREP_PROGRESS),
       tasks: (last?.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
         .map((q) => ({ q, closed: taskClosedOn(q, today) })),
+      docs: documents.filter((d) => d.projectId === project.id).sort(docOrder),
     }];
   });
 };
@@ -7460,6 +7639,25 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   const [followUps, setFollowUps] = useState(() => (meeting?.followUps || []).map((f) => ({ ...f })));
   const fuAtCap = followUps.length >= MEETING_FOLLOWUPS_MAX;
   const editFollowUp = (id, patch) => setFollowUps((cur) => cur.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  // `확인할 것 가져오기` (v27): copies the linked event's checks into follow-up rows — form state only; the event's checks
+  // are never written. A check whose trimmed text already names a row is skipped; the row cap stops the copy.
+  const linkedChecks = ((state.events || []).find((e) => e.id === eventId)?.checks) || [];
+  const [pulled, setPulled] = useState("");
+  const pullChecks = () => {
+    const have = new Set(followUps.map((r) => r.text.trim()));
+    const rows = [];
+    let skipped = 0;
+    for (const c of linkedChecks) {
+      const t = c.text.trim();
+      if (have.has(t)) { skipped += 1; continue; }
+      if (followUps.length + rows.length >= MEETING_FOLLOWUPS_MAX) break;
+      have.add(t);
+      rows.push({ id: uid(), text: c.text, mine: false, done: false });
+    }
+    if (!rows.length && followUps.length >= MEETING_FOLLOWUPS_MAX) { setPulled(`후속 항목은 ${MEETING_FOLLOWUPS_MAX}건까지예요.`); return; }
+    setFollowUps((cur) => [...cur, ...rows]);
+    setPulled(`확인할 것 ${rows.length}건을 가져왔어요 — 이미 있는 ${skipped}건은 건너뛰었어요.`);
+  };
   const [err, setErr] = useState("");
   const dayEvents = date ? eventsOn(state, date) : [];
   const candidates = useMemo(() => meetingTaskCandidates(state, today), [state, today]);
@@ -7618,6 +7816,13 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
           <button onClick={() => setFollowUps((cur) => (cur.length >= MEETING_FOLLOWUPS_MAX ? cur : [...cur, { id: uid(), text: "", mine: false, done: false }]))}
             disabled={fuAtCap}
             className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">항목 추가</button>
+          {linkedChecks.length > 0 && (
+            <div className="mt-1.5">
+              <button onClick={pullChecks}
+                className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">확인할 것 가져오기 ({linkedChecks.length}건)</button>
+              {pulled && <p className="text-xs text-zinc-400 mt-1.5">{pulled}</p>}
+            </div>
+          )}
           {fuAtCap && <p className="text-xs text-zinc-400 mt-1.5">후속 항목은 {MEETING_FOLLOWUPS_MAX}건까지예요.</p>}
           <p className="text-xs text-zinc-600 mt-1.5">내 담당을 켜면 업무 탭에 등록돼요 — 회의 날짜가 지났으면 오늘 업무로요.</p>
         </div>
@@ -7934,13 +8139,16 @@ const workLinkOptions = (state) => {
 
 /* ── Meeting-prep card (`오늘 회의 준비`) — the first section of the `업무` tab: one block per open schedule occurrence
    today and tomorrow that belongs to a meeting project (`meetingPrepOf`), stating the last meeting's decisions, open
-   follow-ups, progress and linked tasks; a tap opens that meeting's view. On-device only, so a meeting flagged
-   `aiHidden` is stated in full here. Derived at render, stores nothing (rule 9); renders nothing without a row. ── */
-function MeetingPrepCard({ state, today, onOpenMeeting }) {
+   follow-ups, progress and linked tasks, the project's documents and the event's `확인할 것` checklist. The block is a
+   `div` with an explicit `회의록 열기 ›` button, since the checklist's controls cannot nest inside a button (TD-64).
+   On-device only, so a meeting flagged `aiHidden` is stated in full here. Derived at render; the checks are the only
+   thing written from here, through the root's handlers (rule 9); renders nothing without a row. ── */
+function MeetingPrepCard({ state, today, onOpenMeeting, onOpenDocument, onAddCheck, onToggleCheck, onRemoveCheck, onAskAi }) {
   const prep = useMemo(() => meetingPrepOf(state, today), [state, today]);
   if (!prep.length) return null;
   const head = "block text-xs font-bold text-zinc-500 pt-1";
   const line = "block text-xs text-zinc-300 break-words";
+  const border = "px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5";
   const workState = (f) => {
     const w = f.workId ? (state.work || []).find((x) => x.id === f.workId) : null;
     return w ? (w.done ? "완료" : "미완료") : "없음";
@@ -7951,17 +8159,18 @@ function MeetingPrepCard({ state, today, onOpenMeeting }) {
         <SectionLabel tone="text-cyan-400">오늘 회의 준비</SectionLabel>
         <span className="text-xs font-mono text-zinc-400 mb-2">{prep.length}건</span>
       </div>
+      <p className="text-xs text-zinc-600 mb-2">확인할 것은 이 일정에 저장돼요 — 회의록을 쓸 때 후속 항목으로 가져올 수 있어요.</p>
       <div className="space-y-2">
         {prep.map((row) => {
           const { ev, date, project, last } = row;
-          const Tag = last ? "button" : "div";
           const hidden = row.followUps.length - PREP_FOLLOWUPS;
+          const moreDocs = row.docs.length - PREP_DOCS;
           return (
-            <Tag key={`${ev.id}|${date}`} {...(last ? { onClick: () => onOpenMeeting(last.id) } : {})}
-              className="bg-zinc-950 rounded-xl p-3 space-y-1.5 text-left w-full block active:opacity-70">
+            <div key={`${ev.id}|${date}`} className="bg-zinc-950 rounded-xl p-3 space-y-1.5 w-full block">
               <span className="block text-sm font-bold truncate">{project.name}</span>
               <span className="block font-mono text-xs text-zinc-400 break-words">{`${date === today ? "오늘" : "내일"} ${ev.time || "시간 미정"} · ${ev.title}`}</span>
               <span className={line}>{last ? <>마지막 회의 <span className="font-mono">{last.date}</span> · {last.title}</> : "이전 회의록 없음"}</span>
+              {last && <div><button onClick={() => onOpenMeeting(last.id)} className={border}>회의록 열기 ›</button></div>}
               {last && (
                 <>
                   <span className={line}>{`결정: ${oneLineText(last.decisions, PREP_DECISION_CLIP) || "없음"}`}</span>
@@ -7986,7 +8195,18 @@ function MeetingPrepCard({ state, today, onOpenMeeting }) {
                   )}
                 </>
               )}
-            </Tag>
+              <span className={head}>문서 <span className="font-mono">{row.docs.length}</span>건</span>
+              {row.docs.length === 0 ? <span className="block text-xs text-zinc-500">문서 없음</span>
+                : row.docs.slice(0, PREP_DOCS).map((d) => (
+                  <button key={d.id} onClick={() => onOpenDocument(d.id)} className="block text-xs text-zinc-300 break-words text-left w-full active:opacity-70">
+                    {`${d.title} — ${oneLineText(d.summary, DOC_SUMMARY_CLIP)}`}</button>
+                ))}
+              {moreDocs > 0 && <span className="block text-xs font-mono text-zinc-500">{moreDocs}건 더</span>}
+              <div className="pt-1.5">
+                <EventChecks ev={ev} onAdd={onAddCheck} onToggle={onToggleCheck} onRemove={onRemoveCheck} />
+              </div>
+              <button onClick={() => onAskAi(ev.id, date)} className={`w-full ${border}`}>AI에게 회의 준비 묻기</button>
+            </div>
           );
         })}
       </div>
@@ -7994,7 +8214,7 @@ function MeetingPrepCard({ state, today, onOpenMeeting }) {
   );
 }
 
-function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMeeting }) {
+function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMeeting, onOpenDocument, onAddCheck, onToggleCheck, onRemoveCheck, onAskAi }) {
   const [viewDate, setViewDate] = useState(today); // the day shown — component state only, never stored (rule 9)
   // Select mode for deleting several items at once: component state only, cleared when the day changes.
   const [selecting, setSelecting] = useState(false);
@@ -8029,7 +8249,8 @@ function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMe
 
   return (
     <>
-      <MeetingPrepCard state={state} today={today} onOpenMeeting={onOpenMeeting} />
+      <MeetingPrepCard state={state} today={today} onOpenMeeting={onOpenMeeting} onOpenDocument={onOpenDocument}
+        onAddCheck={onAddCheck} onToggleCheck={onToggleCheck} onRemoveCheck={onRemoveCheck} onAskAi={onAskAi} />
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         <div className="flex items-center justify-between gap-2">
           <SectionLabel tone="text-cyan-400">{isToday ? `오늘 업무 — ${today}` : `업무 — ${viewDate}`}</SectionLabel>
@@ -8226,6 +8447,59 @@ function WorkBridgeModal({ state, today, onClose, onImport, onToast }) {
       )}
     </Modal>
   );
+}
+
+/* ── Prep bridge — `AI에게 회의 준비 묻기`: the prep packet of one project event out, the reply's `checks` proposals back,
+   each ticked by the user before it becomes a check with `source: "ai"` (rule 7 amendment 2026-09-17, the third packet).
+   The raw reply is not stored (rule 9). Shares the send and paste panes; the confirm view states each proposal's basis. ── */
+function PrepBridgeModal({ state, today, eventId, date, onClose, onImport, onToast }) {
+  const ev = (state.events || []).find((x) => x.id === eventId);
+  const [step, setStep] = useState("send");
+  const [reply, setReply] = useState("");
+  const [result, setResult] = useState(null);
+  const [ticked, setTicked] = useState({});
+  const [err, setErr] = useState("");
+  const packetRef = useRef(null);
+  const packet = useMemo(() => (ev ? buildPrepPacket(state, ev, today, date) : ""), [state, ev, today, date]);
+  if (!ev) return null;
+  const read = () => {
+    const r = parsePrepReply(reply, ev);
+    setResult(r);
+    setErr("");
+    setTicked(Object.fromEntries(r.proposals.filter((x) => !x.reject).map((x) => [x.key, true])));
+  };
+  const register = () => setErr(onImport(eventId, result.proposals.filter((x) => ticked[x.key] && !x.reject)) || "");
+  let body;
+  if (step === "send") {
+    body = (
+      <PacketSendPane packet={packet} taRef={packetRef} onCopy={() => copyPacket(packetRef, packet, onToast)} onPaste={() => setStep("paste")}
+        caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 이 프로젝트의 회의록 요약·후속·진행사항과 문서 요약이 실려요 — 녹취록·이름·연락처·문서 출처는 실리지 않아요." />
+    );
+  } else if (!result) {
+    body = <ReplyPastePane reply={reply} setReply={setReply} onCheck={read} />;
+  } else {
+    body = (
+      <div className="space-y-3">
+        <div className="text-sm font-bold">확인할 것 제안 — {result.proposals.length}건</div>
+        {result.note && <p className="text-xs text-zinc-400 break-words">{result.note}</p>}
+        {result.proposals.length === 0 && <p className="text-xs text-zinc-500">제안 없음 — 등록할 항목이 없어요.</p>}
+        {result.proposals.map((x) => (
+          <label key={x.key} className={`flex items-start gap-2 bg-zinc-950 rounded-xl p-3 ${x.reject ? "opacity-50" : ""}`}>
+            <input type="checkbox" className="mt-0.5" disabled={Boolean(x.reject)} checked={Boolean(ticked[x.key])}
+              onChange={(e) => setTicked((cur) => ({ ...cur, [x.key]: e.target.checked }))} />
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm break-words">{x.text || "내용 없음"}</span>
+              <span className="block text-xs text-zinc-500 break-words">{x.basis ? `근거: ${x.basis}` : "근거 없음"}</span>
+              {x.reject && <span className="block text-xs text-rose-400 mt-0.5">{x.reject}</span>}
+            </span>
+          </label>
+        ))}
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={register} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">선택한 항목 등록</button>
+      </div>
+    );
+  }
+  return <Modal title={step === "send" ? "AI에게 회의 준비 묻기" : "AI 답변 붙여넣기"} onClose={onClose}>{body}</Modal>;
 }
 
 /* ───────────────────────── Overlay effects ───────────────────────── */
@@ -8648,6 +8922,56 @@ export default function LifeManager() {
       return s;
     });
     showToast({ msg: "이번 회차를 취소했어요" });
+  };
+  /* Pre-meeting checks (v27) — `확인할 것` on a schedule event: a checklist, never a task or a work item (rules 1, 9, 18).
+     These handlers write one event's `checks` and nothing else; a repeating event carries one list for every occurrence. */
+  const writeChecks = (eventId, fn) => setState((prev) => {
+    const s = structuredClone(prev);
+    const e = (s.events || []).find((x) => x.id === eventId);
+    if (!e) return prev;
+    e.checks = fn(e.checks || []);
+    return s;
+  });
+  // Answers "" when written, or the refusal the caller shows.
+  const addCheck = (eventId, raw, source = "manual") => {
+    const ev = (state.events || []).find((x) => x.id === eventId);
+    if (!ev) return "";
+    const text = String(raw || "").trim();
+    const checks = ev.checks || [];
+    if (!text) return "확인할 것을 입력해 주세요.";
+    if (text.length > EVENT_CHECK_TEXT) return `확인할 것은 ${EVENT_CHECK_TEXT}자까지예요 — 지금 ${text.length}자예요.`;
+    if (checks.length >= EVENT_CHECKS_MAX) return `확인할 것은 ${EVENT_CHECKS_MAX}건까지예요.`;
+    const item = { id: uid(), text, done: false, source };
+    const refused = recordFits({ ...ev, checks: [...checks, item] }, JSON.stringify(ev).length, "확인할 것을");
+    if (refused) return refused;
+    writeChecks(eventId, (list) => [...list, item]);
+    showToast({ msg: "확인할 것을 추가했어요" });
+    return "";
+  };
+  const toggleCheck = (eventId, checkId) => {
+    const was = (state.events || []).find((x) => x.id === eventId)?.checks?.find((c) => c.id === checkId)?.done === true;
+    writeChecks(eventId, (list) => list.map((c) => (c.id === checkId ? { ...c, done: !c.done } : c)));
+    showToast({ msg: was ? "확인 완료를 취소했어요" : "확인 완료로 표시했어요" });
+  };
+  // The caller has confirmed.
+  const removeCheck = (eventId, checkId) => {
+    writeChecks(eventId, (list) => list.filter((c) => c.id !== checkId));
+    showToast({ msg: "확인할 것을 삭제했어요" });
+  };
+  // Registers every ticked, non-rejected prep proposal with `source: "ai"`; over the cap nothing is written.
+  const importChecks = (eventId, list) => {
+    const ev = (state.events || []).find((x) => x.id === eventId);
+    if (!ev) return "";
+    const checks = ev.checks || [];
+    const room = Math.max(0, EVENT_CHECKS_MAX - checks.length);
+    if (list.length > room) return `확인할 것은 ${EVENT_CHECKS_MAX}건까지예요 — ${room}건만 등록할 수 있어요.`;
+    const made = list.map((p) => ({ id: uid(), text: p.text, done: false, source: "ai" }));
+    const refused = recordFits({ ...ev, checks: [...checks, ...made] }, JSON.stringify(ev).length, "확인할 것을");
+    if (refused) return refused;
+    if (made.length) writeChecks(eventId, (cur) => [...cur, ...made]);
+    setModal(null);
+    showToast({ msg: `AI 제안 확인할 것 ${made.length}건 등록` });
+    return "";
   };
 
   /* Business — portfolio, unit prices and period contracts. A business record is a record, never a task:
@@ -9239,7 +9563,10 @@ export default function LifeManager() {
             onAdd={(date) => setModal({ type: "work", date })}
             onOpen={(workId) => setModal({ type: "work", workId })}
             onBridge={() => setModal({ type: "workBridge" })} onRemoveMany={removeWorkMany}
-            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
+            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })}
+            onOpenDocument={(docId) => setModal({ type: "document", docId })}
+            onAddCheck={addCheck} onToggleCheck={toggleCheck} onRemoveCheck={removeCheck}
+            onAskAi={(eventId, date) => setModal({ type: "prepBridge", eventId, date })} />
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}
@@ -9315,7 +9642,8 @@ export default function LifeManager() {
         <EventDetailModal state={state} eventId={modal.eventId} date={modal.date} today={today} onClose={() => setModal(null)}
           onToggleDone={toggleEventDone}
           onSkip={(id, d) => { skipOccurrence(id, d); setModal(null); }}
-          onEdit={(ev) => setModal({ type: "event", event: ev })} />
+          onEdit={(ev) => setModal({ type: "event", event: ev })}
+          onAddCheck={addCheck} onToggleCheck={toggleCheck} onRemoveCheck={removeCheck} />
       )}
       {modal?.type === "bizDetail" && (
         <BizTodoModal row={modal.row} onClose={() => setModal(null)}
@@ -9382,6 +9710,10 @@ export default function LifeManager() {
       )}
       {modal?.type === "workBridge" && (
         <WorkBridgeModal state={state} today={today} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
+      )}
+      {modal?.type === "prepBridge" && (
+        <PrepBridgeModal state={state} today={today} eventId={modal.eventId} date={modal.date} onClose={() => setModal(null)}
+          onImport={importChecks} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />
