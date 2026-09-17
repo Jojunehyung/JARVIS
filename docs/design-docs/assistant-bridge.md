@@ -61,6 +61,9 @@ Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CA
 ## `roleRecommendations(state)`
 Extracted from `RoleAdviceModal` so the briefing and the direction-advice screen compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
+The bridge carries **three** packets in total (2026-09-17): the daily check-in, `오늘 업무 만들기`, and the
+third, `AI에게 회의 준비 묻기`, below.
+
 ## The bridge — `buildAssistantPacket(state, today)`
 A text packet the user copies into an external chat. It opens with the role and the four rules the assistant must follow (facts and numbers only, `해요체`, no judging scores or difficulty, proposals limited to day-sized tasks under an existing goal whose title names the activity (`제목에 독서·운동처럼 활동을 그대로 적어요.`) — never a certification, an exam, or a business record — and a closing JSON block whose template no longer offers a `kind` field), then the data:
 
@@ -139,3 +142,88 @@ Returns `{ raw, note, proposals }`, each proposal `{ key: "w{n}", title, note, l
 ### What the work packet never carries
 
 Exactly like the daily packet's `## 이력` line: never `profile.name`, `birth`, `email`, `phone`, a school name or an employer name — only what `cvSummaryOf` states. No photo, no evidence text, no journal entry (the journal is the daily packet's domain, not this one's). A hidden meeting's line never states its project name either, only its date and title. **Since 2026-09-17, never a meeting's `transcript`**: `meetingLines` carries a comment marking the omission and reads only the named fields above (summary, decisions, follow-ups, progress, attendees, linked schedule and tasks) — a pasted transcript, however long, contributes nothing to this packet, the daily packet, the calendar file (`buildIcs`) or the prep card (`meetingPrepOf`), by the user's own decision ([SECURITY.md](../SECURITY.md)); `tools/e2e/flow11.js` plants a sentinel string inside a transcript and asserts it absent from the built packet text.
+
+### `meetingPacketLines(state, list, today, k)` — shared by the work and prep packets (2026-09-17)
+
+`buildWorkPacket`'s local `meetingLines` closure is lifted to module level as `meetingPacketLines(state, list,
+today, { summary, progress, followUps, openOnly = false })` (schema v27). `buildWorkPacket` calls it with its own
+knobs and `openOnly: false`; its output is byte-identical to before the extraction (verified against a captured
+baseline of the demo work packet). The prep packet (below) calls it with `openOnly: true`, which lists only the
+**open** (`!done`) follow-ups under the `후속 {n}건:` head, so the head's own count states how many are open
+rather than the total — the transcript stays unread either way (the comment marking that omission moved with the
+function).
+
+## The third packet — `AI에게 회의 준비 묻기` (`buildPrepPacket` / `parsePrepReply`, 2026-09-17, the [Rule 7](core-beliefs.md#rule-7) amendment "second of the day")
+
+Built for **one schedule event** that belongs to a meeting project (`eventProjectOf(state, ev)`), opened from the
+meeting-prep card's `AI에게 회의 준비 묻기` button (`MeetingPrepCard`,
+[../product-specs/daily-work.md](../product-specs/daily-work.md)).
+A reply to it can only *propose* **check items** (`events[].checks`,
+[../product-specs/schedule.md](../product-specs/schedule.md)) — never a task, a work item, an event, a deal or
+a meeting.
+
+`buildPrepPacket(state, ev, today, date = ev.date)`: when the event names no live project, the packet is just
+the header plus one `## 회의` line; otherwise it builds, in order, through the same `packetSection` helper:
+
+| Section | Content | Cap / clip |
+|---|---|---|
+| `## 회의` | one line: `- {date} {time \| 시간 미정} · {title} · 프로젝트 {project.name}` — no place, no note, no `## 이력` | — |
+| `## 확인할 것 (이미 있음)` | every existing check on the event, `- {text} · {완료\|미완료}` | — |
+| `## 최근 회의록 ({n}건)` | the project's meetings by `meetingOrder`, through `meetingPacketLines(…, { openOnly: true })` — a meeting flagged `aiHidden` still contributes its date and title only | `PREP_PACKET_MEETINGS` (5) |
+| `## 문서 ({n}건)` | the project's documents by `docOrder`: `- {addedAt} {title}` then `  요약: {clipped summary}` — never `source` | `PREP_PACKET_DOCS` (10) × `PREP_PACKET_DOC_CLIP` (1,500, trimmed to `PREP_PACKET_DOC_CLIP_TRIM` 500 under the cap) |
+| `## 열린 할 일 (회의록 연결)` | open tasks linked by the shown, non-hidden meetings, deduped, not closed today | `PREP_PACKET_TASKS` (10) |
+| `## 계약 (같은 고객사)` | `dealsOfProject(state, project)` — `- {phase label} · {client} {title} · {period \| 기간 없음} · 월 {won}`, then a `  미수 {month} {won}` line per unpaid billed month of that deal | `PREP_PACKET_DEALS` (6) |
+
+Header: `[인생 관리 — 회의 준비 요청 {today}]`, `PREP_PACKET_HEAD` (below), a blank line. Own cap
+`PREP_PACKET_MAX` = 20,000. `WORK_PACKET_SUMMARY`, `WORK_PACKET_SUMMARY_TRIM`, `WORK_PACKET_PROGRESS` and
+`WORK_PACKET_FOLLOWUPS` are reused for the summary/progress/follow-up knobs, so the two packets shrink a meeting
+the same way.
+
+**Trim order** when the built text exceeds `PREP_PACKET_MAX`, rebuilding and re-measuring after each step: (0)
+document clip 1,500 → 500; (1) meetings 5 → 2, oldest first; (2) follow-ups 30 → 5 per meeting; (3) summary clip
+5,000 → 1,500; (4) summary → 500 and progress 5 → 1, together; (5) documents 10 → 3; (6) tasks → 0; (7) deals →
+0; (8) documents 3 → 0; (9) meetings 2 → 0. The header, the `## 회의` line and the existing checks are never
+dropped. Measured: the demo prep packet is **1,337 chars**; a heavy save (a hidden meeting plus four heavy
+meetings) trims to **19,064 chars**; a heavy save of five heavy meetings trims to **16,264 chars**.
+
+`PREP_PACKET_HEAD` (verbatim, five numbered rules): facts and numbers only, `해요체`; never judge or change a
+score/grade/payout/difficulty; propose only check items for **this meeting** — a question, an open point, a
+risk, a thing to bring — each ≤ 200 chars, never creating or changing a task/event/work item/contract/meeting,
+and never re-proposing an item already in `확인할 것 (이미 있음)`; state each proposal's `basis` in one line
+(a meeting date or a document title, in the data's own wording, or empty when there is none); close with a
+≤ 5-line analysis then one JSON block, `{"checks":[{"text":"...","basis":"..."}],"note":"..."}` (`"checks": []`
+when there is nothing to propose).
+
+### The reply — `parsePrepReply(text, ev)`
+
+Reads the reply through the same `replyJson`; only `data.checks` (array) and `data.note` (≤ 200 chars) — `tasks`,
+`work`, `deals`, `events`, `meetings` or any other key is ignored, proven by an E2E step that pastes all four
+alongside `checks` and asserts none of them changed. Per entry: `text` and `basis` are trimmed; the **basis is
+folded into the check text** as `{text} — {basis}` when that result is ≤ `EVENT_CHECK_TEXT` (200) chars,
+otherwise the text alone is stored (clipped to 200) and the basis is dropped from the stored text but still
+shown on the confirm row's second line, so nothing is hidden before the tick. A proposal is refused —
+`reject: "내용이 없어요"` when the text is empty, `reject: "이미 확인할 것에 있어요"` when its normalised form
+(folded or not) already names an existing check on the event or an earlier proposal in the same reply.
+
+Returns `{ raw, note, proposals: [{ key: "c{n}", text, basis, reject }] }`; nothing here writes state.
+`PrepBridgeModal`'s confirm view ticks/unticks and `importChecks` (root, [../product-specs/schedule.md](../product-specs/schedule.md))
+is what registers a check, with `source: "ai"` and `done: false`, from the ticked, non-rejected proposals only.
+
+### `PrepBridgeModal({ state, today, eventId, date, onClose, onImport, onToast })`
+
+`modal: { type: "prepBridge", eventId, date }`, opened from the prep card's `AI에게 회의 준비 묻기` button.
+Reuses the shared `PacketSendPane` / `ReplyPastePane` / `copyPacket` panes. Send caption: `아래 글을 복사해
+Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 이 프로젝트의 회의록
+요약·후속·진행사항과 문서 요약이 실려요 — 녹취록·이름·연락처·문서 출처는 실리지 않아요.` Confirm view: `확인할
+것 제안 — {n}건`, the reply's `note`, one row per proposal (a checkbox, disabled and unticked when rejected; the
+text; a second line `근거: {basis}` or `근거 없음`; a rose reject line), `제안 없음 — 등록할 항목이 없어요.` when
+empty; `선택한 항목 등록` calls `onImport(eventId, ticked)`; a non-empty return (the 30-item cap refusal) shows
+as a rose line above the button.
+
+### What the prep packet never carries
+
+Never `profile.name`, `birth`, `email`, `phone`, a school name or an employer name (no `## 이력` line at all —
+meeting preparation needs no CV); never a transcript (the shared meeting-line builder has no access to it);
+never an event's `place` or `note`; never a document's `source`; a hidden meeting always contributes date and
+title only, never its summary or project name. `tools/e2e/flow11.js` plants a hidden meeting, a transcript and a
+document with a `source`, and asserts each is absent from the built packet text.

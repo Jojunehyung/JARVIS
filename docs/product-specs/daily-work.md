@@ -85,7 +85,7 @@ title — the summary, decisions, follow-ups and progress entries stay out.
 together. The bar is `grid-cols-7`; at 390 px each cell is ≈ 51 px — `업무` (2 glyphs) fits on one line where
 `오늘 업무` would clip.
 
-`WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMeeting })`:
+`WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMeeting, onOpenDocument, onAddCheck, onToggleCheck, onRemoveCheck, onAskAi })` (the last four props added schema v27, passed straight through to `MeetingPrepCard`):
 - Renders `MeetingPrepCard` (below) first, then the tab body.
 - Header: `SectionLabel` `오늘 업무 — {today}` on the viewed day, else `업무 — {viewDate}`; a `업무 추가` button
   (top right, same style as `프로젝트 추가`); below it a pager row `‹` / `오늘` (disabled when already today) /
@@ -107,19 +107,33 @@ together. The bar is `grid-cols-7`; at 390 px each cell is ≈ 51 px — `업무
 - Every row opens `WorkModal` (`onOpen`); `업무 추가` opens it in add mode for the viewed day. A row with
   `source === "meeting"` came from a meeting follow-up (below).
 
-## `MeetingPrepCard({ state, today, onOpenMeeting })` — `오늘 회의 준비` (schema v26)
+## `MeetingPrepCard({ state, today, onOpenMeeting, onOpenDocument, onAddCheck, onToggleCheck, onRemoveCheck, onAskAi })` — `오늘 회의 준비` (schema v26; documents + checklist + AI prep packet, schema v27)
 
 The first section of the `업무` tab, derived at render (`meetingPrepOf(state, today)`,
-[meetings.md](meetings.md)) and stores nothing ([Rule 9](../design-docs/core-beliefs.md#rule-9)); renders `null`
-when no row matches. One block per open schedule occurrence today and tomorrow that belongs to a live meeting
-project (by the event's own `projectId`, or, absent that, by a previous meeting whose trimmed title equals the
-event's), header `오늘 회의 준비` with a mono `{n}건`. Each block: the project name, `{오늘|내일} {time |
-시간 미정} · {event title}`, `마지막 회의 {date} · {title}` or `이전 회의록 없음`; when there is a last meeting —
+[meetings.md](meetings.md)) and stores nothing beyond the check writes below ([Rule 9](../design-docs/core-beliefs.md#rule-9));
+renders `null` when no row matches. One block per open schedule occurrence today and tomorrow that belongs to a
+live meeting project (by the event's own `projectId`, or, absent that, by a previous meeting whose trimmed title
+equals the event's), header `오늘 회의 준비` with a mono `{n}건`.
+
+Each block is a **`div`**, not a `<button>` (schema v27, [TD-64](../exec-plans/tech-debt-tracker.md)): the
+checklist's own checkboxes and inputs cannot nest inside a button. It states the project name, `{오늘|내일}
+{time | 시간 미정} · {event title}`, then `마지막 회의 {date} · {title}` or `이전 회의록 없음`; when there is a
+last meeting, an explicit border button `회의록 열기 ›` opens it (`onOpenMeeting`) — the whole-block tap this
+button replaces (`flow11.js`'s prep step now taps the button, not the block). When there is a last meeting:
 `결정: {clipped decisions | 없음}`, up to `PREP_FOLLOWUPS` (10) open follow-up lines `{내 담당|타인} · {text} ·
 기한 {due | 없음} · 업무 {완료|미완료|없음}` (mine first) with `{k}건 더` past the cap, up to `PREP_PROGRESS` (3)
 progress lines or `진행사항 없음`, and up to `PREP_TASKS` (5) linked-task lines (block omitted when none linked).
-Tapping a block with a last meeting opens `MeetingViewModal` (`onOpenMeeting`); on-device only, so a meeting
-flagged `aiHidden` is stated in full here. `PREP_DAYS` (2), `PREP_DECISION_CLIP` (200 chars).
+On-device only, so a meeting flagged `aiHidden` is stated in full here.
+
+Then (schema v27, [documents.md](documents.md)) `문서 {n}건` and up to `PREP_DOCS` (5) of the project's
+documents, each a left-aligned button `{title} — {oneLineText(summary, DOC_SUMMARY_CLIP)}` that opens the
+document sheet (`onOpenDocument`), `{k}건 더` past the cap, `문서 없음` at zero. Then `<EventChecks ev={row.ev}
+onAdd={onAddCheck} onToggle={onToggleCheck} onRemove={onRemoveCheck} />` ([schedule.md](schedule.md)) — the same
+checklist component the event detail sheet renders — with a caption `확인할 것은 이 일정에 저장돼요 —
+회의록을 쓸 때 후속 항목으로 가져올 수 있어요.` Then a full-width border button `AI에게 회의 준비 묻기` →
+`onAskAi(ev.id, date)`, opening `PrepBridgeModal` ([../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md)).
+
+`PREP_DAYS` (2), `PREP_DECISION_CLIP` (200 chars), `PREP_DOCS` (5), `DOC_SUMMARY_CLIP` (100).
 
 ## `WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggle, onRemove, onOpenMeeting })`
 
@@ -220,8 +234,13 @@ the state key, removing every work item, meeting and follow-up along with the re
 demo maintenance project), an assistant-proposed, done item (`전기기사 필기 기출 1회분 채점`, linked to the
 harness-scenario goal), and (schema v26) an item registered from `유지보수 범위 협의`'s mine follow-up
 (`긴급 대응 기준 초안 공유`, `source: "meeting"`, `link.followUpId` set, `회의` lead chip). One demo event,
-`○○물산 주간 점검` tomorrow, carries `projectId: mp1.id`, so the demo `업무` tab opens with the prep card. See
-[demo-data.md](../design-docs/demo-data.md), [meetings.md](meetings.md).
+`○○물산 주간 점검` tomorrow, carries `projectId: mp1.id`, so the demo `업무` tab opens with the prep card. Since
+2026-09-17 (schema v27), the demo also carries a fourth work item — `○○물산 월 리포트 양식 회신`, dated
+**yesterday**, `done: true`, with a `result` (`양식 v2 확정본을 메일로 송부 — 다음 달부터 적용`) — so the daily
+reader's `오늘 업무` section states a `처리:` line; it is not in today's view, so the demo's own-day counts line
+stays `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건` unchanged ([TD-57](../exec-plans/tech-debt-tracker.md) still
+holds — there is still no carried row). The tomorrow event also carries two `checks`
+([schedule.md](schedule.md)). See [demo-data.md](../design-docs/demo-data.md), [meetings.md](meetings.md).
 
 ## E2E coverage
 
@@ -245,7 +264,11 @@ packet states a planted project-less memo as `- {today} [프로젝트 없음] {t
 of its transcript (a planted sentinel string, absent from the packet); and, with a meeting-linked and a
 goal-linked work item both planted, `회의록 열기` on the former replaces the sheet with the meeting's view (one
 overlay, the collapsed `녹취록 …자 · 펼치기` row), closing it lands on `업무`, and the goal-linked item has no
-such button. Every step parses (`node --check`); none has been executed. See
+such button. **Documents and pre-meeting checks (2026-09-17, schema v27)** add: the prep card's `회의록 열기 ›`
+button replaces the old whole-block tap (the prep step in `flow11.js` was updated to tap it); five more
+`flow11.js` steps cover the checklist add/tick/delete, the event sheet's checklist, the prep packet, a pasted
+prep reply, and `확인할 것 가져오기` — see [meetings.md](meetings.md) and [schedule.md](schedule.md) for the full
+detail. Every step parses (`node --check`); none has been executed. See
 [tools/e2e/README.md](../../tools/e2e/README.md).
 
 ## What a work item never does

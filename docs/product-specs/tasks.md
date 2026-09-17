@@ -144,14 +144,18 @@ view returns to the list. The section is not rendered when no meeting links the 
 unchanged. The list is derived at render and nothing about the task changes when a meeting links it
 ([Rule 9](../design-docs/core-beliefs.md#rule-9), [meetings.md](meetings.md)).
 
-### `EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit })`
+### `EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit, onAddCheck, onToggleCheck, onRemoveCheck })`
 `modal: { type: "eventDetail", eventId, date }`, title `일정 — {ev.title}`. Body: the existing `EventRow` for the
 live occurrence (`done` read from `ev.doneDates`) — its `완료 표시` / `완료 취소`, `이번 회차 취소` and `수정`
-buttons are the event's detail actions, unchanged from the list — then a fixed line `목표 기여 없음 — 일정은
-기록이라 점수와 목표에 반영되지 않아요.` Returns `null` once the event is gone. Root: `onToggleDone={toggleEventDone}`
-(the sheet stays open and re-renders flipped); `onSkip={(id, d) => { skipOccurrence(id, d); setModal(null); }}`
-(the occurrence no longer exists); `onEdit={(ev) => setModal({ type: "event", event: ev })}`. `EventRow`'s
-now-unused `tail` prop was removed with the tab's own row markup.
+buttons are the event's detail actions, unchanged from the list — then, since schema v27
+([schedule.md](schedule.md), [meetings.md](meetings.md)), only when `eventProjectOf(state, ev)` is non-null, a
+line `프로젝트 · {project.name}` and the `확인할 것` checklist (`EventChecks`, shared with the meeting-prep
+card) — then a fixed line `목표 기여 없음 — 일정은 기록이라 점수와 목표에 반영되지 않아요.` Returns `null` once
+the event is gone. Root: `onToggleDone={toggleEventDone}` (the sheet stays open and re-renders flipped);
+`onSkip={(id, d) => { skipOccurrence(id, d); setModal(null); }}` (the occurrence no longer exists);
+`onEdit={(ev) => setModal({ type: "event", event: ev })}`; `onAddCheck={addCheck}` / `onToggleCheck={toggleCheck}`
+/ `onRemoveCheck={removeCheck}` (v27). `EventRow`'s now-unused `tail` prop was removed with the tab's own row
+markup.
 
 ### `BizTodoModal({ row, onClose, onOpen })`
 `modal: { type: "bizDetail", row }` — `row` is a render-time snapshot of one `todoOf` business row, held in the

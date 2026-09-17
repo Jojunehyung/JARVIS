@@ -1,7 +1,13 @@
 # Daily briefing and journal
 <!-- src: SPEC-4-2 -->
 
-Opening the app on a new day shows a briefing: what the saved state says about today, stated as facts with numbers ([Rule 13](../design-docs/core-beliefs.md#rule-13)). Nothing in it is stored — it is recomputed from `(state, today)` on every render ([Rule 9](../design-docs/core-beliefs.md#rule-9)). The rules behind each line are in [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
+The daily briefing: what the saved state says about today, stated as facts with numbers ([Rule 13](../design-docs/core-beliefs.md#rule-13)). Nothing in it is stored — it is recomputed from `(state, today)` on every render ([Rule 9](../design-docs/core-beliefs.md#rule-9)). The rules behind each line are in [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
+
+Since 2026-09-17 (schema v27), the briefing no longer opens on its own: the **daily reader** (`오늘 읽을 것`,
+[daily-reader.md](daily-reader.md)) opens once a day in its place, and reuses this modal's `biz` and `goals`
+items verbatim in two of its own sections so the two screens cannot state a different number. Everything below —
+every section, the footer and the journal/weekly-review routes — is otherwise unchanged; only "When it opens"
+(below) reflects the change.
 
 There is no card for this on any tab any more (2026-09-15): home is a CV with no date-scoped facts, so the manual way back into the briefing sits on `할 일` (renamed from `실행` 2026-09-16) instead — see "When it opens" below. `buildBriefing` itself dropped its `counts` return value along with the card that was its only reader; `sections` (the table below) is unchanged.
 
@@ -21,12 +27,13 @@ Title `오늘 브리핑 — {today}`. One block per section, each with a `Sectio
 | `주간 리뷰` | whether this week's review exists |
 | `일지` | today's journal length and whether an assistant reply is stored |
 
-Footer: `AI에게 보내기`, `AI 답변 붙여넣기`, then `일지 쓰기` and `닫기`. Closing the modal — by either button, the X, or the backdrop — stamps `act.briefingSeen = today`, so the briefing opens once per day.
+Footer: (2026-09-17) a full-width border button `오늘 읽을 것 ›` → the daily reader ([daily-reader.md](daily-reader.md)), then `AI에게 보내기`, `AI 답변 붙여넣기`, then `일지 쓰기` and `닫기`. Closing the modal — by any button, the X, or the backdrop — stamps `act.briefingSeen = today`, the same marker the daily reader now also stamps on close.
 
 ## When it opens
-- At boot, when `act.briefingSeen !== today`.
-- When the day changes while the app stays open. The root keeps `day` in state and re-reads the date on `visibilitychange`, on `focus`, and on a 60-second tick; `today` is that value everywhere, so a session left open past midnight no longer completes tasks against yesterday.
-- From the `할 일` tab's header chip row, `브리핑 열기 ›`, at any time (2026-09-15) — the manual way back in once the day's auto-open is dismissed, and through it the only way back to the journal, the weekly review and the assistant bridge. It sits on `할 일` because the briefing opens with `오늘 할 일` and that is the tab already showing today's tasks; see [tasks.md](tasks.md).
+- **No longer at boot or on a day change** (2026-09-17): the daily reader opens there instead — see
+  [daily-reader.md](daily-reader.md#when-it-opens).
+- From the `할 일` tab's header chip row, `브리핑 열기 ›`, at any time (2026-09-15) — through it the way to the journal, the weekly review and the assistant bridge. It sits on `할 일` because the briefing opens with `오늘 할 일` and that is the tab already showing today's tasks; see [tasks.md](tasks.md).
+- From the daily reader's own footer button, `브리핑 ›` (2026-09-17).
 
 ## `JournalModal` (`modal.type: "journal"`)
 Title `일지 — {today}`. A textarea with the placeholder `오늘 한 일 · 수치 · 막힌 것 — 사실만 적어요`, a `저장` button (toast `일지를 저장했어요`), and an autosave when the modal is closed with unsaved changes. When today's entry holds an assistant reply it is shown below under `AI 답변 · {aiDate}`. A `최근 7일` list shows the previous entries collapsed to `{date} · {first 40 characters}`; tapping one expands it with its stored reply. Empty state: `일지 기록 없음`.

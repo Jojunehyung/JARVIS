@@ -8,6 +8,11 @@ screens whose rows have no goal behind them.
 Data shape: [`events[]` in the generated schema](../generated/db-schema.md). Occurrence, briefing and packet
 rules: [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
+Since 2026-09-17 (schema v27), a project-linked event may also carry a **pre-meeting checklist** —
+`확인할 것` — covered in full below and in [meetings.md](meetings.md) (the prep card that shares this
+checklist) and [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md) (the third bridge
+packet that can propose check items).
+
 ## Screen
 `ScheduleTab` props: `state, today, onAdd, onEdit, onToggleDone, onSkip, onExport`. Tab key `schedule`, label
 `일정`, icon `CalendarDays`, fifth entry of `NAV` (`grid-cols-7` since the `업무` tab landed, [daily-work.md](daily-work.md)),
@@ -200,6 +205,49 @@ tab itself: `onAdd={(date) => setModal({ type: "event", date })}` — the list's
 passes the selected day, and `<EventModal … initialDate={modal.date} />` prefills from it; and
 `setScheduleView(v)`, which spreads `v` into `ui.scheduleView`.
 
+## Pre-meeting checks — `확인할 것` (schema v27)
+
+```
+events[].checks?: [{ id, text (≤ 200), done, source: "manual" | "ai" }]
+```
+Optional, no backfill — the same shape of change as `events[].projectId` at v26: the field is written the first
+time a check is added, and every reader uses `ev.checks || []`. At most `EVENT_CHECKS_MAX` (30) items of
+`EVENT_CHECK_TEXT` (200) characters each. A checklist belongs to the **event record**, not to an occurrence: a
+repeating event carries the same checklist to every occurrence, so a check ticked one week is still ticked next
+week until the user unticks or deletes it ([TD-61](../exec-plans/tech-debt-tracker.md), accepted — an
+occurrence-keyed checklist would need a date map on the event for a use the user has not asked for). A check
+pays nothing and completes nothing ([Rule 1](../design-docs/core-beliefs.md#rule-1),
+[Rule 18](../design-docs/core-beliefs.md#rule-18)).
+
+**`EventChecks({ ev, onAdd, onToggle, onRemove })`** (Schedule region) renders the checklist for both surfaces
+that show it — the meeting-prep card (`MeetingPrepCard`, [meetings.md](meetings.md)) and, below, the event
+detail sheet — so the two cannot drift apart. Header row: `확인할 것` on the left, a mono `{open}/{total}` on
+the right (`open` = `!done`). One row per check (`bg-zinc-950 rounded-xl`): a checkbox (`aria-label="확인
+완료"`) toggling `done`; the text, struck through when done; a mono `AI` tag (violet) when `source === "ai"`; an
+`X` button (`aria-label="확인할 것 삭제"`) → `window.confirm("확인할 것을 삭제해요. 계속할까요?")` →
+`onRemove`. Empty: `확인할 것이 없어요.` Add row: an input (`확인할 것 — 예: 단가표 회신 여부`, no `maxLength`)
+and a border button `추가`; a refusal from `onAdd` shows as a rose line and the input keeps its text; at the cap
+the input and button disable and the line `확인할 것은 30건까지예요.` shows.
+
+**`EventDetailModal`** (the `할 일` tab's own event sheet, [tasks.md](tasks.md)) renders `EventChecks` only when
+`eventProjectOf(state, ev)` is non-null (the event belongs to a live meeting project, by its own `projectId` or
+the newest meeting whose trimmed title equals the event's) — a plain appointment's sheet is unchanged. When
+shown, it is preceded by one line `프로젝트 · {project.name}` and sits above the existing `목표 기여 없음` line.
+
+### Root handlers and toasts
+
+| Handler | Effect | Toast |
+|---|---|---|
+| `addCheck(eventId, text, source = "manual")` | refuses `확인할 것을 입력해 주세요.` (empty), the char-count message past `EVENT_CHECK_TEXT`, `확인할 것은 30건까지예요.` at the cap, or `recordFits`; otherwise appends `{ id: uid(), text, done: false, source }` | `확인할 것을 추가했어요` |
+| `toggleCheck(eventId, checkId)` | flips that check's `done` | `확인 완료로 표시했어요` / `확인 완료를 취소했어요` |
+| `removeCheck(eventId, checkId)` | filters the check out (the caller confirms) | `확인할 것을 삭제했어요` |
+| `importChecks(eventId, list)` | registers every ticked, non-rejected prep proposal with `{ id: uid(), text, done: false, source: "ai" }`; refuses `확인할 것은 30건까지예요 — {room}건만 등록할 수 있어요.` when the list would overflow the cap (writes nothing) | `AI 제안 확인할 것 {n}건 등록` |
+
+All four write only one event's `checks`, through a shared `writeChecks(eventId, fn)` clone updater — never
+`act`, `tasks`, `goals`, `meetings` or `work`. See [meetings.md](meetings.md) for the prep card and
+`확인할 것 가져오기`, and [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md) for the third
+bridge packet (`AI에게 회의 준비 묻기`) that proposes check items.
+
 ## Calendar export (`캘린더로 내보내기`)
 The app sends no notification of its own; the button downloads a phone-calendar file (RFC 5545, `.ics`) that the
 user imports once, and it is the phone's calendar that then raises the alarms. Mechanics, file format and the
@@ -328,3 +376,7 @@ counts line (above) is the one on-screen summary outside this tab and the briefi
 - The calendar export reads events (and tasks and goals) and creates none: `calendarExportOf`/`buildIcs` call
   no `setState` and no `store` write, so exporting a file cannot mark an occurrence done, cancel one, or move a
   goal.
+- A check (schema v27) pays nothing, completes nothing, and is never read by the export, the calendar file, the
+  daily packet or the work packet — only the prep packet (`AI에게 회의 준비 묻기`) reads it, to avoid proposing a
+  duplicate. A pasted prep reply can only *propose* a check item; it never ticks, edits or deletes an existing
+  one, and nothing in that packet is a task ([../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md)).

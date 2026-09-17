@@ -51,11 +51,14 @@ Every task carries a `goalId` ([Rule 18](core-beliefs.md#rule-18)), so the demo 
 | `부품사 1차 면접` | `약속` | today + 3 | 14:00 | `place: "판교 본사"`, `note: "도면 출력본 지참"`, created today − 2 |
 | `전기기사 실기 원서 접수 마감` | `마감` | today + 9 | — | `note: "접수 후 수험표 확인"`, created today − 3 |
 | `영어 스터디 모임` | `약속` | today + 1 | 20:00 | `place: "온라인"`, `repeat: { freq: "weekly" }`, created today − 7 |
-| `○○물산 주간 점검` | `약속` | today + 1 | 11:00 | `place: "온라인"`, `projectId: mp1.id` (schema v26), created today − 2 |
+| `○○물산 주간 점검` | `약속` | today + 1 | 11:00 | `place: "온라인"`, `projectId: mp1.id` (schema v26); two `checks` (schema v27) — one `manual`, one `ai` with a folded basis; created today − 2 |
 
 The first three cover both kinds, a timed and an untimed row, and a repeat; the fourth (schema v26) names a
-meeting project, so the `업무` tab's `MeetingPrepCard` has a matched row for tomorrow. None of them carries a
-`goalId`, points or a flag: an event is a record, not a 실행 (task) ([../product-specs/schedule.md](../product-specs/schedule.md)).
+meeting project, so the `업무` tab's `MeetingPrepCard` has a matched row for tomorrow, and (schema v27) carries
+the demo's two pre-meeting checks (`초과분 시간 단가표 회신 여부 확인`, `source: "manual"`; `월 리포트 양식
+확정본 지참 — 유지보수 범위 협의 결정 사항`, `source: "ai"`), so the card reads `확인할 것 2/2` and none of
+them is checked off. None of them carries a `goalId`, points or a flag: an event is a record, not a 실행 (task)
+([../product-specs/schedule.md](../product-specs/schedule.md)).
 The weekly appointment is what the `이후` group collapses — expanded it would produce twelve rows over the 90-day
 horizon, so the demo tab shows four rows in total (`내일` 1, `이후` 3) instead of fifteen.
 
@@ -73,6 +76,14 @@ exactly what the sheet's skipped line reports as `기한이 지난 실행 1건`.
 체력 기반 만들기 (today + 60) falls inside the sheet's default `90일` window (`end = today + 89`) — 서류 어학 컷
 넘기기 (today + 90) sits one day past it, and 하네스 설계 엔지니어 취업 (today + 150) further still; switching
 the sheet to `1년` brings in all three. No demo change was needed for any of this.
+
+## Documents (schema v27)
+
+`s.documents` carries two records, prepended right after `s.meetings` is built (so the project ids exist):
+`요구사항 정의서 v1` on `△△테크 문서 검색 AI` (with a `source`, dated yesterday, a multi-line summary covering
+search scope, permissions, response format and open questions) and `◇◇스튜디오 예약 페이지 현황 메모` with no
+project (dated today, no `source`). The `미팅` tab's counts line reads `프로젝트 2개 · 회의록 4건 · 문서 2건`.
+See [../product-specs/documents.md](../product-specs/documents.md).
 
 ## Business
 
@@ -118,7 +129,19 @@ section reserves before its closing summary line.
 - `room.trophies`: one `{ kind: "rank", label: "직업·커리어 실무자", date: today − 20 }`, so the achievement wall is not empty on first open.
 - `role`: `{ name: "완성차 1차사 하네스 설계 책임", targets: { 직업·커리어: 6, 기본지식: 4 } }` — two targeted areas, which makes `roleGap` computable and the RANK UP proximity line meaningful.
 - `meetings` (schema v25; `followUps` schema v26; a project-less memo and `transcript`, 2026-09-17, no schema change): the newest demo meeting, `요구사항 1차 회의`, is flagged `aiHidden: true`, so its work-packet line states only its date and title; `유지보수 범위 협의` carries one `progress` entry (`월 10시간 한도를 반영한 유지보수 견적서 초안 작성`, dated two days before today) and three follow-up items — `긴급 대응 기준 초안 공유` (`mine: true`, due today + 2, mirrored to the demo work item below), `초과분 시간 단가표 회신` (`mine: false`, due today + 5), `월 리포트 양식 확정` (`mine: false`, `done: true`) — so its minutes row states `후속 2/3` and the demo shows the v25 and v26 fields at once; the third meeting carries empty `progress` and `followUps`, and `aiHidden: false`. Prepended (2026-09-17), one urgent memo, `긴급 메모 — ◇◇스튜디오 전화` (`projectId: null`, dated yesterday), with a 259-character Korean `transcript` (a reservation-page redesign call), one `progress` entry dated today (`개편 범위 정리 — …`) and one follow-up (`예약 페이지 개편 견적서 초안`, `mine: false`, due today + 3, so it mirrors no work item and the demo `업무` counts stay `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건`); the `미팅` tab's counts line changes from `프로젝트 2개 · 회의록 3건` to `프로젝트 2개 · 회의록 4건`, and the new memo lists under `프로젝트 없음 · 긴급 메모`.
-- `work` (schema v25; a third `source: "meeting"` item schema v26): three items dated today — `○○물산 유지보수 견적서 송부` (manual, open, `note: "월 10시간 · 초과분 시간 단가"`, linked to the `○○물산 재고 관리 자동화` project), `전기기사 필기 기출 1회분 채점` (`source: "ai"`, `done: true`, linked to the `하네스 설계 엔지니어 취업` goal), and `긴급 대응 기준 초안 공유` (`source: "meeting"`, open, `link: { kind: "meeting", id: <유지보수 범위 협의>, followUpId: <fuA.id> }`) — so the demo `업무` tab shows one open manual row, one done AI-proposed row and one open `회의`-chip row, and its counts line reads `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건`. See [../product-specs/daily-work.md](../product-specs/daily-work.md).
+- `work` (schema v25; a third `source: "meeting"` item schema v26; a fourth, yesterday-dated done item schema v27): three items dated today — `○○물산 유지보수 견적서 송부` (manual, open, `note: "월 10시간 · 초과분 시간 단가"`, linked to the `○○물산 재고 관리 자동화` project), `전기기사 필기 기출 1회분 채점` (`source: "ai"`, `done: true`, linked to the `하네스 설계 엔지니어 취업` goal), and `긴급 대응 기준 초안 공유` (`source: "meeting"`, open, `link: { kind: "meeting", id: <유지보수 범위 협의>, followUpId: <fuA.id> }`) — so the demo `업무` tab shows one open manual row, one done AI-proposed row and one open `회의`-chip row, and its counts line reads `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건`. Plus (schema v27) `○○물산 월 리포트 양식 회신`, dated **yesterday**, `done: true`, with a `result` (`양식 v2 확정본을 메일로 송부 — 다음 달부터 적용`), linked to the same project — it is not in today's view, so the counts line above is unchanged, but the daily reader's `오늘 업무` section states its `처리:` line ([TD-57](../exec-plans/tech-debt-tracker.md) still holds — there is still no carried row). See [../product-specs/daily-work.md](../product-specs/daily-work.md).
+
+## Daily reader (schema v27)
+
+Every section of `오늘 읽을 것` is non-empty on the demo save except `뒤처진 목표 페이스`, which lists both demo
+goals (`체력 기반 만들기`, 5 points-percent behind; `하네스 설계 엔지니어 취업`, 6 points-percent behind) rather
+than reading `없음`. `오늘·내일 회의 준비` states the tomorrow event with `확인할 것 2/2`, its last meeting's
+decisions and `문서 없음` (the matched project, `○○물산 재고 관리 자동화`, carries no document of its own);
+`오늘 업무` states the two open items and `어제 완료 · ○○물산 월 리포트 양식 회신` with its `처리:` line; the
+follow-up section states the overdue `유지보수 범위 협의` item; the decisions section lists the two meetings
+dated within the last 7 days; `{today−7} 이후 새로 들어온 것` lists meetings, both demo documents and progress
+entries created in that window; `계약·입금 미확인` states the ○○물산 unpaid month and the closing totals line.
+See [../product-specs/daily-reader.md](../product-specs/daily-reader.md).
 
 ## Derived values and known deviations
 Progress computes to roughly 3 % (하네스), 46 % (어학) and 10 % (체력), with role-model proximity about 25 %. Two deviations are deliberate and harmless:

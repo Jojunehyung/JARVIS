@@ -12,6 +12,12 @@ from 2026-09-16: the app still transcribes nothing itself (no recording, no spee
 pastes text they transcribed themselves, and the app stores it verbatim and never processes it — no summary, no
 split, no judgement ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
 
+Since 2026-09-17 (schema v27), the tab also lists **documents** — top-level records of what a file says,
+attached to a project or to none — and, on a project-linked schedule event, a **pre-meeting checklist** and a
+copy/paste AI prep packet. These are covered in full in [documents.md](documents.md) and
+[schedule.md](schedule.md)/[assistant-bridge.md](../design-docs/assistant-bridge.md); this document covers where
+they surface inside `미팅` itself (below) and the storage arithmetic they add.
+
 ## What a meeting record is, and is not
 A record of what was said, never a task and never an appointment:
 ```
@@ -117,6 +123,12 @@ entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per m
   `recordFits` refuses. `recordFits` already measures the whole record, transcript included, before any write, and
   the tab's `저장 공간` line already counts it; `clearTranscript` (`녹취록 지우기`) is the in-app way to reclaim it,
   the backup path the way out of a full budget.
+- Documents and checks (schema v27, [documents.md](documents.md), [schedule.md](schedule.md)) share the same
+  storage budget: `,"documents":[]` adds 15 chars once; one document ≈ 91 chars + title + summary (+ 12 with a
+  `source`); a full document (60 + 120 + 5,000) ≈ 5,283 chars, a typical one ≈ 753. One event check ≈ 60 chars +
+  text, `,"checks":[]` adding 12 the first time; thirty full 200-char checks ≈ 7,829 chars on one event.
+  `recordFits` measures a document record whole; `addCheck` / `importChecks` measure the event record as it will
+  be written against its stored length, so ticking or deleting a check never trips the guard.
 - Typical record assumed: title 25, attendees 30, summary 400, decisions 100, actions 100 → 655 + 190 = **~850 chars**. Unchanged by the wider caps: a higher cap does not make minutes longer.
 - Frequency assumed: "several a day" = 3 meetings per working day × 250 days = **750 records a year** (2 a day = 500).
 
@@ -149,43 +161,57 @@ because a meeting's time is an `일정` event and its minutes link to it; before
 usually client work recorded under `사업`. The bar is `grid-cols-7`; labels stay on one line (each nav `<span>`
 is `whitespace-nowrap`).
 
-`MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenMeeting })`:
+`MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenMeeting, onAddDocument, onOpenDocument })`
+(the last two props added schema v27, [documents.md](documents.md)):
 - Header section: `SectionLabel` (cyan) `미팅 — 프로젝트별 회의록`, button `프로젝트 추가` on the right (same style
   as `일정 추가`); caption `회의 시간은 일정 탭에, 회의에서 나온 내용은 여기에 적어요. 회의록은 목표·실행·점수에
-  반영되지 않아요.`; counts line (`font-mono text-xs text-zinc-400`) `프로젝트 {p}개 · 회의록 {n}건 · 저장 공간
-  {mb}MB / 3.5MB` (`mb` to one decimal).
+  반영되지 않아요. 문서는 요약 글만 저장돼요 — 파일은 저장되지 않아요.` (the second sentence added v27); counts
+  line (`font-mono text-xs text-zinc-400`) `프로젝트 {p}개 · 회의록 {n}건 · 문서 {d}건 · 저장 공간 {mb}MB / 3.5MB`
+  (`mb` to one decimal; the `문서 {d}건` fragment inserted after `회의록 {n}건` at v27, so the pre-existing
+  substring `프로젝트 2개 · 회의록 4건` still matches).
 - No project: one section `프로젝트가 없어요 — 프로젝트를 먼저 만들어요.` — this card is about *project* minutes and
   stays true even then; the memo group below it (next bullet) is the entry point for a memo when no project exists,
   and in that case it is the only group and renders first, by the same code path.
 - One section per project, ordered by its newest minutes date (`meetingOrder`, descending), projects without
-  minutes last, ordered by `createdAt` descending. Section head: the project name (`text-sm font-bold truncate`),
-  `회의록 {n}건` (mono), buttons `프로젝트 수정` and `회의록 추가`. Rows are the newest-first minutes
-  (`meetingOrder`: `date` descending, then `createdAt` descending) rendered as `TodoRow`s ([tasks.md](tasks.md)) —
-  lead chip `{date.slice(2)}` (`YY-MM-DD`, zinc tone), the title, marker `meetingRowMarker(m)`: `진행 {n}건` and
-  `후속 {open}/{total}` joined by ` · `, each present only when its own total is above zero, none when both are
-  zero — each row opening `onOpenMeeting(id)`.
+  minutes last, ordered by `createdAt` descending. Section head (`groupHead`): the project name (`text-sm
+  font-bold truncate`) and, on the right, `회의록 {n}건 · 문서 {d}건` (mono, one span joined by ` · `, `문서`
+  added v27); buttons `프로젝트 수정`, `회의록 추가`, and (v27) `문서 추가` (`onAddDocument(p.id)`). Rows are the
+  newest-first minutes (`meetingOrder`: `date` descending, then `createdAt` descending) rendered as `TodoRow`s
+  ([tasks.md](tasks.md)) — lead chip `{date.slice(2)}` (`YY-MM-DD`, zinc tone), the title, marker
+  `meetingRowMarker(m)`: `진행 {n}건` and `후속 {open}/{total}` joined by ` · `, each present only when its own
+  total is above zero, none when both are zero — each row opening `onOpenMeeting(id)`.
   The first `MEETING_ROWS_SHOWN` (5) rows show; beyond that, `{n}건 더 보기` / `접기` toggles a component-state
   expansion (`useState`, per-project, never stored — [Rule 9](../design-docs/core-beliefs.md#rule-9)). An empty
   project reads `회의록이 없어요.` Rows and their expander are built by a shared helper, `rowsBlock(key, rows,
-  emptyText)`, reused by the memo group below.
+  emptyText, rowOf = meetingRow)`, reused by the memo group below and, since v27, by the documents block: its
+  fourth argument is the row renderer (`meetingRow` by default, `docRow` for documents), so the same expansion
+  logic serves both row kinds without a duplicate.
+  A **documents block** (v27, `docsBlock`, [documents.md](documents.md)) sits below the minutes rows, only when
+  the project has at least one document: a head line `문서 {d}건`, then the documents through `rowsBlock` with
+  `docRow` — a `TodoRow` leading `문서` (violet), the title, a mono `YY-MM-DD` marker, opening
+  `onOpenDocument(id)`.
 - **The memo group** (2026-09-17): after every project section, **always** rendered — its `긴급 메모 추가` button
   is the only way to start a memo when no project exists (a project section's own `회의록 추가` preselects that
   project). Collects every meeting with `projectId == null`, sorted by `meetingOrder`, under a section with the
-  same shell: title `프로젝트 없음 · 긴급 메모` (`text-sm font-bold truncate`), mono `회의록 {n}건`, caption
-  `프로젝트 없이 적은 회의록이에요 — 나중에 수정에서 프로젝트를 고르면 그 프로젝트로 옮겨져요.` (`text-xs
-  text-zinc-600`), one button `긴급 메모 추가` (same border style as `회의록 추가`, calls `onAddMeeting(null)`),
-  rows via `rowsBlock("none", memos, "긴급 메모가 없어요.")` — the same `MEETING_ROWS_SHOWN` / `{n}건 더 보기`
-  expander, keyed `"none"`. When no project exists this is the only section and stands first, by the same code
-  path. Editing a memo and picking a project moves it into that project's section, and back.
+  same shell: title `프로젝트 없음 · 긴급 메모` (`text-sm font-bold truncate`), mono `회의록 {n}건 · 문서 {d}건`
+  (v27), caption `프로젝트 없이 적은 회의록이에요 — 나중에 수정에서 프로젝트를 고르면 그 프로젝트로 옮겨져요.`
+  (`text-xs text-zinc-600`), buttons `긴급 메모 추가` (same border style as `회의록 추가`, calls
+  `onAddMeeting(null)`) and (v27) `문서 추가` (`onAddDocument(null)`), rows via `rowsBlock("none", memos, "긴급
+  메모가 없어요.")` and (v27) the memo group's own documents block (`docsBlock("doc:none", memoDocs)`). When no
+  project exists this is the only section and stands first, by the same code path. Editing a memo and picking a
+  project moves it into that project's section, and back.
 
 ## Sheets
-- **`ProjectModal({ project, meetingCount, onClose, onAdd, onUpdate, onRemove })`**, `modal: { type: "project",
-  projectId? }`, title `새 프로젝트` / `프로젝트 수정`: inputs `프로젝트 이름 — 예: ○○물산 재고 관리`, `메모
-  (선택)`; errors `프로젝트 이름을 입력해 주세요.`, `프로젝트 이름은 40자까지예요 — 지금 {n}자예요.`, `메모는 200자
-  까지예요 — 지금 {n}자예요.`; button `등록` / `저장`; in edit mode, `삭제` is enabled only when `meetingCount ===
-  0` (no confirmation dialog needed — nothing is lost); otherwise it is disabled and the sheet states `회의록
-  {n}건이 있어 삭제할 수 없어요 — 회의록을 먼저 지워요.` The root handler (`removeProject`) refuses a project with
-  minutes too, not only through the disabled button, and toasts the same message.
+- **`ProjectModal({ project, meetingCount, documentCount, onClose, onAdd, onUpdate, onRemove })`** (`documentCount`
+  added schema v27), `modal: { type: "project", projectId? }`, title `새 프로젝트` / `프로젝트 수정`: inputs
+  `프로젝트 이름 — 예: ○○물산 재고 관리`, `메모 (선택)`; errors `프로젝트 이름을 입력해 주세요.`, `프로젝트
+  이름은 40자까지예요 — 지금 {n}자예요.`, `메모는 200자까지예요 — 지금 {n}자예요.`; button `등록` / `저장`; in edit
+  mode, `삭제` is disabled when `meetingCount > 0 || documentCount > 0` (no confirmation dialog needed when it is
+  enabled — nothing is lost). The minutes line takes priority: `회의록 {n}건이 있어 삭제할 수 없어요 — 회의록을
+  먼저 지워요.` shows whenever `meetingCount > 0`; only when `meetingCount === 0 && documentCount > 0` does the
+  sheet instead state `문서 {n}건이 있어 삭제할 수 없어요 — 문서를 먼저 지워요.` (v27). The root handler
+  (`removeProject`) refuses a project with minutes, then with documents, not only through the disabled button,
+  toasting the matching message either way.
 - **`MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpdate, onRemove })`**, `modal: { type:
   "meeting", meetingId?, projectId? }`, title `새 회의록` / `회의록 수정`: `프로젝트` chips (preselected from
   `projectId` or the record's own), with a first chip `없음 (긴급 메모)` (2026-09-17, `on={pid === null}`); under
@@ -229,6 +255,15 @@ is `whitespace-nowrap`).
   with `후속 항목은 30건까지예요.`; caption `내 담당을 켜면 업무 탭에 등록돼요 — 회의 날짜가 지났으면 오늘
   업무로요.` Turning a row's `내 담당` on registers a work item once the record is saved (below); the form itself
   never touches `done`.
+
+  **`확인할 것 가져오기`** (schema v27, [schedule.md](schedule.md)): when the form's `eventId` names a linked
+  event whose `checks` is non-empty, a border button `확인할 것 가져오기 ({n}건)` appears under `항목 추가` (`n`
+  = that event's check count). Tapping appends, for each check whose trimmed text equals no existing follow-up
+  row's trimmed text, `{ id: uid(), text: c.text, mine: false, done: false }` to the follow-up rows until
+  `MEETING_FOLLOWUPS_MAX`, and states `확인할 것 {k}건을 가져왔어요 — 이미 있는 {d}건은 건너뛰었어요.` (`d` may be
+  0) or, when nothing fits, `후속 항목은 30건까지예요.` This is component (form) state only: the event's `checks`
+  are never written, and a second tap on an unsaved form appends nothing new (every text already exists),
+  stating `이미 있는 {n}건은 건너뛰었어요.`
 
   Note, since 2026-09-17, `녹취록은 붙여넣은 그대로 저장돼요 — AI 패킷에는 실리지 않아요.` (replaces the
   2026-09-16 `전체 녹취가 아니라 요약만 저장해요.`, now false — a transcript is stored, verbatim, above). Submit
@@ -359,7 +394,7 @@ double-counted); `noun` is the object-marked word substituted into the refusal s
 used by `addProgress` / `removeProgress`, which never touch follow-ups) replaces one meeting record in place;
 callers build and budget-check the record first.
 
-## Backup, reset and migration (schema v23–v26)
+## Backup, reset and migration (schema v23–v27)
 ```js
 if (s.v < 23) {
   s = { ...s, v: 23, meetingProjects: s.meetingProjects || [], meetings: s.meetings || [] };
@@ -374,8 +409,13 @@ if (s.v < 25) {
 if (s.v < 26) {
   s = { ...s, v: 26, meetings: (s.meetings || []).map((m) => ({ ...m, followUps: Array.isArray(m.followUps) ? m.followUps : [] })) };
 }
+if (s.v < 27) {
+  s = { ...s, v: 27, documents: Array.isArray(s.documents) ? s.documents : [] };
+}
 ```
-`freshState`: `v: 26`, `meetingProjects: []`, `meetings: []`, `work: []`. `exportBackup` writes the whole
+`documents` (v27) is the only new array; `events[].checks` is optional with no backfill, like `projectId` at v26
+([documents.md](documents.md), [schedule.md](schedule.md)). `freshState`: `v: 27`, `meetingProjects: []`,
+`meetings: []`, `work: []`, `documents: []`. `exportBackup` writes the whole
 `state`, so every array travels in the backup file with no code change of their own; `importBackup` runs the
 file's `state` through `migrate`, so an older backup gains the new fields on import; `resetAll` deletes the
 state key, which removes every project, every meeting and every work item along with the rest of the save. See
@@ -390,20 +430,27 @@ by someone else, one done — so its minutes row states `후속 2/3`; `요구사
 점검` tomorrow, carries `projectId` naming the maintenance project. Since 2026-09-17, `s.meetings` also carries
 one urgent memo, `긴급 메모 — ◇◇스튜디오 전화` (`projectId: null`, dated yesterday, a 259-char transcript, one
 progress entry, one `mine: false` follow-up so the demo work counts stay unchanged), prepended so the demo
-counts line reads `프로젝트 2개 · 회의록 4건`. See [demo-data.md](../design-docs/demo-data.md).
+counts line reads `프로젝트 2개 · 회의록 4건`. Since 2026-09-17 (schema v27), `s.documents` carries two records
+(one on `△△테크 문서 검색 AI`, one project-less), so the counts line reads `프로젝트 2개 · 회의록 4건 · 문서
+2건`; the demo tomorrow event, `○○물산 주간 점검`, carries two `checks` (one `manual`, one `ai` with a folded
+basis) — see [documents.md](documents.md), [schedule.md](schedule.md) and
+[demo-data.md](../design-docs/demo-data.md).
 
 ## Meeting-prep rows (`meetingPrepOf`, schema v26)
 
 `meetingPrepOf(state, today)` (pure, derived at render — [Rule 9](../design-docs/core-beliefs.md#rule-9)) feeds
 the `업무` tab's `MeetingPrepCard` and the briefing's `회의 준비` section — see
-[daily-work.md](daily-work.md#meetingprepcard-state-today-onopenmeeting--오늘-회의-준비-schema-v26) for the card
+[daily-work.md](daily-work.md) (`MeetingPrepCard`) for the card
 and [assistant-bridge.md](../design-docs/assistant-bridge.md) for the briefing lines. For every open schedule
 occurrence today and tomorrow (`PREP_DAYS` = 2) that belongs to a live meeting project — matched by the event's
 own `projectId`, or, when absent, by the newest meeting whose **trimmed title equals the event's trimmed
 title** ([TD-55](../exec-plans/tech-debt-tracker.md): exact, case-sensitive; a retitled event or meeting stops
-matching) — it returns the project, the newest meeting for that project (`last`, by `meetingOrder`, or `null`),
-that meeting's open follow-ups (mine first), its newest `PREP_PROGRESS` (3) progress entries and its live linked
-tasks. Nothing here writes state or reaches `computeGrades` / `krProgress` / `todoOf`. A project-less memo never
+matching), via `eventProjectOf(state, ev)` (schema v27, the same match — extracted as its own function so
+`buildPrepPacket` below can call it too) — it returns the project, the newest meeting for that project (`last`,
+by `meetingOrder`, or `null`), that meeting's open follow-ups (mine first), its newest `PREP_PROGRESS` (3)
+progress entries, its live linked tasks, and (schema v27) the project's documents, `docs: documents.filter((d) =>
+d.projectId === project.id).sort(docOrder)` ([documents.md](documents.md)). Nothing here writes state or reaches
+`computeGrades` / `krProgress` / `todoOf`. A project-less memo never
 yields a prep row by design — `liveProject(null)` is `null` and `m.projectId === project.id` never matches
 `null` — but the title-match fallback names the **newest** same-title meeting whatever its project, so an event
 whose newest same-title meeting is a memo gets no prep row even when an older same-title meeting names a live
@@ -433,6 +480,9 @@ project ([TD-60](../exec-plans/tech-debt-tracker.md), accepted).
 - Deleting a meeting (`removeMeeting`) does not cascade to the `source: "meeting"` work items its follow-ups
   registered — they stay, and the work sheet's `연결` line states `연결 대상이 삭제됐어요` (the TD-49 policy,
   [daily-work.md](daily-work.md)). A cascade may be added later at the user's request.
+- A project with documents cannot be deleted any more than one with minutes can (schema v27,
+  [documents.md](documents.md)); a document itself is never a task, is never read by `buildAssistantPacket` or
+  `calendarExportOf`, and its `source` field is never carried into the prep packet.
 - A transcript (2026-09-17) is never read anywhere but `MeetingModal`, `MeetingViewModal`, `clearTranscript`,
   `recordFits` (through `JSON.stringify` of the whole record) and `demoState`: `buildWorkPacket`,
   `buildAssistantPacket`, `calendarExportOf`, `buildIcs` and `meetingPrepOf` never read it — the app never
@@ -450,4 +500,8 @@ the count and keeps the paste in the form, then accepts 30,000; `녹취록 지�
 and back to `없음 (긴급 메모)` returns it to the group. `tools/e2e/flow11.js` adds two steps: the work packet
 states a project-less memo as `[프로젝트 없음] {title}` and carries none of its transcript (a sentinel string);
 `회의록 열기` on a meeting-linked work item opens that meeting's view in place of the sheet, and a goal-linked
-item has no such button. See [tools/e2e/README.md](../../tools/e2e/README.md).
+item has no such button. `tools/e2e/flow10.js` adds four **documents** steps (schema v27, [documents.md](documents.md))
+after that: registering a document under a project and in the memo group, the sheet's caps and edit, moving a
+document between the memo group and a project, and the project-deletion guard by document count. `flow11.js`
+adds five **pre-meeting check** steps (schedule.md) covering the prep card's checklist, the event sheet, the
+prep packet, a pasted prep reply, and `확인할 것 가져오기`. See [tools/e2e/README.md](../../tools/e2e/README.md).
