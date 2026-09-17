@@ -289,6 +289,114 @@ module.exports = async (h) => {
     await closeModal();
   });
 
+  /* v28 — the weekly review's per-track facts and the `주간 회고` packet. The first step replaces the lists the facts read
+     with a plant of this week (and drops this week's review, so the bridge starts disabled); the second restores the
+     stashed save in `finally`. */
+  const REVIEW_KEYS = ["meetingProjects", "meetings", "work", "timeLog", "milestones", "leads", "reviews", "settings"];
+  let reviewStash = null;
+  const mondayIn = (weeks) => page.evaluate((w) => {
+    const t = new Date(); t.setHours(12, 0, 0, 0); t.setDate(t.getDate() - ((t.getDay() + 6) % 7) + 7 * w);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+  }, weeks);
+  const bridgeButton = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "AI에게 회고 묻기 ›");
+    return b ? { disabled: b.disabled } : null;
+  });
+
+  await step("the review states per-track facts", async () => {
+    const st = await readState();
+    reviewStash = Object.fromEntries(REVIEW_KEYS.map((k) => [k, st[k]]));
+    const today = await dstrIn(0);
+    const week = await mondayIn(0);
+    const sunday = await page.evaluate((m) => { const t = new Date(m + "T12:00:00"); t.setDate(t.getDate() + 6); const p = (n) => String(n).padStart(2, "0"); return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`; }, week);
+    await page.evaluate((k, d) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetingProjects = [{ id: "rv-biz", name: "E2E회고사업프로젝트", track: "biz", createdAt: d.today }];
+      s.meetings = [{ id: "rv-m1", projectId: "rv-biz", date: d.today, title: "E2E회고사업회의", summary: "E2E회고요약", taskIds: [], progress: [], aiHidden: false, createdAt: d.today,
+        followUps: [{ id: "rv-f1", text: "E2E끝난후속", mine: true, due: d.week, done: true }, { id: "rv-f2", text: "E2E열린후속", mine: true, due: d.sunday, done: false }] }];
+      s.work = [
+        { id: "rv-w1", date: d.today, title: "E2E회고완료업무", done: true, minutes: 60, source: "manual", track: "biz", createdAt: d.today },
+        { id: "rv-w2", date: d.today, title: "E2E회고열린업무", done: false, source: "manual", track: "biz", createdAt: d.today },
+        { id: "rv-w3", date: d.today, title: "E2E직장비밀업무", done: true, source: "manual", track: "work", createdAt: d.today },
+      ];
+      s.timeLog = [{ id: "rv-t1", date: d.today, track: "biz", minutes: 60, workId: "rv-w1", createdAt: d.today }];
+      s.milestones = [{ id: "rv-ms", title: "E2E회고마일스톤", status: "done", doneAt: d.today, dealIds: [], documentIds: [], workIds: [], createdAt: d.today }];
+      s.leads = [{ id: "rv-l1", name: "E2E회고병원", stage: "contact", stageAt: d.today, createdAt: d.today }];
+      s.reviews = (s.reviews || []).filter((r) => r.weekOf !== d.week);
+      s.settings = { ...(s.settings || {}), bizHoursPerWeek: 20 };
+      localStorage.setItem(k, JSON.stringify(s));
+    }, "liferpg-state-v1", { today, week, sunday });
+    await h.reload();
+    await fromBriefing("이번 주 리뷰");
+    await sleep(400);
+    for (const line of [
+      "직장 · 이번 주 기한 후속 0/0 · 업무 완료 1건 · 0h",
+      "사업 · 이번 주 기한 후속 1/2 · 업무 완료 1건 · 1h/20h · 마일스톤 완료 1건 · 리드 진전 1건",
+      "개인 · 업무 완료 0건 · 0h",
+    ]) {
+      if (!(await h.overlayText()).includes(line)) throw new Error(`the review does not state "${line}": ` + (await h.overlayText()).slice(0, 300));
+    }
+    const before = await bridgeButton();
+    if (!before || !before.disabled) throw new Error("the review bridge button is not disabled before this week's review is saved: " + JSON.stringify(before));
+    await expectText("먼저 리뷰를 저장해요 — 저장된 리뷰가 패킷에 실려요.");
+    await typeInto("잘된 것", "E2E회고잘된것 견적 2건");
+    await typeInto("막힌 것", "E2E회고막힌것 승인 대기");
+    await clickInModalExact("리뷰 저장");
+    await sleep(600);
+    await fromBriefing("이번 주 리뷰");
+    await sleep(400);
+    const after = await bridgeButton();
+    if (!after || after.disabled) throw new Error("the review bridge button is not enabled once the review is saved: " + JSON.stringify(after));
+    if (await hasText("먼저 리뷰를 저장해요")) throw new Error("the not-saved caption is still shown");
+  });
+
+  await step("the review packet carries the business week and the saved review, and its reply registers next Monday's business work items through the work path", async () => {
+    try {
+      if (!reviewStash) throw new Error("the previous step did not plant the week");
+      if (!(await bridgeButton())) await fromBriefing("이번 주 리뷰");
+      await clickInModalExact("AI에게 회고 묻기 ›");
+      await sleep(500);
+      if (!(await h.overlayText()).startsWith("주간 회고 — AI에게 묻기")) throw new Error("the review bridge title: " + (await h.overlayText()).slice(0, 60));
+      const packet = await page.evaluate(() => { const ov = [...document.querySelectorAll(".fixed.inset-0")].pop(); const t = ov && ov.querySelector("textarea"); return t ? t.value : ""; });
+      const st = await readState();
+      for (const part of ["[인생 관리 — 주간 회고 요청 ", "## 이번 주 사실 (사업)", "## 로드맵", "## 파이프라인", "## 이번 주 리뷰", "E2E회고잘된것 견적 2건", "E2E회고열린업무", "E2E열린후속"]) {
+        if (!packet.includes(part)) throw new Error(`the review packet lacks "${part}"`);
+      }
+      for (const part of ["E2E직장비밀업무", "## 이력", st.profile.name, "E2E회고요약"]) {
+        if (part && packet.includes(part)) throw new Error(`the review packet carries "${part}"`);
+      }
+      if (packet.length > 20000) throw new Error(`the review packet is ${packet.length} chars`);
+      await clickInModalExact("AI 답변 붙여넣기 ›");
+      await setValue(".fixed.inset-0 textarea", "이번 주 회고 5줄\n```json\n{\"work\":[{\"title\":\"E2E 다음 주 업무\",\"note\":\"근거 한 줄\"}],\"tasks\":[{\"goal\":\"하네스 설계 엔지니어 취업\",\"title\":\"독서 30분\",\"diff\":\"E\",\"type\":\"once\"}]}\n```");
+      await clickInModalExact("답변 확인");
+      await expectText("제안 업무 확인 — 1건");
+      const before = await readState();
+      const nextMonday = await mondayIn(1);
+      await clickInModalExact("선택한 업무 등록");
+      await expectText(`AI 제안 업무 1건 등록 · ${nextMonday}`);
+      await sleep(400);
+      const after = await readState();
+      const item = (after.work || []).find((w) => w.title === "E2E 다음 주 업무");
+      if (!item) throw new Error("the proposal was not registered");
+      if (item.date !== nextMonday || item.track !== "biz" || item.source !== "ai" || item.done !== false) throw new Error("the registered item: " + JSON.stringify(item));
+      for (const k of ["tasks", "journal", "reviews"]) {
+        if (JSON.stringify(after[k]) !== JSON.stringify(before[k])) throw new Error(`registering the proposal changed ${k}`);
+      }
+    } finally {
+      await closeModal();
+      if (reviewStash) {
+        await page.evaluate((k, stash) => {
+          const s = JSON.parse(localStorage.getItem(k));
+          for (const [key, v] of Object.entries(stash)) { if (v === undefined) delete s[key]; else s[key] = v; }
+          localStorage.setItem(k, JSON.stringify(s));
+        }, "liferpg-state-v1", reviewStash);
+        await h.reload();
+      }
+    }
+  });
+
   await step("the completed archive states its date and completes nothing", async () => {
     // A daily task finished on an earlier day is finished, not open. Its row leads with the completion date and its
     // sheet offers no completion control — otherwise a list titled `완료` would double as a second completion surface.

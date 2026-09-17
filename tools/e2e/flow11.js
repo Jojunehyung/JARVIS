@@ -545,6 +545,10 @@ module.exports = async (h) => {
     }, KEY, PROJECT_ID, { id: MTG_A_ID, title: MTG_A }, { id: MTG_B_ID, title: MTG_B, summary: HIDDEN_SUMMARY }, twoDaysAgo, today);
     await h.reload();
     await openWorkBridge();
+    // v28: the generalised bridge component (shared with `reviewBridge`) keeps the work bridge's own title and caption.
+    const sheet = await overlayText();
+    if (!sheet.startsWith("오늘 업무 만들기")) throw new Error("the work bridge title changed: " + sheet.slice(0, 60));
+    if (!sheet.includes("회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요.") || sheet.includes("다음 주 월요일")) throw new Error("the work bridge caption changed: " + sheet.slice(0, 300));
     const txt = await packetText();
     const linkedTitle = ((await readState()).tasks || [])[0]?.title;
     if (!linkedTitle) throw new Error("no task to link, so the linked-task line would prove nothing");

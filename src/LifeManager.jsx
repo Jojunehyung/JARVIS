@@ -3591,12 +3591,127 @@ const parsePrepReply = (text, ev) => {
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
 };
 
+/* ── Weekly review facts and the `주간 회고` packet (v28, the fourth packet) ── */
+/* The weekly review's per-track facts, derived at render (rule 9). TD-71: no completion stamp exists for a follow-up or
+   a work item, so the week is read from due dates and item dates — follow-ups due in the week (done vs total), work items
+   dated in the week and done. The business track adds its budget, milestones with `doneAt` in the week and leads whose
+   `stageAt` falls in the week past the potential stage. */
+const weekFacts = (state, weekOf) => {
+  const end = shiftDay(weekOf, 6);
+  const inWeek = (d) => !!d && d >= weekOf && d <= end;
+  const facts = {};
+  for (const track of TRACKS) {
+    const fus = (state.meetings || []).filter((m) => meetingTrack(state, m) === track).flatMap((m) => (m.followUps || []).filter((f) => inWeek(f.due)));
+    facts[track] = {
+      fuDone: fus.filter((f) => f.done).length,
+      fuTotal: fus.length,
+      workDone: (state.work || []).filter((w) => trackOf(w) === track && w.done && inWeek(w.date)).length,
+      minutes: weekMinutes(state, weekOf, track),
+    };
+  }
+  return {
+    ...facts,
+    budget: bizHoursOf(state),
+    milestonesDone: (state.milestones || []).filter((m) => m.status === "done" && inWeek(m.doneAt)).length,
+    leadsAdvanced: (state.leads || []).filter((l) => l.stage !== "potential" && inWeek(l.stageAt)).length,
+  };
+};
+// The review's three lines as fragments: the sheet renders each fragment unbroken, the review packet joins them with ` · `.
+const weekFactRows = (f) => ({
+  work: ["직장", `이번 주 기한 후속 ${f.work.fuDone}/${f.work.fuTotal}`, `업무 완료 ${f.work.workDone}건`, hoursText(f.work.minutes)],
+  biz: ["사업", `이번 주 기한 후속 ${f.biz.fuDone}/${f.biz.fuTotal}`, `업무 완료 ${f.biz.workDone}건`, `${hoursText(f.biz.minutes)}/${f.budget}h`,
+    `마일스톤 완료 ${f.milestonesDone}건`, `리드 진전 ${f.leadsAdvanced}건`],
+  personal: ["개인", `업무 완료 ${f.personal.workDone}건`, hoursText(f.personal.minutes)],
+});
+
+// What the review packet carries and how much. Plain literals, so smoke-logic can lift them.
+const REVIEW_PACKET_MAX = 20000;       // the review packet's own cap, as the work packet's
+const REVIEW_PACKET_WORK = 30;         // done and open work lines each
+const REVIEW_PACKET_FOLLOWUPS = 30;    // open follow-ups of business meetings
+const REVIEW_PACKET_LEADS = 20;        // leads not won
+const REVIEW_PACKET_NOTICES = 10;      // open notices
+const REVIEW_PACKET_TEXT = 1000;       // chars of the saved review's `잘된 것` and `막힌 것` each (the sheet sets no cap)
+const REVIEW_PACKET_HEAD = [
+  "역할: 이 사용자의 사업 트랙 한 주를 되짚고 다음 주 업무를 제안하는 비서예요. 아래 데이터만 근거로 답해요.",
+  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
+  "3) 제안은 다음 주에 처리할 사업 업무 항목만이에요 — 건수 제한 없이, 제목 60자·메모 200자 이내. 실행·일정·계약·회의록·마일스톤·리드를 만들거나 바꾸지 않아요. '미완료 업무·후속'에 이미 있는 항목은 다시 제안하지 않아요.",
+  "4) 각 항목의 근거가 된 회의록·프로젝트 이름을 link.title에 아래 데이터의 표기 그대로 적어요. 마일스톤·리드·공고가 근거면 note에 적어요. 근거가 없으면 link를 생략해요.",
+  "5) 답변 형식: ① 이번 주 사실을 근거로 한 회고 5줄 이내 ② 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"work\": []).",
+  "```json",
+  '{"work":[{"title":"...","note":"근거 한 줄","link":{"kind":"meeting|project","title":"<이름 그대로>"}}],"note":"한 줄"}',
+  "```",
+];
+
+/* The review packet (`주간 회고`): the business track of the week of `mondayOf(today)` only — no day-job or private
+   record, no `## 이력` line, no profile identifier, no transcript, and no body of a meeting flagged `aiHidden` (its
+   follow-ups stay out). A milestone linked to a day-job record (`milestoneTrack`) stays out; leads and notices are
+   business by nature. The saved review is read, never a draft: the sheet enables the button only once this week's
+   review is stored. Its reply is read by the unchanged `parseWorkReply` (key `work` only) and registered by `importWork`
+   dated next Monday on the business track (rule 7). When the text exceeds REVIEW_PACKET_MAX the reductions run one step
+   at a time, rebuilding after each: done work 30 → 10, open work 30 → 10, follow-ups 30 → 5, leads 20 → 5, notices
+   10 → 3, payment lines → 3, done work → 0, leads → 0. The header, the facts and the roadmap are never dropped.
+   Derived on demand, never stored (rule 9). */
+const buildReviewPacket = (state, today) => {
+  const weekOf = mondayOf(today);
+  const end = shiftDay(weekOf, 6);
+  const isBiz = (rec) => trackOf(rec) === "biz";
+  const factLine = `- ${weekFactRows(weekFacts(state, weekOf)).biz.join(" · ")}`;
+  const time = `- ${timeLine(state, today)}`;
+  const work = (state.work || []).filter(isBiz).slice().sort((a, b) => a.date.localeCompare(b.date) || byCreated(a, b));
+  const doneLines = work.filter((w) => w.done && w.date >= weekOf && w.date <= end)
+    .map((w) => `- ${w.date} ${w.title}${w.result ? ` · 처리: ${oneLineText(w.result, WORK_PACKET_RESULT)}` : ""}`);
+  const openLines = work.filter((w) => !w.done)
+    .map((w) => `- ${w.date} 미완료${w.date < today ? ` · 이월 ${daysBetween(w.date, today)}일` : ""} ${w.title}${w.note ? ` · 메모: ${oneLineText(w.note, WORK_PACKET_NOTE)}` : ""}`);
+  const fuLines = (state.meetings || []).filter((m) => !m.aiHidden && meetingTrack(state, m) === "biz").sort(meetingOrder)
+    .flatMap((m) => (m.followUps || []).filter((f) => !f.done).map((f) =>
+      `- 후속 · ${m.title} · ${f.mine ? "내 담당" : "타인"} · ${oneLineText(f.text, MEETING_LIMITS.followUp)} · ${f.due ? `기한 ${f.due}` : "기한 없음"}`));
+  const milestones = (state.milestones || []).filter((m) => m.status !== "done" && milestoneTrack(state, m) === "biz").sort(milestoneOrder);
+  const note = stageOrderNote(milestones);
+  const roadmapLines = [time, ...(note ? [`- ${note}`] : []), ...milestones.map((m) => `- ${milestoneLine(state, m, today)}`)];
+  const leadLines = (state.leads || []).filter((l) => l.stage !== "won").sort(leadOrder).map((l) => `- ${leadLine(l, today)}`);
+  const noticeLines = (state.notices || []).filter(noticeOpen).sort(noticeOrder).map((n) => `- ${noticeLine(n)}`);
+  const payLines = (state.deals || []).filter((d) => trackOf(d, "biz") === "biz").flatMap((d) => dealPayments(d).map((p) =>
+    `- ${PAYMENT_KIND[p.kind] || PAYMENT_KIND.other} ${p.due} ${d.client} ${d.title} ${wonText(p.amount)}${p.paidAt ? ` · 입금 확인 ${p.paidAt}` : ""}`));
+  const review = (state.reviews || []).find((r) => r.weekOf === weekOf);
+  const reviewLines = review ? [`- 잘된 것: ${oneLineText(review.wins, REVIEW_PACKET_TEXT) || "없음"}`, `- 막힌 것: ${oneLineText(review.blocks, REVIEW_PACKET_TEXT) || "없음"}`] : [];
+
+  const k = { done: REVIEW_PACKET_WORK, open: REVIEW_PACKET_WORK, followUps: REVIEW_PACKET_FOLLOWUPS, leads: REVIEW_PACKET_LEADS,
+    notices: REVIEW_PACKET_NOTICES, payments: payLines.length };
+  const build = () => [
+    `[인생 관리 — 주간 회고 요청 ${today}]`, ...REVIEW_PACKET_HEAD, "",
+    ...packetSection("이번 주 사실 (사업)", [factLine, time]),
+    ...packetSection("이번 주 완료 업무 (사업)", doneLines.slice(0, k.done)),
+    ...packetSection("미완료 업무·후속 (사업)", [...openLines.slice(0, k.open), ...fuLines.slice(0, k.followUps)]),
+    ...packetSection("로드맵", roadmapLines),
+    ...packetSection("파이프라인", leadLines.slice(0, k.leads)),
+    ...packetSection("공고", noticeLines.slice(0, k.notices)),
+    ...packetSection("입금 예정", payLines.slice(0, k.payments)),
+    ...packetSection("이번 주 리뷰", reviewLines),
+  ].join("\n");
+  const reductions = [
+    () => k.done > 10 && (k.done = 10, true),
+    () => k.open > 10 && (k.open = 10, true),
+    () => k.followUps > 5 && (k.followUps = 5, true),
+    () => k.leads > 5 && (k.leads = 5, true),
+    () => k.notices > 3 && (k.notices = 3, true),
+    () => k.payments > 3 && (k.payments = 3, true),
+    () => k.done > 0 && (k.done = 0, true),
+    () => k.leads > 0 && (k.leads = 0, true),
+  ];
+  let out = build();
+  for (const reduce of reductions) while (out.length > REVIEW_PACKET_MAX && reduce()) out = build();
+  return out;
+};
+
 /* ───────────────────────── Calendar export — the phone-calendar file (RFC 5545) ───────────────────────── */
 /* The app sends no notification: there is no push server, and no browser API schedules a local alarm. The phone's
    own calendar raises the alarms, from a file the user exports here and imports once. The file is a snapshot built
-   from records at export time: it reads events, tasks and goals and no other part of the save, writes nothing back
-   (rules 9, 18) and makes no request (rule 7); of an event it reads the title, kind, date, time, repeat rule and the
-   user's own stamps only. Times are floating local time, like every date in the app — no zone is asserted, nothing
+   from records at export time: it reads events, tasks, goals and, since v28, meeting follow-ups, event checks, roadmap
+   milestones, contract payment lines and notices — no other part of the save — writes nothing back (rules 9, 18) and
+   makes no request (rule 7); of an event it reads the title, kind, date, time, repeat rule, the user's own stamps and
+   its checks only. Every track is included: the phone calendar is the user's own device and already carries day-job
+   event titles, and nothing here is a packet. Amounts, leads, documents and transcripts are never read. Times are floating local time, like every date in the app — no zone is asserted, nothing
    is converted to UTC except DTSTAMP.
    Every declaration is a top-level const so tools/harness/smoke-logic.js can lift and check it without a browser. */
 const ICS_RANGE_DAYS = [30, 90, 365];         // the sheet's range chips; 365 stays within MAX_OCC, so no daily repeat is cut short
@@ -3607,6 +3722,8 @@ const ICS_DIGEST_MINUTES = 10;                // the daily digest is a short tim
 const ICS_LINE_OCTETS = 75;                   // RFC 5545 3.1: a content line folds at 75 octets, counted in UTF-8 bytes, never characters
 const ICS_SEQ_EPOCH = Date.UTC(2026, 0, 1);   // SEQUENCE counts whole seconds from here: it grows with every later export and fits int32 until 2094
 const ICS_UID_HOST = "life-manager";          // the UID domain part, a fixed string that names no person
+const ICS_MILESTONE_LEAD_DAYS = 7;            // a milestone alarms this many days before its due day, and on the day
+const ICS_CHECK_LEAD_DAYS = 1;                // open pre-meeting checks alarm this many days before the occurrence
 
 // TEXT escaping (RFC 5545 3.3.11): the backslash first, so the escapes added after it are not escaped a second time.
 const icsText = (s) => String(s ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r\n|\r|\n/g, "\\n");
@@ -3668,7 +3785,10 @@ const icsUid = (kind, id, date) => {
 };
 
 /* What the file carries, as descriptors — no RFC text here. The window is `today` to `end`, the span
-   `upcomingEvents(state, today, days)` covers. Reads `state.events`, `state.tasks` and `state.goals`, nothing else.
+   `upcomingEvents(state, today, days)` covers. Reads `state.events`, `state.tasks`, `state.goals` and (v28)
+   `meetings[].followUps`, `events[].checks`, `milestones`, `deals[].payments` and `notices`, nothing else. Every track
+   is included: the phone calendar is the user's own device and already carries day-job event titles; nothing here is a
+   packet (rule 7). A payment entry names the kind, the client and the contract, never the amount; leads stay out.
    - Events: an occurrence the user ticked is left out — it is no longer open work. A repeat the RFC rule states
      exactly (daily, weekly, monthly on day 1-28) is one entry with a rule, and its cancelled and ticked dates become
      exceptions. A monthly event on day 29-31 is written as the dates `occurrencesOf` returns, one entry each: a
@@ -3676,7 +3796,12 @@ const icsUid = (kind, id, date) => {
    - Daily tasks become one digest at the reminder time: a dozen alarms at the same minute say nothing one list does not.
    - An open task or an active goal whose date has passed has no truthful date in the window: it is counted in
      `skipped`, never dropped silently (rule 13). Progress and pace are never written — frozen at export, a number
-     is false the next day (rule 9).
+     is false the next day (rule 9). The same count holds for an open follow-up, a not-done milestone, an unpaid
+     payment line, an open notice, and a check reminder whose day before the occurrence has passed.
+   - v28 entries are all-day and alarm at the reminder time: an open follow-up on its due day; the open checks of an
+     included occurrence ICS_CHECK_LEAD_DAYS before it (one entry per occurrence); a milestone on its due day and
+     ICS_MILESTONE_LEAD_DAYS before it (each written when its own date is in the window); an unpaid payment line on its
+     due day; an open notice on its deadline.
    Entry fields: `time` null on a timed entry is the reminder time chosen in the sheet (the digest); `alarm` is in
    minutes from the start, or null for the reminder time on the day of an all-day entry. */
 const calendarExportOf = (state, today, days) => {
@@ -3688,12 +3813,19 @@ const calendarExportOf = (state, today, days) => {
     description: [...body, tail].join("\n"), rrule: null, exdates: [], alarm: null, ...more,
   });
   const entries = [];
-  const skipped = { tasks: 0, goals: 0 };
+  const skipped = { tasks: 0, goals: 0, followups: 0, checks: 0, milestones: 0, payments: 0, notices: 0 };
 
   for (const ev of state.events || []) {
     const ticked = new Set(ev.doneDates || []);
     const dates = occurrencesOf(ev, today, end).filter((d) => !ticked.has(d));
     if (!dates.length) continue;
+    // Open checks alarm the day before each included occurrence; a reminder day already past is counted, not written.
+    const open = (ev.checks || []).filter((c) => !c.done);
+    for (const d of open.length ? dates : []) {
+      const at = shiftDay(d, -ICS_CHECK_LEAD_DAYS);
+      if (at < today) { skipped.checks += 1; continue; }
+      entries.push(entry("check", icsUid("check", ev.id, d), at, "확인할 것 " + open.length + "건 · " + (ev.title || ""), open.map((c) => "- " + c.text)));
+    }
     const time = /^\d{2}:\d{2}$/.test(ev.time || "") ? ev.time : "";
     // A deadline is a date in the app (its row leads with a D-day), so it is all-day and a stored time stays as text.
     const due = ev.kind === "due";
@@ -3741,11 +3873,50 @@ const calendarExportOf = (state, today, days) => {
     entries.push(entry("goal", icsUid("goal", g.id), g.deadline, `목표 기한 · ${g.title}`, ["진행률·페이스는 넣지 않아요 — 내보낸 뒤 바로 달라져요."]));
   }
 
+  // v28: a meeting's open follow-ups with a due date — the text and the meeting title only, never the minutes.
+  for (const m of state.meetings || []) {
+    for (const f of m.followUps || []) {
+      if (f.done || !f.due) continue;
+      if (f.due < today) { skipped.followups += 1; continue; }
+      if (f.due > end) continue;
+      entries.push(entry("followup", icsUid("followup", m.id + "-" + f.id), f.due, "후속 기한 · " + f.text, ["회의록 · " + m.title, "목표 기여 없음"]));
+    }
+  }
+
+  // v28: a not-done milestone on its due day and ICS_MILESTONE_LEAD_DAYS before it; progress and pace are never written.
+  const milestoneBody = ["진행률·페이스는 넣지 않아요 — 내보낸 뒤 바로 달라져요."];
+  for (const m of state.milestones || []) {
+    if (m.status === "done" || !m.due) continue;
+    if (m.due < today) { skipped.milestones += 1; continue; }
+    if (m.due <= end) entries.push(entry("milestone", icsUid("milestone", m.id), m.due, "마일스톤 기한 · " + m.title, milestoneBody));
+    const early = shiftDay(m.due, -ICS_MILESTONE_LEAD_DAYS);
+    if (early >= today && early <= end) entries.push(entry("milestone", icsUid("milestone", m.id + "-d7"), early, "마일스톤 D-7 · " + m.title, milestoneBody));
+  }
+
+  // v28: an unpaid payment line on its due day — the kind, the client and the contract, never the amount.
+  for (const d of state.deals || []) {
+    for (const p of d.payments || []) {
+      if (p.paidAt || !p.due) continue;
+      if (p.due < today) { skipped.payments += 1; continue; }
+      if (p.due > end) continue;
+      entries.push(entry("payment", icsUid("payment", d.id + "-" + p.id), p.due,
+        "입금 예정 · " + (PAYMENT_KIND[p.kind] || PAYMENT_KIND.other) + " · " + d.client + " " + d.title, ["금액은 넣지 않아요."]));
+    }
+  }
+
+  // v28: an open notice on its deadline.
+  for (const n of state.notices || []) {
+    if (!noticeOpen(n) || !n.deadline) continue;
+    if (n.deadline < today) { skipped.notices += 1; continue; }
+    if (n.deadline > end) continue;
+    entries.push(entry("notice", icsUid("notice", n.id), n.deadline, "공고 마감 · " + n.title + " · " + n.agency, ["목표 기여 없음"]));
+  }
+
   // Plain code-unit comparison rather than localeCompare, so the order cannot depend on the runtime's locale.
-  const rank = { event: 0, task: 1, daily: 2, goal: 3 };
+  const rank = { event: 0, task: 1, daily: 2, goal: 3, followup: 4, check: 5, milestone: 6, payment: 7, notice: 8 };
   const key = (e) => `${e.date}|${rank[e.source]}|${e.summary}|${e.uid}`;
   entries.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
-  const counts = { event: 0, task: 0, daily: 0, goal: 0 };
+  const counts = { event: 0, task: 0, daily: 0, goal: 0, followup: 0, check: 0, milestone: 0, payment: 0, notice: 0 };
   for (const e of entries) counts[e.source] += 1;
   return { end, entries, counts, skipped };
 };
@@ -3815,7 +3986,8 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *              checks?[{ id, text, done, source("manual"|"ai") }],                                // checks (v27, optional, no backfill): `확인할 것` for that
  *                                                                                                  // event, at most 30 of 200 chars; edited on the prep card and
  *                                                                                                  // the event sheet, imported from the prep packet's reply; never
- *                                                                                                  // read by the export or the daily packet; a repeating event
+ *                                                                                                  // read by the daily packet; the export (v28) writes the open ones
+ *                                                                                                  // as a reminder the day before each occurrence; a repeating event
  *                                                                                                  // carries one list for every occurrence (TD-61)
  *              track("work"|"biz"|"personal") }],                                                // track (v28): the day job, the business or private life; `work`
  *                                                                                                  // never enters a packet (SECURITY.md); backfilled `work` (`biz` on a deal)
@@ -5622,9 +5794,10 @@ function BridgeModal({ state, today, initialMode, onClose, onImport, onStoreRepl
 }
 
 /* ── Weekly review — what worked, what blocked, beside the numbers of that week ── */
-function ReviewModal({ state, today, onClose, onSave }) {
+function ReviewModal({ state, today, onClose, onSave, onReviewBridge }) {
   const weekOf = mondayOf(today);
   const mine = (state.reviews || []).find((r) => r.weekOf === weekOf);
+  const rows = weekFactRows(weekFacts(state, weekOf));
   const [wins, setWins] = useState(mine?.wins || "");
   const [blocks, setBlocks] = useState(mine?.blocks || "");
   const [err, setErr] = useState("");
@@ -5640,12 +5813,22 @@ function ReviewModal({ state, today, onClose, onSave }) {
     <Modal title={`주간 리뷰 — ${weekOf} 주`} onClose={onClose}>
       <div className="space-y-3">
         <p className="text-xs font-mono text-zinc-400">이번 주 완료 {doneThisWeek}건 · 성취 기록 {achThisWeek}건</p>
+        <div className="space-y-0.5">
+          {TRACKS.map((t) => (
+            <p key={t} className="text-xs font-mono text-zinc-400">
+              {rows[t].map((frag, i) => <span key={i}>{i > 0 && " · "}<span className="whitespace-nowrap">{frag}</span></span>)}
+            </p>
+          ))}
+        </div>
         <textarea value={wins} onChange={(e) => setWins(e.target.value)} rows={3}
           placeholder="잘된 것 — 사실·수치로" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
         <textarea value={blocks} onChange={(e) => setBlocks(e.target.value)} rows={3}
           placeholder="막힌 것 — 원인" className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={() => submit()} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">리뷰 저장</button>
+        <button onClick={onReviewBridge} disabled={!mine}
+          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-sm disabled:opacity-30">AI에게 회고 묻기 ›</button>
+        {!mine && <p className="text-xs text-zinc-500">먼저 리뷰를 저장해요 — 저장된 리뷰가 패킷에 실려요.</p>}
       </div>
     </Modal>
   );
@@ -7384,6 +7567,7 @@ function CalendarExportModal({ state, today, onClose, onExport }) {
             className="flex-1 w-0 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm font-mono" />
         </label>
         <p className="text-xs text-zinc-500">마감·실행 기한·목표 기한·시간 없는 약속과 매일 실행 목록은 이 시각에 알려요. 시간이 있는 약속은 시작 1시간 전에 알려요.</p>
+        <p className="text-xs text-zinc-500">후속 기한·마일스톤·입금 예정·공고 마감과 회의 하루 전 확인할 것도 이 시각에 알려요.</p>
         <div>
           <div className="text-xs text-zinc-500 mb-1.5">넣을 기간</div>
           <div className="flex gap-1.5">
@@ -7393,17 +7577,19 @@ function CalendarExportModal({ state, today, onClose, onExport }) {
           </div>
         </div>
         {empty ? (
-          <p className="text-xs text-zinc-400">{`넣을 항목이 없어요 — ${today} ~ ${sel.end}에 일정·실행 기한·매일 실행·목표 기한이 없어요.`}</p>
+          <p className="text-xs text-zinc-400">{`넣을 항목이 없어요 — ${today} ~ ${sel.end}에 일정·실행 기한·매일 실행·목표 기한·후속 기한·확인할 것·마일스톤·입금 예정·공고 마감이 없어요.`}</p>
         ) : (
           <div className="space-y-0.5">
             <p className="text-xs font-mono text-zinc-400">{`${today} ~ ${sel.end} · 항목 ${sel.entries.length}건`}</p>
             <p className="text-xs font-mono text-zinc-400">{`일정 ${sel.counts.event} · 실행 기한 ${sel.counts.task} · 매일 실행 ${sel.counts.daily} · 목표 기한 ${sel.counts.goal}`}</p>
+            <p className="text-xs font-mono text-zinc-400">{`후속 ${sel.counts.followup} · 확인 ${sel.counts.check} · 마일스톤 ${sel.counts.milestone} · 입금 ${sel.counts.payment} · 공고 ${sel.counts.notice}`}</p>
           </div>
         )}
-        {sel.skipped.tasks + sel.skipped.goals > 0 && (
-          <p className="text-xs text-zinc-400">{`기한이 지난 실행 ${sel.skipped.tasks}건 · 목표 ${sel.skipped.goals}건은 날짜가 지나 넣지 않아요.`}</p>
+        {sel.skipped.tasks + sel.skipped.goals + sel.skipped.followups + sel.skipped.milestones + sel.skipped.payments + sel.skipped.notices > 0 && (
+          <p className="text-xs text-zinc-400">{`기한이 지난 실행 ${sel.skipped.tasks}건 · 목표 ${sel.skipped.goals}건 · 후속 ${sel.skipped.followups}건 · 마일스톤 ${sel.skipped.milestones}건 · 입금 ${sel.skipped.payments}건 · 공고 ${sel.skipped.notices}건은 날짜가 지나 넣지 않아요.`}</p>
         )}
-        <p className="text-xs text-zinc-500">넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 기록과 금액, 일정의 장소·메모.</p>
+        {sel.skipped.checks > 0 && <p className="text-xs text-zinc-400">{`확인할 것 ${sel.skipped.checks}건은 하루 전이 지나 넣지 않아요.`}</p>}
+        <p className="text-xs text-zinc-500">넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 금액·단가·포트폴리오·리드, 일정의 장소·메모, 녹취록·문서.</p>
         <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-1">
           <p className="text-xs text-zinc-300">내보낸 순간의 기록만 들어가요. 앱에서 추가·수정·완료·삭제해도 휴대폰 캘린더는 바뀌지 않아요 — 바뀐 내용은 다시 내보내야 들어가요.</p>
           <p className="text-xs text-zinc-300">앱에서 완료해도 캘린더의 알림은 꺼지지 않아요.</p>
@@ -7782,7 +7968,7 @@ function NoticesView({ state, today, onOpen }) {
           </div>
         </section>
       )}
-      <p className="text-xs text-zinc-600 px-1">공고는 기록이에요.</p>
+      <p className="text-xs text-zinc-600 px-1">공고는 기록이에요 — 마감은 캘린더 내보내기에 들어가요.</p>
     </>
   );
 }
@@ -9697,26 +9883,28 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
 /* ── Work bridge — `오늘 업무 만들기`: the work packet out, the reply's `work` proposals back, each ticked by the user
    before it becomes a record with `source: "ai"` (rule 7 amendment 2026-09-17). The raw reply is not stored: it would
    overwrite the day's journal reply, and nothing derived is stored (rule 9). Shares the send and paste panes with
-   `BridgeModal`; the confirm view is its own, since a work proposal has no goal, difficulty or type to pick. ── */
-function WorkBridgeModal({ state, today, onClose, onImport, onToast }) {
+   `BridgeModal`; the confirm view is its own, since a work proposal has no goal, difficulty or type to pick.
+   Generalised in v28: the root renders it for `workBridge` (`buildWorkPacket`, dated today, the link's track) and for
+   `reviewBridge` (`buildReviewPacket`, dated next Monday, the business track) — one confirm view for both packets. ── */
+function WorkBridgeModal({ state, today, build, title, caption, importDate, importTrack, onClose, onImport, onToast }) {
   const [mode, setMode] = useState("send");
   const [reply, setReply] = useState("");
   const [parsed, setParsed] = useState(null);
   const [picked, setPicked] = useState({});
   const taRef = useRef(null);
-  const packet = useMemo(() => buildWorkPacket(state, today), [state, today]);
+  const packet = useMemo(() => build(state, today), [build, state, today]);
   const check = () => {
     const r = parseWorkReply(reply, state, today);
     setParsed(r);
     setPicked(Object.fromEntries(r.proposals.filter((p) => !p.reject).map((p) => [p.key, true])));
   };
-  const confirm = () => onImport((parsed?.proposals || []).filter((p) => picked[p.key] && !p.reject));
+  const confirm = () => onImport((parsed?.proposals || []).filter((p) => picked[p.key] && !p.reject), importDate, importTrack);
 
   return (
-    <Modal title={mode === "send" ? "오늘 업무 만들기" : "AI 답변 붙여넣기"} onClose={onClose}>
+    <Modal title={mode === "send" ? title : "AI 답변 붙여넣기"} onClose={onClose}>
       {mode === "send" ? (
         <PacketSendPane packet={packet} taRef={taRef} onCopy={() => copyPacket(taRef, packet, onToast)} onPaste={() => setMode("paste")}
-          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요. 직장 트랙 기록은 실리지 않아요." />
+          caption={caption} />
       ) : !parsed ? (
         <ReplyPastePane reply={reply} setReply={setReply} onCheck={check} />
       ) : (
@@ -10855,14 +11043,16 @@ export default function LifeManager() {
     if (link?.kind === "meeting") { const m = (state.meetings || []).find((x) => x.id === link.id); return m ? meetingTrack(state, m) : "biz"; }
     return "biz";
   };
-  const importWork = (list) => {
-    const made = list.map((p) => ({ id: uid(), date: today, title: p.title, ...(p.note ? { note: p.note } : {}),
-      ...(p.link ? { link: p.link } : {}), done: false, source: "ai", track: importTrackOf(p.link), createdAt: today }));
+  // v28: `date` dates every item (the review packet's reply: next Monday) and `track`, when given, replaces the link rule
+  // (the review packet's reply: `biz`). A date other than today is appended to the toast.
+  const importWork = (list, date = today, track = null) => {
+    const made = list.map((p) => ({ id: uid(), date, title: p.title, ...(p.note ? { note: p.note } : {}),
+      ...(p.link ? { link: p.link } : {}), done: false, source: "ai", track: track || importTrackOf(p.link), createdAt: today }));
     const refused = recordFits(made, 0, "업무를");
     if (refused) { showToast({ msg: refused }); return; }
     if (made.length) writeWork((items) => [...made, ...items]);
     setModal(null);
-    showToast({ msg: `AI 제안 업무 ${made.length}건 등록` });
+    showToast({ msg: `AI 제안 업무 ${made.length}건 등록${date !== today ? ` · ${date}` : ""}` });
   };
 
   /* Daily assistant */
@@ -11260,7 +11450,14 @@ export default function LifeManager() {
           onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
       )}
       {modal?.type === "workBridge" && (
-        <WorkBridgeModal state={state} today={today} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
+        <WorkBridgeModal state={state} today={today} build={buildWorkPacket} title="오늘 업무 만들기"
+          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요. 직장 트랙 기록은 실리지 않아요."
+          importDate={today} importTrack={null} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
+      )}
+      {modal?.type === "reviewBridge" && (
+        <WorkBridgeModal state={state} today={today} build={buildReviewPacket} title="주간 회고 — AI에게 묻기"
+          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 사업 트랙의 이번 주 업무·후속·로드맵·파이프라인·공고·입금 예정과 저장된 리뷰가 실려요 — 직장·개인 트랙, 녹취록, 이름·연락처는 실리지 않아요. 답변의 제안은 다음 주 월요일 업무로 등록돼요."
+          importDate={shiftDay(mondayOf(today), 7)} importTrack="biz" onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "timeLog" && (
         <TimeLogModal state={state} today={today} onClose={() => setModal(null)} onAdd={addTimeLog} onRemove={removeTimeLog} />
@@ -11283,7 +11480,7 @@ export default function LifeManager() {
           onImport={importTasks} onStoreReply={storeReply} />
       )}
       {modal?.type === "review" && (
-        <ReviewModal state={state} today={today} onClose={() => setModal(null)} onSave={saveReview} />
+        <ReviewModal state={state} today={today} onClose={() => setModal(null)} onSave={saveReview} onReviewBridge={() => setModal({ type: "reviewBridge" })} />
       )}
       {modal?.type === "profile" && (
         <ProfileModal profile={state.profile} state={state} img={imgs?.profile} today={today}

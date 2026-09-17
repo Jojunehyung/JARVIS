@@ -79,7 +79,7 @@ ok(achGrade(67) === "B", "D67 must be grade B");
 const ICS_NAMES = [
   "dstr", "shiftDay", "daysBetween", "EVENT_KIND_LABEL", "EVENT_HORIZON_DAYS", "MAX_OCC", "occurrencesOf",
   "ICS_RANGE_DAYS", "ICS_REMIND_DEFAULT", "ICS_APPT_LEAD_MIN", "ICS_APPT_MINUTES", "ICS_DIGEST_MINUTES", "ICS_LINE_OCTETS",
-  "ICS_SEQ_EPOCH", "ICS_UID_HOST", "icsText", "icsFold", "icsDate", "icsLocal", "icsAddMinutes", "icsUtcStamp", "icsDuration",
+  "ICS_SEQ_EPOCH", "ICS_UID_HOST", "ICS_MILESTONE_LEAD_DAYS", "ICS_CHECK_LEAD_DAYS", "PAYMENT_KIND", "noticeOpen", "icsText", "icsFold", "icsDate", "icsLocal", "icsAddMinutes", "icsUtcStamp", "icsDuration",
   "icsUid", "calendarExportOf", "buildIcs",
 ];
 const lift = (n) => { const b = S.grabBlock(n, src); if (!b) throw new Error(`smoke: ${n} is not a top-level declaration in the app source`); return b.text; };
@@ -98,6 +98,8 @@ const RICH = mkState({
     mkEvent({ id: "due2", title: "월말 서류", kind: "due", date: "2026-09-30" }),
     mkEvent({ id: "appt1", title: "면접", date: "2026-09-16", time: "14:00", place: "판교", note: "지참물" }),
     mkEvent({ id: "appt2", title: "통화", date: "2026-09-17" }),
+    mkEvent({ id: "prep1", title: "병원 미팅", date: "2026-09-22", time: "10:00",
+      checks: [{ id: "c1", text: "단가 근거 자료", done: false, source: "manual" }, { id: "c2", text: "끝난 확인", done: true, source: "ai" }] }),
   ],
   tasks: [
     { id: "t1", title: "이력서\n수정", type: "once", status: "todo", due: "2026-09-18", goalId: "g1" },
@@ -109,6 +111,20 @@ const RICH = mkState({
     { id: "g1", title: "취업", status: "active", deadline: "2026-10-01" },
     { id: "g2", title: "지난 목표", status: "active", deadline: "2026-09-01" },
   ],
+  // v28 kinds: follow-ups, a milestone, a payment line and a notice — one inside the window and one past where it matters.
+  meetings: [{ id: "mt1", projectId: null, title: "킥오프 회의", date: "2026-09-10", summary: "회의 본문", transcript: "녹취",
+    followUps: [{ id: "f1", text: "견적서 송부", mine: true, due: "2026-09-25", done: false },
+      { id: "f2", text: "지난 후속", mine: true, due: "2026-09-01", done: false },
+      { id: "f3", text: "끝난 후속", mine: true, due: "2026-09-25", done: true }] }],
+  milestones: [
+    { id: "ms1", title: "챗봇 과제 계약", status: "active", due: "2026-10-15", dealIds: [], documentIds: [], workIds: [], createdAt: "2026-09-01" },
+    { id: "ms2", title: "지난 마일스톤", status: "planned", due: "2026-09-05", dealIds: [], documentIds: [], workIds: [], createdAt: "2026-08-01" },
+    { id: "ms3", title: "끝난 마일스톤", status: "done", due: "2026-10-01", doneAt: "2026-09-12", dealIds: [], documentIds: [], workIds: [], createdAt: "2026-08-01" },
+  ],
+  deals: [{ id: "dl1", client: "가나병원", title: "ETL 고도화", status: "won", monthly: 5000000, note: "메모",
+    payments: [{ id: "p1", kind: "deposit", due: "2026-09-30", amount: 1234567 }, { id: "p2", kind: "final", due: "2026-10-30", amount: 1234567, paidAt: "2026-09-13" }] }],
+  notices: [{ id: "nt1", title: "AI 바우처", agency: "진흥원", deadline: "2026-10-20", status: "writing", documentIds: [], note: "공고 메모" },
+    { id: "nt2", title: "선정된 공고", agency: "진흥원", deadline: "2026-10-20", status: "selected", documentIds: [] }],
 });
 
 // (a) TEXT escaping, the backslash first
@@ -177,8 +193,9 @@ ok(ICS.icsText("a\\b;c,d\ne") === "a\\\\b\\;c\\,d\\ne", `icsText escaping: ${JSO
   ok(!/\r(?!\n)/.test(t), "crlf: a carriage return without a line feed");
 }
 
-// (g) privacy by construction: the builder reads events, tasks and goals only — never the profile, the business
-// lists, the journal, the reviews, or an event's place and note (every one of these throws when read)
+// (g) privacy by construction: the builder reads events, tasks, goals and the v28 alarm sources only — never the
+// profile, the rates, the portfolio, the leads, the documents, the journal, the reviews, an event's place and note, a
+// meeting's body or transcript, a contract's money or note, a payment's amount or a notice's note (each throws when read)
 {
   const trap = (obj, keys) => { for (const k of keys) Object.defineProperty(obj, k, { enumerable: true, get() { throw new Error(`read ${k}`); } }); return obj; };
   // Every event branch is exercised: one-off, a rule with exceptions, and a day-31 monthly expansion.
@@ -186,8 +203,12 @@ ok(ICS.icsText("a\\b;c,d\ne") === "a\\\\b\\;c\\,d\\ne", `icsText escaping: ${JSO
     mkEvent({ id: "wk", title: "주간", date: "2026-09-15", time: "20:00", repeat: { freq: "weekly" }, skip: ["2026-09-22"] }),
     mkEvent({ id: "mo", title: "월말", kind: "due", date: "2026-01-31", repeat: { freq: "monthly" } }),
   ];
-  const trapped = trap(mkState({ events: [...RICH.events, ...repeats].map((e) => trap({ ...e }, ["place", "note"])), tasks: RICH.tasks, goals: RICH.goals }),
-    ["profile", "deals", "rates", "folio", "journal", "reviews"]);
+  const trapped = trap(mkState({ events: [...RICH.events, ...repeats].map((e) => trap({ ...e }, ["place", "note"])), tasks: RICH.tasks, goals: RICH.goals,
+    meetings: RICH.meetings.map((m) => trap({ ...m }, ["summary", "decisions", "actions", "transcript", "progress", "attendees"])),
+    milestones: RICH.milestones.map((m) => trap({ ...m }, ["condition", "dealIds", "documentIds", "workIds"])),
+    deals: RICH.deals.map((d) => trap({ ...d, payments: d.payments.map((p) => trap({ ...p }, ["amount"])) }, ["monthly", "costMonthly", "note", "paidMonths"])),
+    notices: RICH.notices.map((n) => trap({ ...n }, ["note", "documentIds", "postedAt"])) }),
+    ["profile", "rates", "folio", "leads", "documents", "journal", "reviews", "timeLog"]);
   let threw = null;
   try { ICS.buildIcs(trapped, "2026-09-14", { days: 365, remindAt: "07:00", now: NOW }); } catch (e) { threw = e.message; }
   ok(!threw, `privacy: the calendar export ${threw}`);
@@ -242,7 +263,69 @@ ok(Math.max(...ICS.ICS_RANGE_DAYS) <= ICS.MAX_OCC, `range: ${Math.max(...ICS.ICS
       `alarms: ${lineValue(b, "UID")} has ${alarms.length} VALARM(s) or an incomplete one`);
   }
 }
-console.log("calendar file: 12 check groups");
+// (m) an open follow-up with a due date inside the window: its UID, summary and description; a done one is not written
+{
+  const out = ICS.buildIcs(RICH, "2026-09-14", { days: 90, now: NOW });
+  const byUid = Object.fromEntries(veventsOf(out.text).map((b) => [lineValue(b, "UID"), b]));
+  const f1 = byUid["followup-mt1-f1@life-manager"] || "";
+  ok(lineValue(f1, "SUMMARY") === "후속 기한 · 견적서 송부" && lineValue(f1, "DTSTART;VALUE=DATE") === "20260925", `followup: ${lineValue(f1, "SUMMARY")} / ${lineValue(f1, "DTSTART;VALUE=DATE")}`);
+  ok((lineValue(f1, "DESCRIPTION") || "").startsWith("회의록 · 킥오프 회의\\n목표 기여 없음"), `followup: description ${lineValue(f1, "DESCRIPTION")}`);
+  ok(!byUid["followup-mt1-f3@life-manager"] && out.counts.followup === 1, `followup: a done follow-up was written or the count is ${out.counts.followup}`);
+}
+
+// (n) open checks land on the day before the occurrence, with each open check's text and no done one
+{
+  const out = ICS.buildIcs(RICH, "2026-09-14", { days: 90, now: NOW });
+  const b = veventsOf(out.text).find((x) => lineValue(x, "UID") === "check-prep1-20260922@life-manager") || "";
+  ok(lineValue(b, "DTSTART;VALUE=DATE") === "20260921" && lineValue(b, "DTEND;VALUE=DATE") === "20260922", `check: start ${lineValue(b, "DTSTART;VALUE=DATE")}, expected 20260921`);
+  ok(lineValue(b, "SUMMARY") === "확인할 것 1건 · 병원 미팅", `check: summary ${lineValue(b, "SUMMARY")}`);
+  const desc = lineValue(b, "DESCRIPTION") || "";
+  ok(desc.includes("- 단가 근거 자료") && !desc.includes("끝난 확인"), `check: description ${desc}`);
+  ok(/^PT\d/.test(lineValue(b, "TRIGGER") || ""), `check: the reminder alarms at the reminder time: ${lineValue(b, "TRIGGER")}`);
+  // An occurrence today has no day before it left: counted, not written.
+  const today = ICS.calendarExportOf(RICH, "2026-09-22", 90);
+  ok(!today.entries.some((e) => e.source === "check") && today.skipped.checks === 1, `check: an occurrence today wrote a reminder or was not counted: ${JSON.stringify(today.skipped)}`);
+}
+
+// (o) a milestone yields its due day and its D-7, whose UIDs differ by "-d7"; a done milestone is not written
+{
+  const out = ICS.buildIcs(RICH, "2026-09-14", { days: 90, now: NOW });
+  const byUid = Object.fromEntries(veventsOf(out.text).map((b) => [lineValue(b, "UID"), b]));
+  const due = byUid["milestone-ms1@life-manager"] || "";
+  const early = byUid["milestone-ms1-d7@life-manager"] || "";
+  ok(lineValue(due, "SUMMARY") === "마일스톤 기한 · 챗봇 과제 계약" && lineValue(due, "DTSTART;VALUE=DATE") === "20261015", `milestone: due entry ${lineValue(due, "SUMMARY")}`);
+  ok(lineValue(early, "SUMMARY") === "마일스톤 D-7 · 챗봇 과제 계약" && lineValue(early, "DTSTART;VALUE=DATE") === "20261008", `milestone: D-7 entry ${lineValue(early, "SUMMARY")} / ${lineValue(early, "DTSTART;VALUE=DATE")}`);
+  ok(out.counts.milestone === 2 && !Object.keys(byUid).some((u) => u.startsWith("milestone-ms3")), `milestone: count ${out.counts.milestone} or a done milestone was written`);
+}
+
+// (p) a payment entry names the kind, the client and the contract and never the amount, in any form; a paid line is not written
+{
+  const out = ICS.buildIcs(RICH, "2026-09-14", { days: 365, now: NOW });
+  const pays = veventsOf(out.text).filter((b) => (lineValue(b, "UID") || "").startsWith("payment-"));
+  ok(pays.length === 1 && lineValue(pays[0], "UID") === "payment-dl1-p1@life-manager", `payment: ${pays.map((b) => lineValue(b, "UID")).join(",")}`);
+  ok(lineValue(pays[0] || "", "SUMMARY") === "입금 예정 · 계약금 · 가나병원 ETL 고도화", `payment: summary ${lineValue(pays[0] || "", "SUMMARY")}`);
+  const flat = unfoldIcs(out.text);
+  ok(!/1234567|1,234,567|123만|123\.5만|500만/.test(flat), "payment: the file carries an amount");
+}
+
+// (q) past-dated follow-ups, milestones, payments and notices are counted as skipped, never written
+{
+  const past = mkState({ meetings: RICH.meetings, milestones: RICH.milestones,
+    deals: [{ id: "dl2", client: "다라", title: "지난 계약", status: "won", payments: [{ id: "p9", kind: "interim", due: "2026-09-02", amount: 10 }] }],
+    notices: [{ id: "nt9", title: "지난 공고", agency: "기관", deadline: "2026-09-03", status: "review", documentIds: [] }] });
+  const sel = ICS.calendarExportOf(past, "2026-09-14", 90);
+  ok(sel.skipped.followups === 1 && sel.skipped.milestones === 1 && sel.skipped.payments === 1 && sel.skipped.notices === 1, `skipped: ${JSON.stringify(sel.skipped)}`);
+  ok(!sel.entries.some((e) => /지난/.test(e.summary)), `skipped: a past item was written: ${sel.entries.map((e) => e.summary).join(" | ")}`);
+  const nt = ICS.calendarExportOf(RICH, "2026-09-14", 90).entries.filter((e) => e.source === "notice");
+  ok(nt.length === 1 && nt[0].summary === "공고 마감 · AI 바우처 · 진흥원" && nt[0].uid === "notice-nt1@life-manager", `notice: ${JSON.stringify(nt.map((e) => e.summary))}`);
+}
+
+// (r) a state without any of the v28 keys still builds, with zero counts for the five kinds
+{
+  const sel = ICS.calendarExportOf({ events: RICH.events.slice(0, 4), tasks: RICH.tasks, goals: RICH.goals }, "2026-09-14", 90);
+  ok(["followup", "check", "milestone", "payment", "notice"].every((k) => sel.counts[k] === 0) && sel.entries.length >= 6, `legacy state: ${JSON.stringify(sel.counts)}`);
+}
+console.log("calendar file: 18 check groups");
 
 console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");
 process.exit(fail ? 1 : 0);

@@ -13,7 +13,8 @@ module.exports = async (h) => {
     title: "휴대폰 캘린더로 내보내기",
     intro: "이 앱은 알림을 보내지 않아요. 내보낸 파일을 휴대폰 캘린더 앱에서 가져오면 캘린더 앱이 알림을 울려요.",
     timeRule: "마감·실행 기한·목표 기한·시간 없는 약속과 매일 실행 목록은 이 시각에 알려요. 시간이 있는 약속은 시작 1시간 전에 알려요.",
-    excluded: "넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 기록과 금액, 일정의 장소·메모.",
+    excluded: "넣지 않는 것: 이름·생년월일·연락처·학력·경력, 사업 금액·단가·포트폴리오·리드, 일정의 장소·메모, 녹취록·문서.",
+    timeRuleV28: "후속 기한·마일스톤·입금 예정·공고 마감과 회의 하루 전 확인할 것도 이 시각에 알려요.",
     howTo: "파일은 브라우저의 다운로드로 저장돼요. 휴대폰 캘린더 앱에서 이 파일을 열어 가져와요.",
     appNotes: [
       "다시 가져올 때 같은 항목을 바꿔 넣을지 하나 더 만들지는 캘린더 앱마다 달라요.",
@@ -31,8 +32,19 @@ module.exports = async (h) => {
     "매일 알림에는 내보낼 때의 매일 실행 목록이 그대로 남아요.",
     `${end} 뒤로는 알림이 없어요.`,
   ];
-  const skippedLine = (x, y) => `기한이 지난 실행 ${x}건 · 목표 ${y}건은 날짜가 지나 넣지 않아요.`;
-  const emptyLine = (today, end) => `넣을 항목이 없어요 — ${today} ~ ${end}에 일정·실행 기한·매일 실행·목표 기한이 없어요.`;
+  const skippedLine = (x, y, { followups = 0, milestones = 0, payments = 0, notices = 0 } = {}) =>
+    `기한이 지난 실행 ${x}건 · 목표 ${y}건 · 후속 ${followups}건 · 마일스톤 ${milestones}건 · 입금 ${payments}건 · 공고 ${notices}건은 날짜가 지나 넣지 않아요.`;
+  const checksSkippedLine = (n) => `확인할 것 ${n}건은 하루 전이 지나 넣지 않아요.`;
+  const emptyLine = (today, end) => `넣을 항목이 없어요 — ${today} ~ ${end}에 일정·실행 기한·매일 실행·목표 기한·후속 기한·확인할 것·마일스톤·입금 예정·공고 마감이 없어요.`;
+  // v28 alarm sources (follow-ups, event checks, milestones, payment lines, notices) stripped from a parsed save, so a
+  // step about events, tasks and goals counts exactly those; the v28 kinds have their own steps below.
+  const stripAlarmSources = (s) => {
+    for (const ev of s.events || []) delete ev.checks;
+    for (const m of s.meetings || []) m.followUps = [];
+    for (const d of s.deals || []) delete d.payments;
+    s.milestones = [];
+    s.notices = [];
+  };
   const toastLine = (n, end) => `캘린더 파일을 내보냈어요 · ${n}건 · ${end}까지`;
   const PREFIX = { appt: "약속 · ", due: "마감 · ", goal: "목표 기한 · " };
   // Fixture titles: the three flow7 left in the save, the goal flow.js created, and the two events planted below.
@@ -115,7 +127,7 @@ module.exports = async (h) => {
     const end90 = await dstrIn(89);
     const end365 = await dstrIn(364);
     await openSheet();
-    for (const t of [COPY.intro, COPY.timeRule, ...snapshotLines(end90), ...COPY.appNotes, COPY.excluded, COPY.howTo]) await expectText(t);
+    for (const t of [COPY.intro, COPY.timeRule, COPY.timeRuleV28, ...snapshotLines(end90), ...COPY.appNotes, COPY.excluded, COPY.howTo]) await expectText(t);
     const remind = await page.evaluate(() => (document.querySelector('.fixed.inset-0 input[type="time"]') || {}).value || "");
     if (remind !== "08:00") throw new Error(`the reminder time opens on "${remind}", expected 08:00`);
     const line90 = await previewLine();
@@ -138,6 +150,7 @@ module.exports = async (h) => {
 
   /* Steps 2–7 read one export of a planted save: a monthly event on the 31st, an appointment with a long title and a
      place and note, a second cancelled date on the weekly repeat, and two goal deadlines — one ahead, one past. The
+     v28 alarm sources are stripped first (`stripAlarmSources`), so the file holds events, tasks and goals only. The
      plant is undone in `finally`, so a failing step cannot carry the fixture into flow4 and the steps after it. */
   let first = null;
   const need = () => { if (!first) throw new Error("the first export was not captured, so there is nothing to check"); return first; };
@@ -147,6 +160,9 @@ module.exports = async (h) => {
       const today = await dstrIn(0);
       const end = await dstrIn(364);
       const days = { plus2: await dstrIn(2), plus15: await dstrIn(15), plus20: await dstrIn(20), minus3: await dstrIn(-3) };
+      const stripped = await readState();
+      stripAlarmSources(stripped);
+      await writeState(JSON.stringify(stripped));
       const planted = await page.evaluate((k, fx, d) => {
         const s = JSON.parse(localStorage.getItem(k));
         const weekly = (s.events || []).find((e) => e.title === fx.weekly);
@@ -384,16 +400,109 @@ module.exports = async (h) => {
     await h.reload();
   }
 
+  /* v28 alarm kinds. Each step replaces the five sources with its own plant (one of each) so the counts are exact, and
+     restores the save in `finally`. A payment line carries an amount the file must never contain in any form. */
+  const PAY_AMOUNT = 7654321;
+  const plantAlarms = async (fx) => {
+    const s = await readState();
+    stripAlarmSources(s);
+    s.meetings = [...(s.meetings || []), { id: "ics-memo", projectId: null, track: "biz", date: fx.meetingDate, title: "E2E알림회의록", summary: "E2E알림요약",
+      taskIds: [], progress: [], aiHidden: false, createdAt: fx.meetingDate, followUps: [{ id: "fu1", text: "E2E후속기한", mine: true, due: fx.followUpDue, done: false }] }];
+    s.events = [...(s.events || []), { id: "ics-checks", title: "E2E확인회의", kind: "appt", date: fx.checkEvent, createdAt: fx.meetingDate, track: "biz",
+      checks: [{ id: "ck1", text: "E2E확인항목", done: false, source: "manual" }, { id: "ck2", text: "E2E끝난확인", done: true, source: "manual" }] }];
+    s.milestones = [{ id: "ics-ms", title: "E2E마일스톤", status: "active", due: fx.milestoneDue, dealIds: [], documentIds: [], workIds: [], createdAt: fx.meetingDate }];
+    s.deals = [...(s.deals || []), { id: "ics-deal", client: "E2E입금처", title: "E2E계약", status: "quote", track: "biz", monthly: 1000000, months: 1, startMonth: fx.meetingDate.slice(0, 7), createdAt: fx.meetingDate,
+      payments: [{ id: "pay1", kind: "deposit", due: fx.paymentDue, amount: PAY_AMOUNT }] }];
+    s.notices = [{ id: "ics-notice", title: "E2E공고", agency: "E2E기관", deadline: fx.noticeDue, status: "review", documentIds: [], createdAt: fx.meetingDate }];
+    await writeState(JSON.stringify(s));
+    await h.reload();
+  };
+  const noAmount = (text) => {
+    const flat = unfold(text || "");
+    for (const form of [String(PAY_AMOUNT), PAY_AMOUNT.toLocaleString("en-US"), "765만"]) if (flat.includes(form)) throw new Error(`the file carries the payment amount as ${form}`);
+  };
+
+  await step("calendar export — the file carries a follow-up due, a check reminder the day before, a milestone with its D-7, a payment without its amount and a notice deadline", async () => {
+    const kept = await stateString();
+    try {
+      const fx = { meetingDate: await dstrIn(-1), followUpDue: await dstrIn(5), checkEvent: await dstrIn(3), milestoneDue: await dstrIn(20), paymentDue: await dstrIn(10), noticeDue: await dstrIn(30) };
+      await plantAlarms(fx);
+      await openSheet();
+      await expectText(COPY.timeRuleV28);
+      await expectText("후속 1 · 확인 1 · 마일스톤 2 · 입금 1 · 공고 1");
+      const dl = await captureDownload(() => clickInModalExact(COPY.button));
+      if (!dl) throw new Error("the export offered no file");
+      noAmount(dl.text);
+      const events = parseIcs(dl.text || "");
+      const one = (summary) => {
+        const hits = events.filter((e) => summaryOf(e) === summary);
+        if (hits.length !== 1) throw new Error(`"${summary}" is written ${hits.length} times: ${events.map(summaryOf).join(" | ")}`);
+        return hits[0];
+      };
+      const dateOf = (e) => { const p = propOf(e.props, "DTSTART"); return p.params.join(";") === "VALUE=DATE" ? p.value : `timed:${p.value}`; };
+      const fu = one("후속 기한 · E2E후속기한");
+      if (fu.uid !== `followup-ics-memo-fu1${HOST}` || dateOf(fu) !== compact(fx.followUpDue)) throw new Error(`follow-up entry ${fu.uid} on ${dateOf(fu)}`);
+      const ck = one("확인할 것 1건 · E2E확인회의");
+      if (dateOf(ck) !== compact(await dstrIn(2))) throw new Error(`the check reminder starts on ${dateOf(ck)}, expected the day before ${fx.checkEvent}`);
+      if (ck.uid !== `check-ics-checks-${compact(fx.checkEvent)}${HOST}`) throw new Error("check entry UID " + ck.uid);
+      const ckBody = unescapeText(valueOf(ck.props, "DESCRIPTION") || "");
+      if (!ckBody.includes("- E2E확인항목") || ckBody.includes("E2E끝난확인")) throw new Error("the check entry description: " + ckBody);
+      const due = one("마일스톤 기한 · E2E마일스톤");
+      const early = one("마일스톤 D-7 · E2E마일스톤");
+      if (due.uid !== `milestone-ics-ms${HOST}` || early.uid !== `milestone-ics-ms-d7${HOST}`) throw new Error(`milestone UIDs ${due.uid} / ${early.uid}`);
+      if (dateOf(due) !== compact(fx.milestoneDue) || dateOf(early) !== compact(await dstrIn(13))) throw new Error(`milestone dates ${dateOf(due)} / ${dateOf(early)}`);
+      const pay = one("입금 예정 · 계약금 · E2E입금처 E2E계약");
+      if (pay.uid !== `payment-ics-deal-pay1${HOST}` || dateOf(pay) !== compact(fx.paymentDue)) throw new Error(`payment entry ${pay.uid} on ${dateOf(pay)}`);
+      if (unescapeText(valueOf(pay.props, "DESCRIPTION") || "").split("\n")[0] !== "금액은 넣지 않아요.") throw new Error("the payment description does not state that the amount stays out");
+      const nt = one("공고 마감 · E2E공고 · E2E기관");
+      if (nt.uid !== `notice-ics-notice${HOST}` || dateOf(nt) !== compact(fx.noticeDue)) throw new Error(`notice entry ${nt.uid} on ${dateOf(nt)}`);
+      for (const e of [fu, ck, due, early, pay, nt]) {
+        if (e.alarms.length !== 1 || valueOf(e.alarms[0], "TRIGGER") !== "PT8H") throw new Error(`${e.uid} does not alarm once at the reminder time`);
+      }
+      if (unfold(dl.text).includes("E2E알림요약")) throw new Error("the file carries a meeting summary");
+    } finally {
+      await closeModal();
+      await writeState(kept);
+      await h.reload();
+    }
+  });
+
+  await step("calendar export — past-dated items are counted as skipped, and a check whose meeting is today is not written", async () => {
+    const kept = await stateString();
+    try {
+      const fx = { meetingDate: await dstrIn(-6), followUpDue: await dstrIn(-2), checkEvent: await dstrIn(0), milestoneDue: await dstrIn(-3), paymentDue: await dstrIn(-4), noticeDue: await dstrIn(-5) };
+      await plantAlarms(fx);
+      const s = await readState();
+      const today = fx.checkEvent;
+      const lateTasks = (s.tasks || []).filter((q) => q.type !== "daily" && q.status !== "done" && q.due && q.due < today).length;
+      const lateGoals = (s.goals || []).filter((g) => g.status === "active" && g.deadline && g.deadline < today).length;
+      await openSheet();
+      await expectText(skippedLine(lateTasks, lateGoals, { followups: 1, milestones: 1, payments: 1, notices: 1 }));
+      await expectText(checksSkippedLine(1));
+      await expectText("후속 0 · 확인 0 · 마일스톤 0 · 입금 0 · 공고 0");
+      const dl = await captureDownload(() => clickInModalExact(COPY.button));
+      if (!dl) throw new Error("the export offered no file (the planted event today should still be written)");
+      noAmount(dl.text);
+      const summaries = parseIcs(dl.text || "").map(summaryOf);
+      if (!summaries.includes(PREFIX.appt + "E2E확인회의")) throw new Error("the event itself is missing: " + summaries.join(" | "));
+      const leaked = summaries.filter((t) => /^(후속 기한|확인할 것|마일스톤|입금 예정|공고 마감) · |^확인할 것 /.test(t));
+      if (leaked.length) throw new Error("a past-dated or past-reminder entry was written: " + leaked.join(" | "));
+    } finally {
+      await closeModal();
+      await writeState(kept);
+      await h.reload();
+    }
+  });
+
   await step("calendar export — with nothing to include the sheet says so and writes no file", async () => {
     const kept = await stateString();
     try {
-      await page.evaluate((k) => {
-        const s = JSON.parse(localStorage.getItem(k));
-        s.events = [];
-        s.tasks = [];
-        s.goals = [];
-        localStorage.setItem(k, JSON.stringify(s));
-      }, KEY);
+      const s = await readState();
+      stripAlarmSources(s);
+      s.events = [];
+      s.tasks = [];
+      s.goals = [];
+      await writeState(JSON.stringify(s));
       await h.reload();
       const today = await dstrIn(0);
       const end90 = await dstrIn(89);

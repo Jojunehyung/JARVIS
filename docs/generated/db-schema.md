@@ -42,7 +42,8 @@
              checks?[{ id, text, done, source("manual"|"ai") }],                                // checks (v27, optional, no backfill): `확인할 것` for that
                                                                                                  // event, at most 30 of 200 chars; edited on the prep card and
                                                                                                  // the event sheet, imported from the prep packet's reply; never
-                                                                                                 // read by the export or the daily packet; a repeating event
+                                                                                                 // read by the daily packet; the export (v28) writes the open ones
+                                                                                                 // as a reminder the day before each occurrence; a repeating event
                                                                                                  // carries one list for every occurrence (TD-61)
              track("work"|"biz"|"personal") }],                                                // track (v28): the day job, the business or private life; `work`
                                                                                                  // never enters a packet (SECURITY.md); backfilled `work` (`biz` on a deal)
@@ -418,19 +419,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 5682 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 5682 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 5682 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 7614 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 8036 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 9938 | App root |
-| `liferpg-img-${slot}` | 9978 | App root |
-| `liferpg-img-ev-${id}` | 10001 | App root |
-| `liferpg-img-ev-${q.id}` | 10186 | App root |
-| `liferpg-img-ev-${t.id}` | 10975 | App root |
-| `liferpg-img-study-${t.id}-1` | 10975 | App root |
-| `liferpg-img-study-${t.id}-2` | 10975 | App root |
-| `liferpg-img-folio-${f.id}` | 10981 | App root |
+| `liferpg-img-ev-${task.id}` | 5865 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 5865 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 5865 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 7800 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 8222 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 10126 | App root |
+| `liferpg-img-${slot}` | 10166 | App root |
+| `liferpg-img-ev-${id}` | 10189 | App root |
+| `liferpg-img-ev-${q.id}` | 10374 | App root |
+| `liferpg-img-ev-${t.id}` | 11165 | App root |
+| `liferpg-img-study-${t.id}-1` | 11165 | App root |
+| `liferpg-img-study-${t.id}-2` | 11165 | App root |
+| `liferpg-img-folio-${f.id}` | 11171 | App root |
 
 ## Demo data (`demoState`)
 
