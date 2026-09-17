@@ -7342,8 +7342,12 @@ const workLinkOptions = (state) => {
   ];
 };
 
-function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge }) {
+function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge, onRemoveMany }) {
   const [viewDate, setViewDate] = useState(today); // the day shown — component state only, never stored (rule 9)
+  // Select mode for deleting several items at once: component state only, cleared when the day changes.
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState(() => new Set());
+  const showDate = (d) => { setViewDate(d); setPicked(new Set()); };
   const isToday = viewDate === today;
   const used = useMemo(() => storageUsedWith(state), [state]);
   const items = useMemo(() => workOn(state, viewDate), [state, viewDate]);
@@ -7357,6 +7361,22 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge }) {
     ? { text: "AI", tone: "text-violet-300 border-violet-700" }
     : { text: "수기", tone: "text-zinc-400 border-zinc-700" });
   const pager = "w-8 h-8 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5";
+  const chip = "shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5";
+  const selectable = [...past, ...items];
+  const allPicked = selectable.length > 0 && selectable.every((w) => picked.has(w.id));
+  const flip = (id) => setPicked((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const endSelect = () => { setSelecting(false); setPicked(new Set()); };
+  const removePicked = () => { if (onRemoveMany([...picked])) endSelect(); };
+  // In select mode a row is a checkbox label instead of a button that opens the sheet.
+  const row = (w, lead, done = false) => (selecting ? (
+    <label key={w.id} className={`w-full flex items-center gap-2.5 bg-zinc-950 rounded-xl px-3 py-2.5 ${picked.has(w.id) ? "ring-1 ring-rose-500" : ""}`}>
+      <input type="checkbox" checked={picked.has(w.id)} onChange={() => flip(w.id)} className="shrink-0" />
+      <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-1 bg-zinc-900 shrink-0 ${lead.tone}`}>{lead.text}</span>
+      <span className={`flex-1 min-w-0 text-sm font-semibold truncate ${done ? "line-through text-zinc-500" : ""}`}>{w.title}</span>
+    </label>
+  ) : (
+    <TodoRow key={w.id} lead={lead} title={w.title} done={done} marker={marker(w)} onOpen={() => onOpen(w.id)} />
+  ));
 
   return (
     <>
@@ -7369,10 +7389,10 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge }) {
           </button>
         </div>
         <div className="flex items-center gap-1.5">
-          <button onClick={() => setViewDate(shiftDay(viewDate, -1))} className={pager}>‹</button>
-          <button onClick={() => setViewDate(today)} disabled={isToday}
+          <button onClick={() => showDate(shiftDay(viewDate, -1))} className={pager}>‹</button>
+          <button onClick={() => showDate(today)} disabled={isToday}
             className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">오늘</button>
-          <button onClick={() => setViewDate(shiftDay(viewDate, 1))} className={pager}>›</button>
+          <button onClick={() => showDate(shiftDay(viewDate, 1))} className={pager}>›</button>
           {/* On the pager row, not beside `업무 추가`: the label, both buttons and their gaps exceed the 326 px a 390 px screen leaves */}
           <button onClick={onBridge}
             className="ml-auto shrink-0 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">AI로 만들기 ›</button>
@@ -7391,26 +7411,33 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge }) {
         <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
           <div className="flex items-center justify-between gap-2">
             <SectionLabel tone="text-rose-400">지난 미완료 {past.length}건</SectionLabel>
-            <button onClick={() => onMove(past.map((w) => w.id))}
-              className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">오늘로 옮기기</button>
+            {!selecting && <button onClick={() => onMove(past.map((w) => w.id))} className={chip}>오늘로 옮기기</button>}
           </div>
           <div className="space-y-1.5">
-            {past.map((w) => (
-              <TodoRow key={w.id} lead={{ text: w.date.slice(5), tone: `${TODO_TONE.overdue} border-zinc-700` }} title={w.title}
-                marker={marker(w)} onOpen={() => onOpen(w.id)} />
-            ))}
+            {past.map((w) => row(w, { text: w.date.slice(5), tone: `${TODO_TONE.overdue} border-zinc-700` }))}
           </div>
         </section>
       )}
 
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        {selectable.length > 0 && (selecting ? (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            <button onClick={() => setPicked(allPicked ? new Set() : new Set(selectable.map((w) => w.id)))} className={chip}>
+              {allPicked ? "선택 해제" : "전체 선택"}</button>
+            <button onClick={removePicked} disabled={!picked.size}
+              className="shrink-0 px-2.5 py-1.5 rounded-lg bg-rose-500 text-zinc-950 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">선택 삭제 {picked.size}건</button>
+            <button onClick={endSelect} className={`ml-auto ${chip}`}>취소</button>
+          </div>
+        ) : (
+          <div className="flex justify-end mb-3">
+            <button onClick={() => setSelecting(true)} className={chip}>선택</button>
+          </div>
+        ))}
         {items.length === 0 ? (
           <p className="text-sm text-zinc-500">{isToday ? "오늘 업무가 없어요." : "이 날짜에는 업무가 없어요."}</p>
         ) : (
           <div className="space-y-1.5">
-            {items.map((w) => (
-              <TodoRow key={w.id} lead={sourceLead(w)} title={w.title} done={w.done} marker={marker(w)} onOpen={() => onOpen(w.id)} />
-            ))}
+            {items.map((w) => row(w, sourceLead(w), w.done))}
           </div>
         )}
       </section>
@@ -8160,6 +8187,15 @@ export default function LifeManager() {
     setModal(null);
     showToast({ msg: "업무를 삭제했어요" });
   };
+  // Deletes several work items after one confirmation; answers true when they were deleted, so the tab leaves select mode.
+  const removeWorkMany = (ids) => {
+    const drop = new Set(ids);
+    const n = (state.work || []).filter((w) => drop.has(w.id)).length;
+    if (!n || !window.confirm(`업무 ${n}건을 삭제해요. 계속할까요?`)) return false;
+    writeWork((list) => list.filter((w) => !drop.has(w.id)));
+    showToast({ msg: `업무 ${n}건을 삭제했어요` });
+    return true;
+  };
   // Sets `date = today` on the given items, newest first, as far as today's cap allows; the rest stay where they are.
   const moveWorkToToday = (ids) => {
     const room = Math.max(0, WORK_LIMITS.perDay - workOn(state, today).length);
@@ -8410,7 +8446,7 @@ export default function LifeManager() {
           <WorkTab state={state} today={today}
             onAdd={(date) => setModal({ type: "work", date })}
             onOpen={(workId) => setModal({ type: "work", workId })}
-            onMove={moveWorkToToday} onBridge={() => setModal({ type: "workBridge" })} />
+            onMove={moveWorkToToday} onBridge={() => setModal({ type: "workBridge" })} onRemoveMany={removeWorkMany} />
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}

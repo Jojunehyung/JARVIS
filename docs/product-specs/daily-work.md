@@ -95,6 +95,15 @@ storage-budget line). The record keeps only non-empty optional fields, so a clea
 an edit. Buttons: `등록` (add) / `저장` (edit), then, in edit mode, a full-width `완료로 표시` / `완료 취소`
 (`onToggle`, closes the sheet) and `삭제` (`onRemove`, confirmed by name: `{title} 업무를 삭제해요. 계속할까요?`).
 
+**Select mode** (2026-09-17, the user asked for selected and all-at-once deletion). When the day shown or the
+`지난 미완료` section has any item, the list card carries a `선택` chip. Tapping it turns every row of both sections into a
+checkbox label (lead chip and title, a `ring-rose-500` outline when ticked; the row no longer opens the sheet) and
+replaces the chip with `전체 선택` / `선택 해제`, a rose `선택 삭제 {n}건` (disabled at 0) and `취소`; `오늘로 옮기기` is
+hidden meanwhile. Delete calls `onRemoveMany(ids)` — one confirmation, `업무 {n}건을 삭제해요. 계속할까요?` — and
+leaves select mode when it deletes. The selection is component state only and is cleared when the pager changes the
+day ([Rule 9](../design-docs/core-beliefs.md#rule-9)). `전체 선택` covers what is on screen — the day shown plus the
+past-undone rows — never other days.
+
 ## Root handlers and toasts
 
 Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `areas`, `room`, `exams`, `events` or
@@ -107,6 +116,7 @@ Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `ar
 | `updateWork(id, next)` | replaces title/note/link, keeping `id`/`date`/`done`/`source`/`createdAt` | `업무를 수정했어요` |
 | `toggleWork(id)` | flips `done` only — no streak, no trophy, no KR | `완료로 표시했어요` / `완료를 취소했어요` |
 | `removeWork(id)` | confirmed by name, then filters | `업무를 삭제했어요` |
+| `removeWorkMany(ids)` | one confirmation `업무 {n}건을 삭제해요. 계속할까요?`, then filters; answers `true` when it deleted, so the tab leaves select mode | `업무 {n}건을 삭제했어요` |
 | `moveWorkToToday(ids)` | sets `date = today` on as many of the given (undone) items as today's cap allows, newest date first; the rest keep their date | `미완료 {n}건을 오늘로 옮겼어요` or, capped, `업무는 하루 20건까지예요 — {n}건만 옮길 수 있어요.` |
 | `importWork(list)` (from the AI bridge, below) | registers the first `n` that fit today's cap as `source: "ai"`, `done: false` records; the raw reply is never stored | `AI 제안 업무 {n}건 등록` or, capped, `업무는 하루 20건까지예요 — {n}건만 등록했어요.` |
 

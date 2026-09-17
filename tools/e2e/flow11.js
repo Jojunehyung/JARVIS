@@ -263,6 +263,43 @@ module.exports = async (h) => {
     await h.reload();
   });
 
+  await step("select mode deletes the ticked items, then every item after select-all, and moves nothing else", async () => {
+    const today = await dstrIn(0);
+    const keep = (await readState()).work; // restored below, for the backup step
+    await page.evaluate((k, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      for (let n = 1; n <= 3; n++) st.work.push({ id: `e2e-work-del-${n}`, date: d, title: `E2E 삭제 ${n}`, done: false, source: "ai", createdAt: d });
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, today);
+    await h.reload();
+    await page.evaluate(() => { window.confirm = () => true; });
+    const before = await readState();
+    await clickTab("업무");
+    await clickMain("선택");
+    const ticked = await page.evaluate((t) => {
+      const label = [...document.querySelectorAll("main label")].find((l) => (l.innerText || "").includes(t));
+      label?.querySelector('input[type="checkbox"]')?.click();
+      return !!label;
+    }, "E2E 삭제 2");
+    if (!ticked) throw new Error("no selectable row for the planted item");
+    await clickMain("선택 삭제 1건");
+    await expectText("업무 1건을 삭제했어요");
+    let st = await readState();
+    if (st.work.some((w) => w.id === "e2e-work-del-2") || st.work.length !== before.work.length - 1) throw new Error("the ticked delete: " + JSON.stringify(st.work.map((w) => w.id)));
+    if (await page.evaluate(() => document.querySelectorAll('main input[type="checkbox"]').length)) throw new Error("select mode stayed after the delete");
+    const left = st.work.filter((w) => w.date <= today && (w.date === today || !w.done)).length;
+    await clickMain("선택");
+    await clickMain("전체 선택");
+    await clickMain(`선택 삭제 ${left}건`);
+    await expectText(`업무 ${left}건을 삭제했어요`);
+    st = await readState();
+    if (st.work.some((w) => w.date === today)) throw new Error("select-all left today's items: " + JSON.stringify(st.work));
+    await expectText("오늘 업무가 없어요.");
+    assertBoundary(before, st, "deleting work items");
+    await page.evaluate((k, items) => { const s = JSON.parse(localStorage.getItem(k)); s.work = items; localStorage.setItem(k, JSON.stringify(s)); }, KEY, keep);
+    await h.reload();
+  });
+
   await step("work items and meeting progress travel in the backup file", async () => {
     const st = await readState();
     if (!(st.work || []).length) throw new Error("no work item to export");
