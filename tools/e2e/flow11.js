@@ -316,7 +316,7 @@ module.exports = async (h) => {
     await openWorkBridge();
     const txt = await packetText();
     if (!txt.startsWith("[인생 관리 — 오늘 업무 제안 요청 " + today + "]")) throw new Error("the packet does not open with the work request line: " + txt.slice(0, 80));
-    if (txt.length > 4000) throw new Error("the work packet exceeds the 4000-char cap: " + txt.length);
+    if (txt.length > 20000) throw new Error("the work packet exceeds the 20000-char cap: " + txt.length);
     for (const t of ["## 이력", "## 목표", "## 열린 할 일", "## 최근 회의록", "## 업무 기록 (어제·오늘)",
       `[${PROJECT}] ${MTG_A}`, "요약: 검색 범위 협의 완료", `진행 ${today}: 색인 스크립트 초안 작성`,
       `${twoDaysAgo} ${MTG_B}`, "내용 비공개 (AI에 보내지 않기)", `${today} 미완료 ${WORK_TITLE}`]) {

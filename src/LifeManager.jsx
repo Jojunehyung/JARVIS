@@ -2742,11 +2742,17 @@ const PACKET_HEAD = [
 ];
 // The work packet (`오늘 업무 만들기`): what it carries and how much. Meetings enter by the user's 2026-09-17 decision,
 // newest first; a meeting flagged `aiHidden` contributes its date and title only. Plain literals, so smoke-logic can lift them.
+// Widened 2026-09-17 at the user's request: the first caps (summary 200, decisions/follow-ups/progress 100, note 60,
+// whole packet 4,000) cut the minutes before the assistant could read them. A work packet is pasted into Claude or
+// ChatGPT, which take far more than the daily packet's 4,000; ChatGPT may attach a long paste as a file and still reads it.
+const WORK_PACKET_MAX = 20000;     // the work packet's own cap; the daily packet keeps PACKET_MAX
 const WORK_PROPOSAL_MAX = 8;       // proposals read from a work reply
 const WORK_PACKET_MEETINGS = 6;    // newest meetings by `meetingOrder`
-const WORK_PACKET_PROGRESS = 3;    // newest progress entries per meeting
-const WORK_PACKET_SUMMARY = 200;   // chars of a meeting's summary
-const WORK_PACKET_CLIP = 100;      // chars of decisions, follow-ups and a progress entry
+const WORK_PACKET_PROGRESS = 5;    // newest progress entries per meeting
+const WORK_PACKET_SUMMARY = 5000;  // chars of a meeting's summary — the whole summary (MEETING_LIMITS.summary)
+const WORK_PACKET_SUMMARY_TRIM = 1500; // the summary clip once the packet runs over WORK_PACKET_MAX
+const WORK_PACKET_CLIP = 600;      // chars of decisions, follow-ups and a progress entry — their whole text
+const WORK_PACKET_NOTE = 200;      // chars of a work item's note — its whole text (WORK_LIMITS.note)
 const WORK_PACKET_TASKS = 10;      // open task rows
 const WORK_PACKET_EVENTS = 8;      // schedule rows inside PACKET_EVENT_DAYS
 const WORK_PACKET_RECORDS = 20;    // yesterday's and today's work items
@@ -2876,8 +2882,9 @@ const parseAssistantReply = (text, state) => {
    tasks, the schedule, the contracts — plus what the daily packet never reads: the newest meeting minutes with their
    progress entries, and yesterday's and today's work items so the assistant does not propose them again. A meeting
    flagged `aiHidden` contributes its date and title only. No photo, no evidence text, no journal entry.
-   When the text exceeds PACKET_MAX the reductions below run one step at a time, rebuilding after each, until it fits:
-   meetings 6 → 2 (oldest first), then the summary clip 200 → 100 and progress 3 → 1 per meeting, then the schedule rows,
+   Summaries, decisions, follow-ups, progress entries and notes go whole (widened 2026-09-17). When the text exceeds
+   WORK_PACKET_MAX the reductions below run one step at a time, rebuilding after each, until it fits: the summary clip
+   5,000 → 1,500, then meetings 6 → 2 (oldest first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
    then the business lines to the first, then the open tasks, then the work records (the parser dedupes by title on its
    own), and last meetings 2 → 0. The header, the CV line and the goals are never dropped — about 800 chars of header
    and 40 per goal line, far under the cap — so the packet always fits. */
@@ -2898,7 +2905,8 @@ const buildWorkPacket = (state, today) => {
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
   const bizLines = bizPacketLines(state, today);
   const meetings = (state.meetings || []).slice().sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
-  const oneLine = (t, n) => String(t || "").trim().replace(/\s*\n+\s*/g, " / ").slice(0, n);
+  // A clipped text ends in `…`, so the assistant knows more was written than it sees.
+  const oneLine = (t, n) => { const s = String(t || "").trim().replace(/\s*\n+\s*/g, " / "); return s.length > n ? `${s.slice(0, n)}…` : s; };
   const meetingLines = (list, summaryCap, progressN) => list.flatMap((m) => {
     if (m.aiHidden) return [`- ${m.date} ${m.title}`, "  내용 비공개 (AI에 보내지 않기)"];
     const project = (state.meetingProjects || []).find((p) => p.id === m.projectId)?.name || "프로젝트 없음";
@@ -2912,7 +2920,7 @@ const buildWorkPacket = (state, today) => {
   const yesterday = shiftDay(today, -1);
   const recordLines = (state.work || []).filter((w) => w.date === yesterday || w.date === today)
     .sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || "").localeCompare(b.createdAt || ""))
-    .map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"} ${w.title}${w.note ? ` · 메모: ${oneLine(w.note, 60)}` : ""}`);
+    .map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"} ${w.title}${w.note ? ` · 메모: ${oneLine(w.note, WORK_PACKET_NOTE)}` : ""}`);
 
   // The knobs the reductions turn; `build` reads them fresh each time.
   const k = { meetings: meetings.length, summary: WORK_PACKET_SUMMARY, progress: WORK_PACKET_PROGRESS,
@@ -2926,8 +2934,9 @@ const buildWorkPacket = (state, today) => {
   ].join("\n");
   // Each reduction answers true when it tightened something and false once it has nothing left to give.
   const reductions = [
+    () => k.summary > WORK_PACKET_SUMMARY_TRIM && (k.summary = WORK_PACKET_SUMMARY_TRIM, true),
     () => k.meetings > 2 && (k.meetings -= 1, true),
-    () => (k.summary > WORK_PACKET_CLIP || k.progress > 1) && (k.summary = WORK_PACKET_CLIP, k.progress = 1, true),
+    () => (k.summary > 500 || k.progress > 1) && (k.summary = 500, k.progress = 1, true),
     () => k.events > 0 && (k.events = 0, true),
     () => k.biz > 1 && (k.biz = 1, true),
     () => k.tasks > 0 && (k.tasks = 0, true),
@@ -2935,7 +2944,7 @@ const buildWorkPacket = (state, today) => {
     () => k.meetings > 0 && (k.meetings -= 1, true),
   ];
   let out = build();
-  for (const reduce of reductions) while (out.length > PACKET_MAX && reduce()) out = build();
+  for (const reduce of reductions) while (out.length > WORK_PACKET_MAX && reduce()) out = build();
   return out;
 };
 
