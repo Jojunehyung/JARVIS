@@ -1,5 +1,5 @@
 // Work tab and the meeting progress log (schema v25). A work item is a record, never a task: these steps assert that
-// registering, completing, moving and refusing work items change `work` only — never tasks, goals, streak, shields,
+// registering, completing, carrying and refusing work items change `work` only — never tasks, goals, streak, shields,
 // trophies, events or meetings — that a progress entry grows its own meeting record and nothing else, that the
 // per-meeting AI flag is stored as a boolean and stated in the view, and that both travel in the backup file. Runs
 // after flow10 and before flow4, which replaces the save. Written 2026-09-17 under the standing instruction that the
@@ -31,7 +31,7 @@ module.exports = async (h) => {
     const spans = row ? [...row.querySelectorAll("span")] : [];
     return { lead: (spans[0]?.innerText || "").trim(), title: (node.innerText || "").trim(), marker: (spans[1]?.innerText || "").trim(), done: /line-through/.test(node.className || "") };
   }));
-  // A button in the tab body by its exact label (the pager chips, `업무 추가`, `오늘로 옮기기`).
+  // A button in the tab body by its exact label (the pager chips, `업무 추가`, `선택`).
   const clickMain = async (label) => {
     const ok = await page.evaluate((l) => {
       const b = [...document.querySelectorAll("main button")].find((x) => (x.innerText || "").trim() === l);
@@ -86,10 +86,12 @@ module.exports = async (h) => {
     await expectText("오늘 업무가 없어요.");
     await expectText("업무는 기록이에요 — 목표·실행·점수에 반영되지 않아요.");
     const line = await countsLine();
-    if (!line.startsWith("남음 0건 · 완료 0건 · AI 제안 0건") || !/저장 공간 \d+\.\dMB \/ 3\.5MB$/.test(line)) throw new Error("work counts line: " + JSON.stringify(line));
+    if (!line.startsWith("남음 0건 · 이월 0건 · 완료 0건 · AI 제안 0건") || !/저장 공간 \d+\.\dMB \/ 3\.5MB$/.test(line)) throw new Error("work counts line: " + JSON.stringify(line));
     await clickMain("‹");
     await expectText("업무 — " + yesterday);
     await expectText("이 날짜에는 업무가 없어요.");
+    const other = await countsLine();
+    if (!other.startsWith("남음 0건 · 완료 0건 · AI 제안 0건")) throw new Error("another day's counts line: " + JSON.stringify(other));
     await clickMain("오늘");
     await expectText("오늘 업무 — " + today);
     await clickMain("›");
@@ -181,7 +183,7 @@ module.exports = async (h) => {
     const row = rows.find((r) => r.title === WORK_TITLE);
     if (!row || row.lead !== "수기" || row.marker !== "프로젝트" || row.done) throw new Error("the work row: " + JSON.stringify(rows));
     const line = await countsLine();
-    if (!line.startsWith("남음 1건 · 완료 0건 · AI 제안 0건")) throw new Error("counts after the add: " + line);
+    if (!line.startsWith("남음 1건 · 이월 0건 · 완료 0건 · AI 제안 0건")) throw new Error("counts after the add: " + line);
     const after = await readState();
     const w = (after.work || []).find((x) => x.title === WORK_TITLE);
     if (!w || w.date !== today || w.done !== false || w.source !== "manual" || w.note !== "○○물산" || w.createdAt !== today) throw new Error("stored work item: " + JSON.stringify(w));
@@ -205,7 +207,7 @@ module.exports = async (h) => {
     const row = (await workRows()).find((r) => r.title === WORK_TITLE);
     if (!row || !row.done || row.lead !== "수기") throw new Error("the completed row is not in place and struck through: " + JSON.stringify(row));
     const line = await countsLine();
-    if (!line.startsWith("남음 0건 · 완료 1건 · AI 제안 0건")) throw new Error("counts after completion: " + line);
+    if (!line.startsWith("남음 0건 · 이월 0건 · 완료 1건 · AI 제안 0건")) throw new Error("counts after completion: " + line);
     const after = await readState();
     if (after.work.find((x) => x.title === WORK_TITLE).done !== true) throw new Error("done was not stored");
     assertBoundary(before, after, "completing a work item");
@@ -217,28 +219,70 @@ module.exports = async (h) => {
     if ((await readState()).work.find((x) => x.title === WORK_TITLE).done !== false) throw new Error("done was not reverted");
   });
 
-  await step("an undone item from a past date is listed under the past-undone section and moves to today", async () => {
-    const past = await dstrIn(-3), today = await dstrIn(0);
+  // Carry-forward is derived (2026-09-17): an undone item from an earlier day is listed first on today's view with its
+  // age and keeps its own date and its own day; nothing is moved or rewritten.
+  await step("an undone item from a past date is carried into today's list with its age, keeps its own date, and is absent on other days", async () => {
+    const past = await dstrIn(-3);
     await page.evaluate((k, id, title, d) => {
       const st = JSON.parse(localStorage.getItem(k));
       st.work.push({ id, date: d, title, done: false, source: "manual", createdAt: d });
       localStorage.setItem(k, JSON.stringify(st));
     }, KEY, PAST_ID, PAST_TITLE, past);
     await h.reload();
+    const before = await readState();
     await clickTab("업무");
-    await expectText("지난 미완료 1건");
-    const row = (await workRows()).find((r) => r.title === PAST_TITLE);
-    if (!row || row.lead !== past.slice(5)) throw new Error("the past row: " + JSON.stringify(row) + ` (expected lead ${past.slice(5)})`);
-    await clickMain("오늘로 옮기기");
-    await expectText("미완료 1건을 오늘로 옮겼어요");
-    await sleep(300);
-    if (await hasText("지난 미완료")) throw new Error("the past-undone section stayed after the move");
-    const w = (await readState()).work.find((x) => x.id === PAST_ID);
-    if (!w || w.date !== today) throw new Error("the moved item's date: " + JSON.stringify(w));
-    const moved = (await workRows()).find((r) => r.title === PAST_TITLE);
-    if (!moved || moved.lead !== "수기") throw new Error("the moved item is not under today: " + JSON.stringify(moved));
+    let line = await countsLine();
+    if (!line.startsWith("남음 2건 · 이월 1건")) throw new Error("counts with a carried item: " + line);
+    const rows = await workRows();
+    if (rows[0]?.title !== PAST_TITLE || rows[0]?.lead !== "이월 3일") throw new Error("the carried row is not first with its age: " + JSON.stringify(rows));
+    if (await hasText("지난 미완료")) throw new Error("the removed past-undone section is still rendered");
+    if (await hasText("오늘로 옮기기")) throw new Error("the removed move button is still rendered");
+    await clickMain("‹");
+    if ((await workRows()).some((r) => r.title === PAST_TITLE)) throw new Error("the carried item is listed on yesterday's view");
+    line = await countsLine();
+    if (line.includes("이월")) throw new Error("another day's counts line states a carried count: " + line);
+    await clickMain("‹");
+    await clickMain("‹");
+    await expectText("업무 — " + past);
+    const own = (await workRows()).find((r) => r.title === PAST_TITLE);
+    if (!own || own.lead !== "수기" || own.done) throw new Error("the item on its own day: " + JSON.stringify(own));
+    await clickMain("오늘");
+    const after = await readState();
+    const w = after.work.find((x) => x.id === PAST_ID);
+    if (!w || w.date !== past || w.done !== false) throw new Error("carrying rewrote the item: " + JSON.stringify(w));
+    if (JSON.stringify(after.work) !== JSON.stringify(before.work)) throw new Error("viewing the carried item changed the work items");
+    assertBoundary(before, after, "carrying a work item");
+  });
+
+  await step("completing a carried item keeps its date and takes it off today's list", async () => {
+    const past = await dstrIn(-3);
+    const before = await readState();
+    await clickTab("업무");
+    await openTodo(PAST_TITLE);
+    const sheet = await overlayText();
+    if (!sheet.includes(past + " · 이월 3일")) throw new Error("the carried item's sheet does not state its age: " + sheet.slice(0, 300));
+    await clickInModalExact("완료로 표시");
+    await sleep(500);
+    const after = await readState();
+    const w = after.work.find((x) => x.id === PAST_ID);
+    if (!w || w.done !== true || w.date !== past) throw new Error("the completed carried item: " + JSON.stringify(w));
+    assertBoundary(before, after, "completing a carried item");
+    if ((await workRows()).some((r) => r.title === PAST_TITLE)) throw new Error("a done carried item stayed on today's list");
     const line = await countsLine();
-    if (!line.startsWith("남음 2건 · 완료 0건")) throw new Error("counts after the move: " + line);
+    if (!line.startsWith("남음 1건 · 이월 0건")) throw new Error("counts after completing the carried item: " + line);
+    for (let n = 0; n < 3; n++) await clickMain("‹");
+    await expectText("업무 — " + past);
+    const own = (await workRows()).find((r) => r.title === PAST_TITLE);
+    if (!own || !own.done || own.lead !== "수기") throw new Error("the done item on its own day: " + JSON.stringify(own));
+    // Reopen it from its own day so the later steps see the carried row again.
+    await openTodo(PAST_TITLE);
+    await clickInModalExact("완료 취소");
+    await sleep(500);
+    const reopened = (await readState()).work.find((x) => x.id === PAST_ID);
+    if (!reopened || reopened.done !== false || reopened.date !== past) throw new Error("the reopened carried item: " + JSON.stringify(reopened));
+    await clickMain("오늘");
+    const back = (await workRows())[0];
+    if (back?.title !== PAST_TITLE || back?.lead !== "이월 3일") throw new Error("the reopened item is not carried again: " + JSON.stringify(back));
   });
 
   // The per-day cap was removed 2026-09-17: undone items are carried forward, so a day's list may grow past twenty.
@@ -262,7 +306,7 @@ module.exports = async (h) => {
     await h.reload();
   });
 
-  await step("select mode deletes the ticked items, then every item after select-all, and moves nothing else", async () => {
+  await step("select mode deletes the ticked items, then every item after select-all including the carried row, and moves nothing else", async () => {
     const today = await dstrIn(0);
     const keep = (await readState()).work; // restored below, for the backup step
     await page.evaluate((k, d) => {
@@ -286,15 +330,52 @@ module.exports = async (h) => {
     let st = await readState();
     if (st.work.some((w) => w.id === "e2e-work-del-2") || st.work.length !== before.work.length - 1) throw new Error("the ticked delete: " + JSON.stringify(st.work.map((w) => w.id)));
     if (await page.evaluate(() => document.querySelectorAll('main input[type="checkbox"]').length)) throw new Error("select mode stayed after the delete");
-    const left = st.work.filter((w) => w.date <= today && (w.date === today || !w.done)).length;
+    // Today's view lists today's items plus every undone item from an earlier day (the carried row).
+    const left = st.work.filter((w) => w.date === today || (w.date < today && !w.done)).length;
+    if (!st.work.some((w) => w.id === PAST_ID && w.date < today && !w.done)) throw new Error("no carried item to select: " + JSON.stringify(st.work.map((w) => w.id)));
     await clickMain("선택");
     await clickMain("전체 선택");
+    const carriedTicked = await page.evaluate((t) => {
+      const label = [...document.querySelectorAll("main label")].find((l) => (l.innerText || "").includes(t));
+      return label ? !!label.querySelector('input[type="checkbox"]')?.checked : null;
+    }, PAST_TITLE);
+    if (carriedTicked !== true) throw new Error("select-all did not tick the carried row: " + JSON.stringify(carriedTicked));
     await clickMain(`선택 삭제 ${left}건`);
     await expectText(`업무 ${left}건을 삭제했어요`);
     st = await readState();
     if (st.work.some((w) => w.date === today)) throw new Error("select-all left today's items: " + JSON.stringify(st.work));
+    if (st.work.some((w) => w.id === PAST_ID)) throw new Error("select-all left the carried item: " + JSON.stringify(st.work));
     await expectText("오늘 업무가 없어요.");
     assertBoundary(before, st, "deleting work items");
+    await page.evaluate((k, items) => { const s = JSON.parse(localStorage.getItem(k)); s.work = items; localStorage.setItem(k, JSON.stringify(s)); }, KEY, keep);
+    await h.reload();
+  });
+
+  await step("the briefing states carried work as a count and its line opens the work tab", async () => {
+    const keep = (await readState()).work; // restored below
+    // Only one carried item for this step: the -3 item is set aside and one undone item dated -4 is planted.
+    const fourDaysAgo = await dstrIn(-4);
+    await page.evaluate((k, pastId, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.work = st.work.filter((w) => w.id !== pastId);
+      st.work.push({ id: "e2e-work-brief", date: d, title: "E2E 이월 브리핑", done: false, source: "manual", createdAt: d });
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, PAST_ID, fourDaysAgo);
+    await h.reload();
+    const before = await readState();
+    await clickTab("할 일");
+    await clickMain("브리핑 열기 ›");
+    await sleep(400);
+    await expectText("이월 업무 1건 · 최장 4일");
+    if ((await overlayText()).includes("E2E 이월 브리핑")) throw new Error("the briefing lists a work item's title");
+    await h.clickInModal("이월 업무 1건 · 최장 4일");
+    await sleep(400);
+    if (await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length)) throw new Error("the briefing stayed open after the carried line was tapped");
+    const active = await page.evaluate(() => [...document.querySelectorAll("nav button")].filter((b) => /text-cyan-300/.test(b.className)).map((b) => (b.innerText || "").trim()).join("·"));
+    if (active !== "업무") throw new Error("the carried line opened the tab: " + (active || "none"));
+    await expectText("오늘 업무 — " + (await dstrIn(0)));
+    const after = await readState();
+    if (JSON.stringify(after.work) !== JSON.stringify(before.work)) throw new Error("the briefing changed the work items");
     await page.evaluate((k, items) => { const s = JSON.parse(localStorage.getItem(k)); s.work = items; localStorage.setItem(k, JSON.stringify(s)); }, KEY, keep);
     await h.reload();
   });
@@ -361,6 +442,10 @@ module.exports = async (h) => {
       `${twoDaysAgo} ${MTG_B}`, "내용 비공개 (AI에 보내지 않기)", `${today} 미완료 ${WORK_TITLE}`]) {
       if (!txt.includes(t)) throw new Error(`the work packet lacks "${t}" (${txt.length} chars)`);
     }
+    // The carried item is in the work-record section, stated with its age. Phase 3 of the 2026-09-17 secretary plan
+    // renders this line (records built from today's carried view); until then this assertion fails.
+    const recordSection = txt.slice(txt.indexOf("## 업무 기록")).split("\n## ")[0];
+    if (!recordSection.includes("이월 ") || !recordSection.includes(PAST_TITLE)) throw new Error("the work-record section lacks the carried item: " + recordSection.slice(0, 300));
     // The hidden meeting: its body stays out, and its line names no project either — date and title only.
     if (txt.includes(HIDDEN_SUMMARY) || txt.includes("단가 조정") || txt.includes("비공개 참석자")) throw new Error("the hidden meeting's minutes reached the packet");
     if (txt.includes(`[${PROJECT}] ${MTG_B}`)) throw new Error("the hidden meeting's line names its project");

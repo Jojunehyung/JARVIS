@@ -2571,7 +2571,7 @@ const ACTIVITY_GAP_DAYS = 7;
 const CAP = 5;
 // Briefing actions that switch the tab. `closeBriefing` handles `task` before this list and opens any other type as
 // the modal of that name, which the root must render: `bridge`, `journal`, `review`, `roleAdvice` and `role`.
-const TAB_ACTIONS = ["home", "goals", "schedule", "biz"];
+const TAB_ACTIONS = ["home", "goals", "work", "schedule", "meetings", "biz"];
 
 // The daily briefing: what the saved state says about today. Pure — computed at render, never stored (rule 9).
 // Every line states a fact with a number and never softens it (rule 13).
@@ -2587,6 +2587,12 @@ const buildBriefing = (state, today) => {
     ...ag.dueToday.map((q) => ({ kind: "task", severity: 3, text: `${q.title} — 오늘 기한`, action: { type: "task", id: q.id } })),
     ...ag.daily.map((q) => ({ kind: "task", severity: 1, text: `${q.title} — 매일 · 미완료`, action: { type: "task", id: q.id } })),
   ];
+  // Carried work: a count and the oldest age, never a title — the briefing lists no work item. Derived (rule 9).
+  const carried = (state.work || []).filter((w) => !w.done && w.date < today);
+  if (carried.length > 0) {
+    const oldest = Math.max(...carried.map((w) => daysBetween(w.date, today)));
+    todayItems.unshift({ kind: "work", severity: 3, text: `이월 업무 ${carried.length}건 · 최장 ${oldest}일`, action: { type: "work" } });
+  }
   add("today", "오늘 할 일", todayItems.length ? todayItems : [{ kind: "none", severity: 1, text: "해당 없음" }]);
 
   /* Today's schedule — records, never tasks: a line here completes nothing, pays nothing and moves no metric
@@ -2969,7 +2975,7 @@ const parseWorkReply = (text, state, today) => {
     project: (state.meetingProjects || []).map((p) => ({ id: p.id, name: p.name })),
   };
   // Titles already on today's list, then each accepted proposal in turn — a reply cannot register a title twice.
-  const seen = new Set(workOn(state, today).map((w) => normWorkTitle(w.title)));
+  const seen = new Set(workOn(state, today, today).map((w) => normWorkTitle(w.title)));
   const proposals = (Array.isArray(data?.work) ? data.work : []).map((t, n) => {
     const title = String(t?.title || "").trim().slice(0, WORK_LIMITS.title);
     const note = String(t?.note || "").trim().slice(0, WORK_LIMITS.note);
@@ -7559,10 +7565,11 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
 /* ───────────────────────── Daily work — dated work items (schema v25) ───────────────────────── */
 /* A work item is a dated record of what the user did or means to do that day — typed by hand or proposed by the
    assistant and confirmed per item — and never a task: no payout, no trophy, no goal, no KR, no streak, no evidence
-   gate, and nothing here reaches `todoOf`, `agendaOf`, `buildBriefing`, `computeGrades` or `krProgress` (rules 1, 7,
-   8, 9, 18). `done` is the one stored fact; the day view, the past-undone list and the link label are derived at
-   render. An item keeps its date: the tab pages by day, and undone items from earlier days are listed under
-   `지난 미완료` with one button that moves them to today (rule 13 — nothing is hidden). A link to a goal, a meeting or
+   gate, and nothing here reaches `todoOf`, `agendaOf`, `computeGrades` or `krProgress`; `buildBriefing` reads only the
+   carried count and the oldest age, never a title (rules 1, 7, 8, 9, 18). `done` is the one stored fact; the day view, the carried rows and the link label are derived at render.
+   An item keeps its date: the tab pages by day, and today's view is prefixed by every undone item from earlier days,
+   oldest first, each stating its age as `이월 {n}일` — carry-forward is derived and never writes `date` (rule 9), and a
+   carried item stays listed on its own day too (rule 13 — nothing is hidden or moved). A link to a goal, a meeting or
    a project is a reference only; a target deleted later is stated as `연결 대상이 삭제됐어요` and never cleaned up
    (the same policy as a meeting's eventId).
    Storage arithmetic (string length, the same 3.5 MB budget as the meetings region): the record overhead
@@ -7580,9 +7587,17 @@ const WORK_KIND_WORD = { goal: "목표", meeting: "회의록", project: "프로�
 // The title as the duplicate check sees it: trimmed, every space removed, lower-cased (`parseWorkReply`).
 const normWorkTitle = (t) => String(t || "").trim().replace(/\s+/g, "").toLowerCase();
 
-// The day's items: `createdAt` ascending, then stored order (a stable sort keeps a done item in its place).
-const workOn = (state, date) => (state.work || []).filter((w) => w.date === date)
-  .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+// The day's items: `createdAt` ascending, then stored order (a stable sort keeps a done item in its place). On today's
+// view (`date === today`) every undone item dated earlier comes first — `date` ascending, then `createdAt` — so the
+// oldest carried item leads. Derived only: nothing is moved or rewritten (rule 9).
+const byCreated = (a, b) => (a.createdAt || "").localeCompare(b.createdAt || "");
+const workOn = (state, date, today) => {
+  const list = state.work || [];
+  const own = list.filter((w) => w.date === date).sort(byCreated);
+  if (date !== today) return own;
+  const carried = list.filter((w) => !w.done && w.date < today).sort((a, b) => a.date.localeCompare(b.date) || byCreated(a, b));
+  return [...carried, ...own];
+};
 // The lead chip of one work row: an item dated before today states its age in the overdue tone; otherwise its source —
 // the assistant (violet), a meeting follow-up (cyan, v26) or the user's own hand (zinc). One builder for the tab.
 const workLeadOf = (w, today) => {
@@ -7591,9 +7606,6 @@ const workLeadOf = (w, today) => {
   if (w.source === "meeting") return { text: "회의", tone: "text-cyan-300 border-cyan-800" };
   return { text: "수기", tone: "text-zinc-400 border-zinc-700" };
 };
-// Undone items dated before today, newest date first — the `지난 미완료` list.
-const workPastOpen = (state, today) => (state.work || []).filter((w) => !w.done && w.date < today)
-  .sort((a, b) => b.date.localeCompare(a.date));
 // The label of one link target, or null when the target no longer exists. One builder for the picker and the rows.
 const workLinkLabel = (state, link) => {
   if (!link) return null;
@@ -7613,7 +7625,7 @@ const workLinkOptions = (state) => {
   ];
 };
 
-function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge, onRemoveMany }) {
+function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany }) {
   const [viewDate, setViewDate] = useState(today); // the day shown — component state only, never stored (rule 9)
   // Select mode for deleting several items at once: component state only, cleared when the day changes.
   const [selecting, setSelecting] = useState(false);
@@ -7621,8 +7633,8 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge, onRemoveMany }
   const showDate = (d) => { setViewDate(d); setPicked(new Set()); };
   const isToday = viewDate === today;
   const used = useMemo(() => storageUsedWith(state), [state]);
-  const items = useMemo(() => workOn(state, viewDate), [state, viewDate]);
-  const past = useMemo(() => (isToday ? workPastOpen(state, today) : []), [state, today, isToday]);
+  const items = useMemo(() => workOn(state, viewDate, today), [state, viewDate, today]);
+  const carried = isToday ? items.filter((w) => w.date < today).length : 0;
   const done = items.filter((w) => w.done).length;
   const ai = items.filter((w) => w.source === "ai").length;
   const marker = (w) => (WORK_KIND_WORD[w.link?.kind]
@@ -7630,7 +7642,7 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge, onRemoveMany }
     : null);
   const pager = "w-8 h-8 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5";
   const chip = "shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5";
-  const selectable = [...past, ...items];
+  const selectable = items; // select-all covers the carried rows on today's view
   const allPicked = selectable.length > 0 && selectable.every((w) => picked.has(w.id));
   const flip = (id) => setPicked((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const endSelect = () => { setSelecting(false); setPicked(new Set()); };
@@ -7669,23 +7681,12 @@ function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge, onRemoveMany }
         {/* Fragments are nowrap so a 390 px line breaks only between them */}
         <p className="text-xs font-mono text-zinc-400 mt-2">
           <span className="whitespace-nowrap">남음 {items.length - done}건</span>{" · "}
+          {isToday && <><span className="whitespace-nowrap">이월 {carried}건</span>{" · "}</>}
           <span className="whitespace-nowrap">완료 {done}건</span>{" · "}
           <span className="whitespace-nowrap">AI 제안 {ai}건</span>{" · "}
           <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / 3.5MB</span>
         </p>
       </section>
-
-      {past.length > 0 && (
-        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-          <div className="flex items-center justify-between gap-2">
-            <SectionLabel tone="text-rose-400">지난 미완료 {past.length}건</SectionLabel>
-            {!selecting && <button onClick={() => onMove(past.map((w) => w.id))} className={chip}>오늘로 옮기기</button>}
-          </div>
-          <div className="space-y-1.5">
-            {past.map((w) => row(w, { text: w.date.slice(5), tone: `${TODO_TONE.overdue} border-zinc-700` }))}
-          </div>
-        </section>
-      )}
 
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
         {selectable.length > 0 && (selecting ? (
@@ -7742,7 +7743,7 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
       <div className="space-y-3">
         {work && (
           <div className="space-y-1.5">
-            <CvFact label="날짜"><span className="font-mono">{work.date}</span></CvFact>
+            <CvFact label="날짜"><span className="font-mono">{work.date}{!work.done && work.date < today ? ` · 이월 ${daysBetween(work.date, today)}일` : ""}</span></CvFact>
             <CvFact label="출처">{work.source === "ai" ? "AI 제안" : work.source === "meeting" ? "회의 후속" : "수기"}</CvFact>
             <CvFact label="상태">{work.done ? "완료" : "미완료"}</CvFact>
             <CvFact label="연결" wrap>{workLinkText(state, work) || "연결 없음"}</CvFact>
@@ -8553,12 +8554,6 @@ export default function LifeManager() {
     showToast({ msg: `업무 ${n}건을 삭제했어요` });
     return true;
   };
-  // Sets `date = today` on every given item not already dated today.
-  const moveWorkToToday = (ids) => {
-    const moving = new Set((state.work || []).filter((w) => ids.includes(w.id) && w.date !== today).map((w) => w.id));
-    if (moving.size) writeWork((list) => list.map((w) => (moving.has(w.id) ? { ...w, date: today } : w)));
-    showToast({ msg: `미완료 ${moving.size}건을 오늘로 옮겼어요` });
-  };
   // Registers every ticked work proposal as today's item with `source: "ai"`. An
   // unresolved link is simply omitted. The raw reply is not stored anywhere — it would overwrite the day's journal reply.
   const importWork = (list) => {
@@ -8799,7 +8794,7 @@ export default function LifeManager() {
           <WorkTab state={state} today={today}
             onAdd={(date) => setModal({ type: "work", date })}
             onOpen={(workId) => setModal({ type: "work", workId })}
-            onMove={moveWorkToToday} onBridge={() => setModal({ type: "workBridge" })} onRemoveMany={removeWorkMany} />
+            onBridge={() => setModal({ type: "workBridge" })} onRemoveMany={removeWorkMany} />
         )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}

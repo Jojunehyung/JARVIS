@@ -372,7 +372,7 @@ module.exports = async (h) => {
       // The demo reproduces the two 2026-09-16 features: synthetic minutes, and an exact exam score on the CV —
       // and the 2026-09-17 work tab: one manual item open, one assistant-proposed item done, and (v26) one open item
       // registered from a meeting follow-up.
-      if (tab === "업무") await expectText("남음 2건 · 완료 1건 · AI 제안 1건");
+      if (tab === "업무") await expectText("남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건");
       if (tab === "미팅") await expectText("프로젝트 2개 · 회의록 3건");
       if (tab === "프로필") await expectText("TOEIC L&R 735");
     }
