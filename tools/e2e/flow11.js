@@ -386,6 +386,15 @@ module.exports = async (h) => {
     if (!line.includes("AI 제안 2건")) throw new Error("counts after the import: " + line);
   });
 
+  // A chat's code-block copy button copies only the JSON, so a reply without the fence must still read.
+  await step("a work reply pasted as bare JSON after analysis lines still lists its proposal", async () => {
+    await openWorkBridge();
+    await pasteWorkReply('분석 한 줄이에요.\n{\n  "work": [\n    { "title": "펜스 없는 답변 확인", "note": "코드블록 복사" }\n  ],\n  "note": "한 줄"\n}');
+    await expectText("제안 업무 확인 — 1건");
+    await expectText("펜스 없는 답변 확인");
+    await closeModal();
+  });
+
   await step("a work reply naming tasks, deals, events and meetings creates none of them", async () => {
     const before = await readState();
     await openWorkBridge();

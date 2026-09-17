@@ -2831,14 +2831,25 @@ const buildAssistantPacket = (state, today) => {
   return out;
 };
 
+/* The JSON a pasted reply carries, or null. A chat's code-block copy button copies only the inside of the block,
+   so the fence is optional: a fenced block (tagged `json` or not) wins, then the whole text, then the span from the
+   first `{` to the last `}` (a bare object after the analysis lines). Parsing only — each caller validates every field. */
+const replyJson = (raw) => {
+  const tryParse = (t) => { try { const v = JSON.parse(t); return v && typeof v === "object" ? v : null; } catch { return null; } };
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) { const v = tryParse(fenced[1]); if (v) return v; }
+  const whole = tryParse(raw.trim());
+  if (whole) return whole;
+  const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
+  return a >= 0 && b > a ? tryParse(raw.slice(a, b + 1)) : null;
+};
+
 // Reads the JSON block an assistant appends. Everything is validated here: a proposal is a plain task
 // under an existing goal, difficulty at most C, and never a certification or exam (rules 18, 19).
 const IMPORT_MAX = 5;
 const parseAssistantReply = (text, state) => {
   const raw = String(text || "");
-  const m = raw.match(/```json\s*([\s\S]*?)```/i);
-  let data = null;
-  if (m) { try { data = JSON.parse(m[1]); } catch { data = null; } }
+  const data = replyJson(raw);
   const active = (state.goals || []).filter((g) => g.status === "active");
   const open = (state.tasks || []).filter((q) => (q.type === "daily" ? true : q.status !== "done"));
   const proposals = (Array.isArray(data?.tasks) ? data.tasks : []).slice(0, IMPORT_MAX).map((t, n) => {
@@ -2934,9 +2945,7 @@ const buildWorkPacket = (state, today) => {
 const WORK_LINK_KINDS = ["goal", "meeting", "project"];
 const parseWorkReply = (text, state, today) => {
   const raw = String(text || "");
-  const m = raw.match(/```json\s*([\s\S]*?)```/i);
-  let data = null;
-  if (m) { try { data = JSON.parse(m[1]); } catch { data = null; } }
+  const data = replyJson(raw);
   const targets = {
     goal: (state.goals || []).filter((g) => g.status === "active").map((g) => ({ id: g.id, name: g.title })),
     meeting: (state.meetings || []).slice().sort(meetingOrder).map((x) => ({ id: x.id, name: x.title })),

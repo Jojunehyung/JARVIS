@@ -261,19 +261,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 4811 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 4811 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 4811 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 6506 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 6739 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 7598 | App root |
-| `liferpg-img-${slot}` | 7638 | App root |
-| `liferpg-img-ev-${id}` | 7661 | App root |
-| `liferpg-img-ev-${q.id}` | 7846 | App root |
-| `liferpg-img-ev-${t.id}` | 8272 | App root |
-| `liferpg-img-study-${t.id}-1` | 8272 | App root |
-| `liferpg-img-study-${t.id}-2` | 8272 | App root |
-| `liferpg-img-folio-${f.id}` | 8278 | App root |
+| `liferpg-img-ev-${task.id}` | 4820 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 4820 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 4820 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 6515 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 6748 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 7607 | App root |
+| `liferpg-img-${slot}` | 7647 | App root |
+| `liferpg-img-ev-${id}` | 7670 | App root |
+| `liferpg-img-ev-${q.id}` | 7855 | App root |
+| `liferpg-img-ev-${t.id}` | 8281 | App root |
+| `liferpg-img-study-${t.id}-1` | 8281 | App root |
+| `liferpg-img-study-${t.id}-2` | 8281 | App root |
+| `liferpg-img-folio-${f.id}` | 8287 | App root |
 
 ## Demo data (`demoState`)
 

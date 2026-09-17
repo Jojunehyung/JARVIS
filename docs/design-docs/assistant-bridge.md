@@ -79,7 +79,7 @@ The whole packet is capped at 4,000 characters; journal entries are dropped olde
 `BridgeModal` always renders the packet in a read-only textarea, which doubles as the fallback when the clipboard is unavailable: `navigator.clipboard.writeText` first, then `select()` + `execCommand("copy")` inside the click gesture, which is what makes the copy work from `file://` where there is no secure context.
 
 ## The reply — `parseAssistantReply(text, state)`
-Only a fenced ```` ```json ```` block is read, and only `tasks` (at most five) and `note`. Each proposal is validated before it can be imported:
+The JSON is read by `replyJson`: a fenced block (```` ```json ```` or untagged) first, then the whole pasted text, then the span from the first `{` to the last `}` — a chat's code-block copy button copies only the inside of the block, and until 2026-09-17 such a paste read as no proposals. Only `tasks` (at most five) and `note`. Each proposal is validated before it can be imported:
 
 | Field | Rule |
 |---|---|
@@ -119,7 +119,7 @@ By the user's own decision, reversing the 2026-09-16 default that the packet nev
 
 ### The reply — `parseWorkReply(text, state, today)`
 
-Reads the first fenced ```` ```json ```` block; only `data.work` (array, at most `WORK_PROPOSAL_MAX` = 8) and `data.note` (≤ 200 chars) are read. `tasks`, `deals`, `events`, `meetings`, or any other key in the same reply is not merged, not stored, not even inspected beyond being ignored — proven by an E2E step that pastes a reply naming all four and asserts none of `tasks`/`deals`/`events`/`meetings`/`work`/`journal` changed.
+Reads the reply through the same `replyJson` (fence optional); only `data.work` (array, at most `WORK_PROPOSAL_MAX` = 8) and `data.note` (≤ 200 chars) are read. `tasks`, `deals`, `events`, `meetings`, or any other key in the same reply is not merged, not stored, not even inspected beyond being ignored — proven by an E2E step that pastes a reply naming all four and asserts none of `tasks`/`deals`/`events`/`meetings`/`work`/`journal` changed.
 
 | Field | Rule |
 |---|---|
