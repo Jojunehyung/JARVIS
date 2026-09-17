@@ -77,6 +77,13 @@
       "type": "image/png",
       "form_factor": "narrow",
       "label": "프로젝트별 회의록"
+    },
+    {
+      "src": "./screenshots/work.png",
+      "sizes": "430x932",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "오늘 업무 — 수기 등록과 AI 제안"
     }
   ]
 }

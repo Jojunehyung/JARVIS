@@ -5,7 +5,7 @@ Engine and structure decisions. Rules are canonical in `core-beliefs.md`; everyt
 | Doc | Covers |
 |---|---|
 | [core-beliefs.md](core-beliefs.md) | The 19 invariant rules (achievement system 1–6, minimal identity 7–19) |
-| [assistant-bridge.md](assistant-bridge.md) | Agenda buckets, the daily-briefing rules, and what the assistant never does |
+| [assistant-bridge.md](assistant-bridge.md) | Agenda buckets, the daily-briefing rules, the two bridge packets (daily check-in and `오늘 업무 만들기`) and what the assistant never does |
 | [job-weighting.md](job-weighting.md) | Job-fit multiplier: matrix, exceptions, intersection rule, evidence thresholds |
 | [decision-log.md](decision-log.md) | Dated product/engineering decisions |
 | [information-architecture.md](information-architecture.md) | Area → goal → KR → task hierarchy, KR–task bridge, the `실행` tab's time groups (not goal groups), screen map |

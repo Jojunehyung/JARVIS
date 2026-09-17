@@ -115,6 +115,8 @@ section reserves before its closing summary line.
 - `reviews`: one entry for last week (`weekOf` = that Monday), which leaves this week's review outstanding.
 - `room.trophies`: one `{ kind: "rank", label: "직업·커리어 실무자", date: today − 20 }`, so the achievement wall is not empty on first open.
 - `role`: `{ name: "완성차 1차사 하네스 설계 책임", targets: { 직업·커리어: 6, 기본지식: 4 } }` — two targeted areas, which makes `roleGap` computable and the RANK UP proximity line meaningful.
+- `meetings` (schema v25): the newest demo meeting, `요구사항 1차 회의`, is flagged `aiHidden: true`, so its work-packet line states only its date and title; `유지보수 범위 협의` carries one `progress` entry (`월 10시간 한도를 반영한 유지보수 견적서 초안 작성`, dated two days before today), so the demo shows both new fields at once; the third meeting carries empty `progress` and `aiHidden: false`.
+- `work` (schema v25): two items dated today — `○○물산 유지보수 견적서 송부` (manual, open, `note: "월 10시간 · 초과분 시간 단가"`, linked to the `○○물산 재고 관리 자동화` project) and `전기기사 필기 기출 1회분 채점` (`source: "ai"`, `done: true`, linked to the `하네스 설계 엔지니어 취업` goal) — so the demo `업무` tab shows one open manual row and one done AI-proposed row, and its counts line reads `남음 1건 · 완료 1건 · AI 제안 1건`. See [../product-specs/daily-work.md](../product-specs/daily-work.md).
 
 ## Derived values and known deviations
 Progress computes to roughly 3 % (하네스), 46 % (어학) and 10 % (체력), with role-model proximity about 25 %. Two deviations are deliberate and harmless:

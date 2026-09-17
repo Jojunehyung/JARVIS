@@ -69,7 +69,7 @@ A text packet the user copies into an external chat. It opens with the role and 
 | `## 목표` | active goals: deadline, D-day, progress, pace, KR remainders | 5 goals × 4 KRs |
 | `## 열린 실행` | the agenda in order: goal, title, difficulty, cadence, due | 12 |
 | `## 다가오는 일정 (14일)` | `- {date} {HH:MM\|시간 미정} · {약속\|마감} · {title}{ · 반복 {매일\|매주\|매월}}`, date-ascending from `upcomingEvents(state, today, PACKET_EVENT_DAYS)`; the heading and the window read the same constant | 8 |
-| `## 사업 (계약·매출)` | the summary line `- 이번 달 계약 {won} · 입금 확인 {won} · 남은 계약 {won} · 견적 대기 {won}`, then `- 미수 {month} {client} {title} {won}` per unpaid billed month, then `- {진행 중\|예정} {client} {title} · {startMonth} ~ {endMonth} · 월 {won}` for `active`/`upcoming` deals — all from the same `bizSummary` the tab and the briefing read, built before the journal-trim loop below so its cap and behaviour are unaffected | `PACKET_BIZ_LINES` = 6 |
+| `## 사업 (계약·매출)` | the summary line `- 이번 달 계약 {won} · 입금 확인 {won} · 남은 계약 {won} · 견적 대기 {won}`, then `- 미수 {month} {client} {title} {won}` per unpaid billed month, then `- {진행 중\|예정} {client} {title} · {startMonth} ~ {endMonth} · 월 {won}` for `active`/`upcoming` deals — `bizPacketLines(state, today)` (2026-09-17, lifted to module level so the work packet below reuses it), built from the same `bizSummary` the tab and the briefing read, before the journal-trim loop below so its cap and behaviour are unaffected | `PACKET_BIZ_LINES` = 6 |
 | `## 최근 일지 (7일)` | journal entries clipped to 200 characters | 7 |
 | `## 최근 주간 리뷰` | the newest review | 1 |
 | `## 연속·롤모델` | streak, shields, role-model proximity | 2 lines |
@@ -94,4 +94,46 @@ A proposal is refused, greyed out with a reason, when the title matches a certif
 Confirming calls `importTasks`, which prepends plain tasks built exactly like `addQuest` builds them and stores the raw reply on today's journal entry. A reply with no JSON block, or with an empty list, is stored as text only. Re-pasting on the same day overwrites the stored reply; the latest one wins.
 
 ## What the assistant never does
-It reads. It does not complete tasks, promote areas, submit evidence, or change metrics, payouts, D values, or grades. Tapping a briefing line routes into the normal path — `tryComplete` for a task, a tab switch, or an existing modal — so every gate still applies. It cannot touch the schedule or the business records either: `PACKET_HEAD` asks only for tasks and `parseAssistantReply` reads only `tasks`, so a pasted reply can never create, change or tick an event, a contract, a rate or a portfolio entry — proven by an E2E step that pastes a reply naming all three business lists and asserts none of them changed.
+It reads. It does not complete tasks, promote areas, submit evidence, or change metrics, payouts, D values, or grades. Tapping a briefing line routes into the normal path — `tryComplete` for a task, a tab switch, or an existing modal — so every gate still applies. It cannot touch the schedule or the business records either: `PACKET_HEAD` asks only for tasks and `parseAssistantReply` reads only `tasks`, so a pasted reply can never create, change or tick an event, a contract, a rate or a portfolio entry — proven by an E2E step that pastes a reply naming all three business lists and asserts none of them changed. The second bridge, below, cannot create a task, a contract, an event or a meeting either — a reply to it can only propose a work item, and `parseAssistantReply` and this parser never read each other's key.
+
+## The second packet — `오늘 업무 만들기` (`buildWorkPacket` / `parseWorkReply`, 2026-09-17 amendment)
+
+The bridge carries a second, independent packet and parser, added by the [daily-work](../product-specs/daily-work.md) feature and covered by [Rule 7](core-beliefs.md#rule-7)'s 2026-09-17 amendment. It shares `PACKET_MAX` (4,000) and the section-line shape (`packetSection`, lifted to module level so both packets call it) with `buildAssistantPacket`, but is otherwise a separate function with its own head, its own reply key and its own confirm flow (`WorkBridgeModal`, [daily-work.md](../product-specs/daily-work.md)). `bizPacketLines(state, today)` — the contract summary line, the unpaid-month lines and the active/upcoming deal lines — is likewise lifted to module level and shared by both packets; `buildAssistantPacket`'s own text is byte-identical after the extraction.
+
+By the user's own decision, reversing the 2026-09-16 default that the packet never reads a meeting, this packet **does** read `meetings` — summaries, decisions, follow-ups and progress entries — for every meeting except one flagged `aiHidden`, which contributes its date and title only.
+
+| Section | Content | Cap |
+|---|---|---|
+| `## 이력` | the same `cvSummaryOf` line as the daily packet | 1 |
+| `## 목표` | active goals: deadline, D-day, progress, pace, up to 4 KR remainders | 5 goals |
+| `## 열린 할 일` | open task rows from `todoOf(state, today)`, in its own group order: `- {group label} · {title} · {goal title \| 목표 없음} · 기한 {due \| 없음}` | `WORK_PACKET_TASKS` (10) |
+| `## 다가오는 일정 ({PACKET_EVENT_DAYS}일)` | the same event-line shape as the daily packet | `WORK_PACKET_EVENTS` (8) |
+| `## 사업 (계약·매출)` | `bizPacketLines(state, today)` | `PACKET_BIZ_LINES` (6) |
+| `## 최근 회의록 ({n}건)` | newest meetings by `meetingOrder`. Visible: `- {date} [{project name \| 프로젝트 없음}] {title}`, then `  요약:` / `  결정:` / `  후속:` lines (each present only when the field is non-empty, clipped and newline-joined with `" / "`), then `  진행 {date}: {text}` for the newest progress entries. Hidden (`aiHidden`): `- {date} {title}` then `  내용 비공개 (AI에 보내지 않기)` and nothing else — no project name either | `WORK_PACKET_MEETINGS` (6 meetings) × `WORK_PACKET_PROGRESS` (3 entries), summary clipped to `WORK_PACKET_SUMMARY` (200), decisions/follow-ups/progress text to `WORK_PACKET_CLIP` (100) |
+| `## 업무 기록 (어제·오늘)` | work items dated yesterday or today, date then `createdAt` ascending: `- {date} {완료\|미완료} {title}{ · 메모: note}` (note clipped to 60) | `WORK_PACKET_RECORDS` (20) |
+
+`WORK_PACKET_HEAD` states the role, five numbered rules (facts only, `해요체`; never judge or change a score/grade/payout/difficulty; propose only today's work items, at most 8, title ≤ 60 / note ≤ 200, never create a task/event/contract/meeting, never re-propose a title already in `업무 기록`; name the goal/meeting/project a proposal is based on in `link.title`, verbatim, or omit `link`; close with a ≤ 5-line analysis then one JSON block, `"work": []` when there is nothing to propose) and the reply template
+`{"work":[{"title":"...","note":"...","link":{"kind":"goal|meeting|project","title":"..."}}],"note":"..."}`.
+
+**Trim order** when the built text exceeds `PACKET_MAX`, applied as an ordered list of reduction closures, rebuilding and re-measuring after each step until it fits or the list is exhausted: (1) meetings 6 → 2, dropping the oldest; (2) summary clip 200 → 100 and progress 3 → 1 per meeting, together; (3) schedule lines 8 → 0; (4) business lines to the first line only; (5) open-task lines 10 → 0; (6) work-record lines 20 → 0 (last before the meeting floor — the parser dedupes proposals against `업무 기록` on its own, so losing the section only weakens that hint, never breaks a rule); (7) meetings 2 → 0. The header, the CV line and the goals section are never dropped. Measured on the demo save: the work packet is 1,966 characters with no trim; with the demo's meetings replaced by 40 full-length synthetic ones, it is 3,324 characters after trimming meetings from 6 to 3 — both under the 4,000 cap.
+
+### The reply — `parseWorkReply(text, state, today)`
+
+Reads the first fenced ```` ```json ```` block; only `data.work` (array, at most `WORK_PROPOSAL_MAX` = 8) and `data.note` (≤ 200 chars) are read. `tasks`, `deals`, `events`, `meetings`, or any other key in the same reply is not merged, not stored, not even inspected beyond being ignored — proven by an E2E step that pastes a reply naming all four and asserts none of `tasks`/`deals`/`events`/`meetings`/`work`/`journal` changed.
+
+| Field | Rule |
+|---|---|
+| `title` | trimmed to `WORK_LIMITS.title` (60); empty → `reject: "제목이 없어요"` |
+| `note` | trimmed to `WORK_LIMITS.note` (200); `""` when absent |
+| `link` | read only when `link.kind` is `goal`/`meeting`/`project` and `link.title` is a non-empty string; resolved against active goals / all meetings (newest first) / all projects by exact title match, then substring either way, first hit wins; no hit → `link: null`, `linkText: "연결 없음 — {wanted}"`; a bad `kind` → `null` |
+| duplicate | `reject: "오늘 업무에 이미 있어요"` when `normWorkTitle(title)` equals an item already in `workOn(state, today)` or an earlier proposal in the same reply |
+
+Returns `{ raw, note, proposals }`, each proposal `{ key: "w{n}", title, note, link, linkText, reject }`; nothing here writes state — `WorkBridgeModal`'s confirm view ticks/unticks and `importWork` (root) is what registers a record, with `source: "ai"` and `done: false`, from the ticked, non-rejected proposals only. The raw reply is never stored (unlike the daily bridge's `journal[].ai`) — storing it would collide with that key, and nothing derived needs to survive a reload here.
+
+### Shared UI pieces
+
+`copyPacket(taRef, text, onToast)`, `PacketSendPane({ packet, caption, taRef, onCopy, onPaste })` and `ReplyPastePane({ reply, setReply, onCheck })` are lifted out of `BridgeModal` to module level so `WorkBridgeModal` reuses them without a six-line duplicate; `BridgeModal`'s own copy and behaviour are unchanged from the user's side.
+
+### What the work packet never carries
+
+Exactly like the daily packet's `## 이력` line: never `profile.name`, `birth`, `email`, `phone`, a school name or an employer name — only what `cvSummaryOf` states. No photo, no evidence text, no journal entry (the journal is the daily packet's domain, not this one's). A hidden meeting's line never states its project name either, only its date and title.

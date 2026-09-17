@@ -16,6 +16,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const SHOTS = [
   { file: "home.png", tab: "프로필" },
   { file: "tasks.png", tab: "할 일" },
+  { file: "work.png", tab: "업무" },
   { file: "goals.png", tab: "목표" },
   { file: "calendar.png", tab: "일정" },
   { file: "meetings.png", tab: "미팅" },

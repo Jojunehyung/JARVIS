@@ -2,7 +2,7 @@
 module.exports = async (h) => {
   const { step, shot, clickText, clickTab, clickExact, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
   // The schema version every migrated fixture must end at — bumped with each new `migrate` block (rule 12).
-  const SCHEMA_V = 24;
+  const SCHEMA_V = 25;
   // Order-independent deep equality for plain JSON records read back from the save.
   const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.keys(v).sort().map((k) => [k, canon(v[k])]) : v);
   const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
@@ -473,6 +473,45 @@ module.exports = async (h) => {
     if (extra.length) throw new Error("v24 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("레거시 회의록");
+  });
+  await step("v24 save → v25 work items and meeting progress", async () => {
+    // A v24 save has no `work` key and its meetings carry neither `progress` nor `aiHidden`. After the migration the
+    // save gains `work: []` only, the meeting gains `progress: []` and `aiHidden: false`, and every other field and
+    // key comes back exactly as planted. (Written 2026-09-17 under the standing instruction; not run.)
+    // The local date, shifted out of UTC before the ISO slice (the same day the app's own `dstr` reports).
+    const now = await page.evaluate(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10));
+    const meeting = { id: "mw", projectId: "pw", title: "레거시 진행 회의", date: "2026-01-06", attendees: "담당자 B", taskIds: ["tz"],
+      summary: "레거시 요약", decisions: "레거시 결정", actions: "레거시 후속", eventId: "ew", createdAt: "2026-01-06" };
+    const s24 = {
+      v: 24,
+      profile: { name: "v24 사용자", nick: "v24세이브", birth: "1996-03-02", email: "", phone: "", gender: "남성", status: "직장인 1~3년",
+        edus: [{ id: "ew1", school: "레거시대학교", degree: "ba", status: "grad" }], careers: [],
+        edu: "ba", career: "y13", certs: [], examsOwned: [], directions: [], look: { skin: 0, hair: 0, hairColor: 0, outfit: 0, face: 0 }, startDate: "2026-01-01" },
+      areas: [{ id: "aw", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tz", title: "레거시 실행", areaId: "aw", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [{ id: "gw", title: "레거시 목표", areaId: "aw", status: "active", createdAt: "2026-01-01", krs: [] }],
+      events: [{ id: "ew", title: "레거시 회의", kind: "appt", date: "2026-01-06", time: "10:00", createdAt: "2026-01-02" }],
+      folio: [], rates: [], deals: [{ id: "dw", client: "레거시 고객", title: "레거시 계약", status: "lead", createdAt: "2026-01-03" }],
+      meetingProjects: [{ id: "pw", name: "레거시 프로젝트", createdAt: "2026-01-02" }],
+      meetings: [meeting],
+      journal: [{ id: "jw", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [{ id: "rw", weekOf: "2026-01-05", wins: "레거시 성과", blocks: "", date: "2026-01-05" }],
+      ui: { bizView: "folio" },
+      act: { streak: 3, lastActive: "2026-01-06", shieldMonth: now.slice(0, 7), shieldsLeft: 1, briefingSeen: now, lastReview: "2026-01-05" },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-06", dModel: "1.3",
+    };
+    const st = await migrateFixture(s24);
+    if (!same(st.work, [])) throw new Error("v25 work: " + JSON.stringify(st.work));
+    if ((st.meetings || []).length !== 1) throw new Error("v25 meetings: " + JSON.stringify(st.meetings));
+    if (!same(st.meetings[0], { ...meeting, progress: [], aiHidden: false })) throw new Error("v25 meeting record: " + JSON.stringify(st.meetings[0]));
+    for (const k of Object.keys(s24)) {
+      if (k === "v" || k === "lastTick" || k === "meetings") continue;
+      if (!same(st[k], s24[k])) throw new Error(`v25 changed ${k}: ` + JSON.stringify(st[k]));
+    }
+    const extra = Object.keys(st).filter((k) => !(k in s24) && k !== "work");
+    if (extra.length) throw new Error("v25 added keys it does not own: " + extra.join(", "));
+    await clickTab("업무");
+    await expectText("오늘 업무가 없어요.");
   });
   await shot("migrated");
 };

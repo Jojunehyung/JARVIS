@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useId, forwardRef, useImperativeHandle } from "react";
 import {
   Trophy, Target, Plus, X, Lock, RotateCcw, Check, Star, Settings,
-  IdCard, ClipboardList, CalendarDays, MessagesSquare, Briefcase, Camera, Paperclip, Link as LinkIcon,
+  IdCard, ClipboardList, ListChecks, CalendarDays, MessagesSquare, Briefcase, Camera, Paperclip, Link as LinkIcon,
 } from "lucide-react";
 
 /* ───────────────────────── Constants: grade and verdict rules ───────────────────────── */
@@ -2724,7 +2724,9 @@ const buildBriefing = (state, today) => {
 };
 
 /* ── Assistant bridge — the app writes a text packet, the user talks to an external chat, the reply comes back as text.
-   No key, no network (rule 7 amendment). A reply can only propose plain tasks; it never completes, promotes or scores. ── */
+   No key, no network (rule 7 amendment). Two packets share the cap and the section shape: the daily check-in
+   (`buildAssistantPacket`, whose reply can only propose plain tasks) and the work request (`buildWorkPacket`, 2026-09-17
+   amendment, whose reply can only propose work items). Neither reply completes, promotes or scores. ── */
 const PACKET_MAX = 4000;
 const PACKET_EVENT_DAYS = 14; // the schedule window the packet states — its heading and its rows read the same constant
 const PACKET_BIZ_LINES = 6;   // business lines the packet carries, so a long contract list cannot crowd out the journal
@@ -2738,13 +2740,48 @@ const PACKET_HEAD = [
   '{"tasks":[{"goal":"<목표 제목 그대로>","title":"...","diff":"E|D|C","type":"daily|once","due":"YYYY-MM-DD"}],"note":"한 줄"}',
   "```",
 ];
+// The work packet (`오늘 업무 만들기`): what it carries and how much. Meetings enter by the user's 2026-09-17 decision,
+// newest first; a meeting flagged `aiHidden` contributes its date and title only. Plain literals, so smoke-logic can lift them.
+const WORK_PROPOSAL_MAX = 8;       // proposals read from a work reply
+const WORK_PACKET_MEETINGS = 6;    // newest meetings by `meetingOrder`
+const WORK_PACKET_PROGRESS = 3;    // newest progress entries per meeting
+const WORK_PACKET_SUMMARY = 200;   // chars of a meeting's summary
+const WORK_PACKET_CLIP = 100;      // chars of decisions, follow-ups and a progress entry
+const WORK_PACKET_TASKS = 10;      // open task rows
+const WORK_PACKET_EVENTS = 8;      // schedule rows inside PACKET_EVENT_DAYS
+const WORK_PACKET_RECORDS = 20;    // yesterday's and today's work items
+const WORK_PACKET_HEAD = [
+  "역할: 이 사용자의 목표·회의록·진행사항·기록을 근거로 오늘 처리할 업무를 제안하는 비서예요. 아래 데이터만 근거로 답해요.",
+  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
+  "3) 제안은 오늘 처리할 업무 항목만이에요 — 최대 8건, 제목 60자·메모 200자 이내. 실행·일정·계약·회의록을 만들거나 바꾸지 않아요. '업무 기록'에 이미 있는 항목은 다시 제안하지 않아요.",
+  "4) 각 항목의 근거가 된 목표·회의록·프로젝트 이름을 link.title에 아래 데이터의 표기 그대로 적어요. 근거가 없으면 link를 생략해요.",
+  "5) 답변 형식: ① 회의록·진행사항·목표를 근거로 한 분석 5줄 이내 ② 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"work\": []).",
+  "```json",
+  '{"work":[{"title":"...","note":"근거 한 줄","link":{"kind":"goal|meeting|project","title":"<이름 그대로>"}}],"note":"한 줄"}',
+  "```",
+];
+// One packet section: the heading and its lines, or `- 없음` when there is nothing to state. Both packets use it.
+const packetSection = (title, lines) => (lines.length ? [`## ${title}`, ...lines] : [`## ${title}`, "- 없음"]);
+// Contract facts only, read from the same `bizSummary` the tab and the briefing state. Neither parser reads a business
+// key, so a pasted reply can never create a deal, a rate or a portfolio entry (rule 7 amendment). Both packets use it.
+const bizPacketLines = (state, today) => {
+  const biz = bizSummary(state, today);
+  return [
+    `- 이번 달 계약 ${wonText(biz.thisMonth)} · 입금 확인 ${wonText(biz.collected)} · 남은 계약 ${wonText(biz.backlog)} · 견적 대기 ${wonText(biz.pipeline)}`,
+    ...biz.unpaid.map((u) => `- 미수 ${u.month} ${u.deal.client} ${u.deal.title} ${wonText(u.amount)}`),
+    ...(state.deals || [])
+      .filter((d) => ["active", "upcoming"].includes(dealPhase(d, biz.month)) && dealEnd(d))
+      .map((d) => `- ${DEAL_PHASE_LABEL[dealPhase(d, biz.month)]} ${d.client} ${d.title} · ${d.startMonth} ~ ${dealEnd(d)} · 월 ${wonText(d.monthly)}`),
+  ].slice(0, PACKET_BIZ_LINES);
+};
 
 const buildAssistantPacket = (state, today) => {
   const brief = buildBriefing(state, today);
   const act = state.act || {};
   const rg = roleGap(state);
   const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
-  const sec = (title, lines) => (lines.length ? [`## ${title}`, ...lines] : [`## ${title}`, "- 없음"]);
+  const sec = packetSection;
 
   const briefLines = brief.sections.flatMap((s) => s.items.filter((it) => it.severity >= 2).map((it) => `- [${s.title}] ${it.text}`)).slice(0, 12);
   /* The CV at the level the user agreed to share: degree, department, months of practice and the most recent
@@ -2768,18 +2805,11 @@ const buildAssistantPacket = (state, today) => {
   // create, complete or change an event (rule 7 amendment).
   const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).slice(0, 8).map(({ ev, date }) =>
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
-  // Contract facts only, read from the same `bizSummary` the tab and the briefing state, and built before the
-  // journal trim below so the cap and the trim behaviour stay as they are. `parseAssistantReply` reads `tasks`
-  // and nothing else, so a pasted reply can never create a deal, a rate or a portfolio entry (rule 7 amendment).
-  const biz = bizSummary(state, today);
-  const bizLines = [
-    `- 이번 달 계약 ${wonText(biz.thisMonth)} · 입금 확인 ${wonText(biz.collected)} · 남은 계약 ${wonText(biz.backlog)} · 견적 대기 ${wonText(biz.pipeline)}`,
-    ...biz.unpaid.map((u) => `- 미수 ${u.month} ${u.deal.client} ${u.deal.title} ${wonText(u.amount)}`),
-    ...(state.deals || [])
-      .filter((d) => ["active", "upcoming"].includes(dealPhase(d, biz.month)) && dealEnd(d))
-      .map((d) => `- ${DEAL_PHASE_LABEL[dealPhase(d, biz.month)]} ${d.client} ${d.title} · ${d.startMonth} ~ ${dealEnd(d)} · 월 ${wonText(d.monthly)}`),
-  ].slice(0, PACKET_BIZ_LINES);
-  const journal = [...(state.journal || [])].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
+  // Contract facts only (`bizPacketLines`), built before the journal trim below so the cap and the trim behaviour
+  // stay as they are. `parseAssistantReply` reads `tasks` and nothing else, so a pasted reply can never create a
+  // deal, a rate or a portfolio entry (rule 7 amendment).
+  const bizLines = bizPacketLines(state, today);
+  const journal =[...(state.journal || [])].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
   const journalLines = journal.map((e) => `- ${e.date}: ${e.text.slice(0, 200)}${e.ai ? " (AI 답변 있음)" : ""}`);
   const review = [...(state.reviews || [])].sort((a, b) => b.weekOf.localeCompare(a.weekOf))[0];
   const reviewLines = review ? [`- ${review.weekOf} 주 · 잘된 것: ${review.wins} · 막힌 것: ${review.blocks}`] : [];
@@ -2826,6 +2856,111 @@ const parseAssistantReply = (text, state) => {
     else if (goal && open.some((q) => q.goalId === goal.id && q.title.trim() === title)) reject = "이미 등록된 실행이에요";
     else if (!kind) reject = "활동 유형 없는 실행은 일정 탭에서 관리해요";
     return { key: `p${n}`, title, goalId: goal?.id || null, goalTitle: goal?.title || wanted || "목표 미지정", diff, type, due, kind, reject };
+  });
+  return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
+};
+
+/* The work packet (`오늘 업무 만들기`, 2026-09-17 amendment): the same facts the daily packet states — the CV at the level
+   `cvSummaryOf` shares (never `profile.name`, `birth`, `email`, `phone`, a school or an employer), the goals, the open
+   tasks, the schedule, the contracts — plus what the daily packet never reads: the newest meeting minutes with their
+   progress entries, and yesterday's and today's work items so the assistant does not propose them again. A meeting
+   flagged `aiHidden` contributes its date and title only. No photo, no evidence text, no journal entry.
+   When the text exceeds PACKET_MAX the reductions below run one step at a time, rebuilding after each, until it fits:
+   meetings 6 → 2 (oldest first), then the summary clip 200 → 100 and progress 3 → 1 per meeting, then the schedule rows,
+   then the business lines to the first, then the open tasks, then the work records (the parser dedupes by title on its
+   own), and last meetings 2 → 0. The header, the CV line and the goals are never dropped — about 800 chars of header
+   and 40 per goal line, far under the cap — so the packet always fits. */
+const buildWorkPacket = (state, today) => {
+  const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
+  const goalLines = active.map((g) => {
+    const pc = paceOf(g, state);
+    const krs = (g.krs || []).slice(0, 4).map((kr) => `${kr.title} ${krRemainText(kr, g, state)}`).join(" · ");
+    return `- ${g.title} · ${g.deadline ? `${g.deadline} ${ddayStr(g.deadline)}` : "기한 없음"} · 진행 ${Math.round(pc.p * 100)}% · ${pc.label}${krs ? ` / KR: ${krs}` : ""}`;
+  });
+  const cv = cvSummaryOf(state.profile, today);
+  const cvLines = cv.any ? [`- ${cv.edu} / ${cv.career}`] : [];
+  // Open task rows in the `할 일` tab's own order and group labels; `todoOf` owns the definition of "open".
+  const taskLines = todoOf(state, today).groups.flatMap((grp) => grp.rows
+    .filter((r) => r.kind === "task" && !r.done)
+    .map((r) => `- ${grp.label} · ${r.title} · ${(state.goals || []).find((g) => g.id === r.task?.goalId)?.title || "목표 없음"} · 기한 ${r.date || "없음"}`));
+  const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).map(({ ev, date }) =>
+    `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
+  const bizLines = bizPacketLines(state, today);
+  const meetings = (state.meetings || []).slice().sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
+  const oneLine = (t, n) => String(t || "").trim().replace(/\s*\n+\s*/g, " / ").slice(0, n);
+  const meetingLines = (list, summaryCap, progressN) => list.flatMap((m) => {
+    if (m.aiHidden) return [`- ${m.date} ${m.title}`, "  내용 비공개 (AI에 보내지 않기)"];
+    const project = (state.meetingProjects || []).find((p) => p.id === m.projectId)?.name || "프로젝트 없음";
+    const body = [["요약", m.summary, summaryCap], ["결정", m.decisions, WORK_PACKET_CLIP], ["후속", m.actions, WORK_PACKET_CLIP]]
+      .filter(([, text]) => String(text || "").trim())
+      .map(([label, text, cap]) => `  ${label}: ${oneLine(text, cap)}`);
+    const progress = (m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, progressN)
+      .map((e) => `  진행 ${e.date}: ${oneLine(e.text, WORK_PACKET_CLIP)}`);
+    return [`- ${m.date} [${project}] ${m.title}`, ...body, ...progress];
+  });
+  const yesterday = shiftDay(today, -1);
+  const recordLines = (state.work || []).filter((w) => w.date === yesterday || w.date === today)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || "").localeCompare(b.createdAt || ""))
+    .map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"} ${w.title}${w.note ? ` · 메모: ${oneLine(w.note, 60)}` : ""}`);
+
+  // The knobs the reductions turn; `build` reads them fresh each time.
+  const k = { meetings: meetings.length, summary: WORK_PACKET_SUMMARY, progress: WORK_PACKET_PROGRESS,
+    events: WORK_PACKET_EVENTS, biz: PACKET_BIZ_LINES, tasks: WORK_PACKET_TASKS, records: WORK_PACKET_RECORDS };
+  const build = () => [
+    `[인생 관리 — 오늘 업무 제안 요청 ${today}]`, ...WORK_PACKET_HEAD, "",
+    ...packetSection("이력", cvLines), ...packetSection("목표", goalLines), ...packetSection("열린 할 일", taskLines.slice(0, k.tasks)),
+    ...packetSection(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines.slice(0, k.events)), ...packetSection("사업 (계약·매출)", bizLines.slice(0, k.biz)),
+    ...packetSection(`최근 회의록 (${k.meetings}건)`, meetingLines(meetings.slice(0, k.meetings), k.summary, k.progress)),
+    ...packetSection("업무 기록 (어제·오늘)", recordLines.slice(0, k.records)),
+  ].join("\n");
+  // Each reduction answers true when it tightened something and false once it has nothing left to give.
+  const reductions = [
+    () => k.meetings > 2 && (k.meetings -= 1, true),
+    () => (k.summary > WORK_PACKET_CLIP || k.progress > 1) && (k.summary = WORK_PACKET_CLIP, k.progress = 1, true),
+    () => k.events > 0 && (k.events = 0, true),
+    () => k.biz > 1 && (k.biz = 1, true),
+    () => k.tasks > 0 && (k.tasks = 0, true),
+    () => k.records > 0 && (k.records = 0, true),
+    () => k.meetings > 0 && (k.meetings -= 1, true),
+  ];
+  let out = build();
+  for (const reduce of reductions) while (out.length > PACKET_MAX && reduce()) out = build();
+  return out;
+};
+
+// Reads the JSON block a work reply appends — `data.work` and `data.note` only; `tasks`, `deals`, `events`,
+// `meetings` or any other key is ignored (rule 7 amendment). A proposal is a work item: a title, an optional note,
+// an optional link resolved against the app's own goals, meetings and projects. Nothing here writes state.
+const WORK_LINK_KINDS = ["goal", "meeting", "project"];
+const parseWorkReply = (text, state, today) => {
+  const raw = String(text || "");
+  const m = raw.match(/```json\s*([\s\S]*?)```/i);
+  let data = null;
+  if (m) { try { data = JSON.parse(m[1]); } catch { data = null; } }
+  const targets = {
+    goal: (state.goals || []).filter((g) => g.status === "active").map((g) => ({ id: g.id, name: g.title })),
+    meeting: (state.meetings || []).slice().sort(meetingOrder).map((x) => ({ id: x.id, name: x.title })),
+    project: (state.meetingProjects || []).map((p) => ({ id: p.id, name: p.name })),
+  };
+  // Titles already on today's list, then each accepted proposal in turn — a reply cannot register a title twice.
+  const seen = new Set(workOn(state, today).map((w) => normWorkTitle(w.title)));
+  const proposals = (Array.isArray(data?.work) ? data.work : []).slice(0, WORK_PROPOSAL_MAX).map((t, n) => {
+    const title = String(t?.title || "").trim().slice(0, WORK_LIMITS.title);
+    const note = String(t?.note || "").trim().slice(0, WORK_LIMITS.note);
+    const kind = WORK_LINK_KINDS.includes(t?.link?.kind) ? t.link.kind : null;
+    const wanted = kind && typeof t.link.title === "string" ? t.link.title.trim() : "";
+    let link = null, linkText = "";
+    if (wanted) {
+      const pool = targets[kind];
+      const hit = pool.find((x) => x.name === wanted) || pool.find((x) => x.name.includes(wanted) || wanted.includes(x.name)) || null;
+      link = hit ? { kind, id: hit.id } : null;
+      linkText = link ? workLinkText(state, { link }) : `연결 없음 — ${wanted}`;
+    }
+    let reject = null;
+    if (!title) reject = "제목이 없어요";
+    else if (seen.has(normWorkTitle(title))) reject = "오늘 업무에 이미 있어요";
+    else seen.add(normWorkTitle(title));
+    return { key: `w${n}`, title, note, link, linkText, reject };
   });
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
 };
@@ -3023,10 +3158,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
 
 /* ── State lifecycle ── */
 /**
- * @schema v24 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+ * @schema v25 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
  * `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
  * {
- *   v: 24,
+ *   v: 25,
  *   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
  *              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
  *                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -3059,10 +3194,17 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
  *   meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?,       // trophy, goal or streak (rules 1, 18). A meeting's time lives
  *               summary, decisions?, actions?, eventId?, createdAt,           // only in events; eventId (+ date) points at one occurrence and
- *               taskIds[] }],                                               // nothing is copied from it. Order and storage use are derived.
+ *               taskIds[],                                                 // nothing is copied from it. Order and storage use are derived.
  *                                                                           // taskIds (v24): ids of existing tasks the minutes refer to, at most
  *                                                                           // 10; linking changes no task, and the task sheet's reverse list is
  *                                                                           // derived at render. Deleting a task removes its id here.
+ *               progress: [{ id, date("YYYY-MM-DD"), text }], aiHidden }], // progress (v25): the work that followed the meeting, dated entries,
+ *                                                                           // at most 30 of 300 chars; aiHidden (v25): true = excluded from the
+ *                                                                           // work packet body (its date and title still appear).
+ *   work: [{ id, date("YYYY-MM-DD"), title, note?, done,                   // daily work items (v25): records outside the goal ladder — no
+ *            link?{ kind("goal"|"meeting"|"project"), id },                 // payout, trophy, goal, KR or streak (rules 1, 7, 9, 18); `done` is
+ *            source("manual"|"ai"), createdAt }],                           // a stored fact; the day view, the past-undone list and the link
+ *                                                                           // label are derived.
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -3081,7 +3223,9 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
  * the displayed age (`ageText`) and the total months of practice (`careerMonths`), the calendar export file (`buildIcs`),
  * the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`),
- * and a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`).
+ * a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`),
+ * the work tab's day view, past-undone list and link labels (`workOn`/`workPastOpen`/`workLinkText`),
+ * and the work packet (`buildWorkPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -3188,6 +3332,14 @@ const migrate = (s) => {
     // with an empty list; no other field is changed.
     s = { ...s, v: 24, meetings: (s.meetings || []).map((m) => ({ ...m, taskIds: Array.isArray(m.taskIds) ? m.taskIds : [] })) };
   }
+  if (s.v < 25) {
+    // v25: daily work items — work[], dated records outside the goal ladder (typed by hand or proposed by the assistant
+    // and confirmed by the user) — and two meeting fields: progress[] (dated entries of the work that followed the
+    // meeting) and aiHidden (true = the work packet carries this meeting's date and title only). Records, never tasks:
+    // no payout, trophy, goal, KR or streak (rules 1, 7, 9, 18). Every existing field passes through untouched.
+    s = { ...s, v: 25, work: Array.isArray(s.work) ? s.work : [],
+      meetings: (s.meetings || []).map((m) => ({ ...m, progress: Array.isArray(m.progress) ? m.progress : [], aiHidden: m.aiHidden === true })) };
+  }
   return s;
 };
 
@@ -3199,7 +3351,7 @@ const applyDailyTick = (s) => {
 };
 
 const freshState = (areas) => applyDailyTick({
-  v: 24,
+  v: 25,
   profile: null,
   areas,
   tasks: [],
@@ -3210,6 +3362,7 @@ const freshState = (areas) => applyDailyTick({
   deals: [],
   meetingProjects: [],
   meetings: [],
+  work: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
@@ -3310,15 +3463,26 @@ const demoState = () => {
   s.meetingProjects = [mp2, mp1];
   // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
   const linkedTaskIds = s.tasks.filter((q) => q.title === "이력서 초안 작성" || q.title === "CATIA·도면 연습 1시간").map((q) => q.id);
+  // The newest meeting is flagged `aiHidden` and the second carries one progress entry, so the demo shows both v25 fields.
   s.meetings = [
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
-      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [] },
+      decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [],
+      progress: [], aiHidden: true },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
       summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3),
-      taskIds: linkedTaskIds },
+      taskIds: linkedTaskIds,
+      progress: [{ id: uid(), date: shiftDay(today, -2), text: "월 10시간 한도를 반영한 유지보수 견적서 초안 작성" }], aiHidden: false },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
-      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9), taskIds: [] },
+      summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9), taskIds: [],
+      progress: [], aiHidden: false },
+  ];
+  // Two work items for today (schema v25): one typed by hand and open, one proposed by the assistant and done.
+  // Records, never tasks — neither pays, moves a goal or touches the streak.
+  s.work = [
+    { id: uid(), date: today, title: "○○물산 유지보수 견적서 송부", note: "월 10시간 · 초과분 시간 단가", done: false,
+      link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today },
+    { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today },
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -4484,7 +4648,44 @@ function JournalModal({ state, today, onClose, onSave }) {
   );
 }
 
-/* ── Assistant bridge — copy the packet out, paste the reply back ── */
+/* ── Assistant bridge — copy the packet out, paste the reply back. The send pane, the paste pane and the copy routine
+   are shared by `BridgeModal` (the daily check-in) and `WorkBridgeModal` (`오늘 업무 만들기`); each modal owns its
+   packet, its parser and its confirm view. ── */
+// Copies the packet text: the clipboard API first, then `select()` + `execCommand("copy")` on the read-only textarea.
+const copyPacket = async (taRef, text, onToast) => {
+  const ta = taRef.current;
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); onToast("복사했어요 — AI 채팅에 붙여넣어요"); return; }
+    throw new Error("no clipboard");
+  } catch {
+    try { ta?.select(); document.execCommand("copy"); onToast("복사했어요 — AI 채팅에 붙여넣어요"); }
+    catch { onToast("자동 복사 불가 — 글을 길게 눌러 복사해요"); }
+  }
+};
+function PacketSendPane({ packet, caption, taRef, onCopy, onPaste }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-zinc-500">{caption}</p>
+      <textarea ref={taRef} readOnly value={packet} rows={9}
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs font-mono" />
+      <div className="flex gap-1.5">
+        <button onClick={onCopy} className="flex-1 py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">복사</button>
+        <button onClick={onPaste} className="flex-1 py-3 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-sm">AI 답변 붙여넣기 ›</button>
+      </div>
+    </div>
+  );
+}
+function ReplyPastePane({ reply, setReply, onCheck }) {
+  return (
+    <div className="space-y-3">
+      <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={9}
+        placeholder="AI 답변을 여기에 붙여넣어요"
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+      <button onClick={onCheck} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">답변 확인</button>
+    </div>
+  );
+}
+
 function BridgeModal({ state, today, initialMode, onClose, onImport, onStoreReply }) {
   const [mode, setMode] = useState(initialMode || "send");
   const [reply, setReply] = useState("");
@@ -4495,16 +4696,7 @@ function BridgeModal({ state, today, initialMode, onClose, onImport, onStoreRepl
   const packet = useMemo(() => buildAssistantPacket(state, today), [state, today]);
   const active = (state.goals || []).filter((g) => g.status === "active");
 
-  const copy = async () => {
-    const ta = taRef.current;
-    try {
-      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(packet); onStoreReply(null, "복사했어요 — AI 채팅에 붙여넣어요"); return; }
-      throw new Error("no clipboard");
-    } catch {
-      try { ta?.select(); document.execCommand("copy"); onStoreReply(null, "복사했어요 — AI 채팅에 붙여넣어요"); }
-      catch { onStoreReply(null, "자동 복사 불가 — 글을 길게 눌러 복사해요"); }
-    }
-  };
+  const copy = () => copyPacket(taRef, packet, (msg) => onStoreReply(null, msg));
   const check = () => {
     const r = parseAssistantReply(reply, state);
     setParsed(r);
@@ -4521,22 +4713,10 @@ function BridgeModal({ state, today, initialMode, onClose, onImport, onStoreRepl
   return (
     <Modal title={mode === "send" ? "AI에게 보내기" : "AI 답변 붙여넣기"} onClose={onClose}>
       {mode === "send" ? (
-        <div className="space-y-3">
-          <p className="text-xs text-zinc-500">아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요.</p>
-          <textarea ref={taRef} readOnly value={packet} rows={9}
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs font-mono" />
-          <div className="flex gap-1.5">
-            <button onClick={copy} className="flex-1 py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">복사</button>
-            <button onClick={() => setMode("paste")} className="flex-1 py-3 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-sm">AI 답변 붙여넣기 ›</button>
-          </div>
-        </div>
+        <PacketSendPane packet={packet} taRef={taRef} onCopy={copy} onPaste={() => setMode("paste")}
+          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요." />
       ) : !parsed ? (
-        <div className="space-y-3">
-          <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={9}
-            placeholder="AI 답변을 여기에 붙여넣어요"
-            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
-          <button onClick={check} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">답변 확인</button>
-        </div>
+        <ReplyPastePane reply={reply} setReply={setReply} onCheck={check} />
       ) : (
         <div className="space-y-3">
           <div className="text-sm font-bold">제안 실행 확인 — {parsed.proposals.length}건</div>
@@ -6669,11 +6849,18 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    minutes use 0.64 M chars a year — 52 % of the budget after three years, 87 % after five; completely full records use
    2.26 M a year and cross the budget in about a year and seven months.
    So the caps alone promise nothing, and two facts guard the rest: the tab always states the storage in use, and a
-   save that would cross the budget is refused with the form kept open (`meetingFits` in the root).
+   save that would cross the budget is refused with the form kept open (`recordFits` in the root).
    Task links (v24) add `,"taskIds":[]` = 13 chars to every record and 12 per linked id (a 10-char uid, two quotes,
-   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 3,142. `meetingFits` measures the
-   serialised record, `taskIds` included, so the same guard covers it. */
-const MEETING_LIMITS = { title: 40, attendees: 80, summary: 1500, decisions: 600, actions: 600, tasks: 10 };
+   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 3,142. `recordFits` measures the
+   serialised record, `taskIds` included, so the same guard covers it.
+   Progress entries and the AI flag (v25) add `,"progress":[]` (14) + `,"aiHidden":false` (17) = 31 chars to every
+   record. One entry is `{"id":"…","date":"YYYY-MM-DD","text":""}` ≈ 45 chars + its text (+ 1 comma): a typical
+   80-char entry ≈ 125, a full 300-char entry ≈ 345, and thirty full entries ≈ 10,380 — so a completely full meeting
+   with ten links and thirty full entries ≈ 3,142 + 31 + 10,380 ≈ 13,550 chars. Typical minutes with three typical
+   entries ≈ 850 + 31 + 375 ≈ 1,260 chars; three a working day ≈ 0.95 M chars a year (26 % of the budget a year,
+   about 3 years 10 months before the guard applies). `recordFits` measures the whole record, `progress` included. */
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 1500, decisions: 600, actions: 600, tasks: 10, progress: 300 };
+const MEETING_PROGRESS_MAX = 30;   // progress entries per meeting before `진행사항은 30건까지예요.`
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
 const PROJECT_LIMITS = { name: 40, note: 200 };
 const MEETING_ROWS_SHOWN = 5; // rows per project before `{n}건 더 보기`
@@ -6776,6 +6963,7 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
               <div className="space-y-1.5 mt-3">
                 {shown.map((m) => (
                   <TodoRow key={m.id} lead={{ text: m.date.slice(2), tone: "text-zinc-400 border-zinc-700" }} title={m.title}
+                    marker={m.progress?.length ? <span className="text-xs text-zinc-500 shrink-0">진행 {m.progress.length}건</span> : null}
                     onOpen={() => onOpenMeeting(m.id)} />
                 ))}
               </div>
@@ -6851,6 +7039,7 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   const [decisions, setDecisions] = useState(meeting?.decisions || "");
   const [actions, setActions] = useState(meeting?.actions || "");
   const [eventId, setEventId] = useState(meeting?.eventId || null);
+  const [aiHidden, setAiHidden] = useState(meeting?.aiHidden === true); // v25: keeps this meeting's body out of the work packet
   // Linked task ids. A link whose task was deleted before this edit is dropped here, so it never counts toward the cap.
   const [taskIds, setTaskIds] = useState(() => (meeting?.taskIds || []).filter((id) => (state.tasks || []).some((q) => q.id === id)));
   const [taskQuery, setTaskQuery] = useState(""); // the picker's text filter — view state only, never stored
@@ -6901,6 +7090,9 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       ...(eventId ? { eventId } : {}),
       // Linking stores ids only and never changes a task (rules 1, 9, 18).
       taskIds: taskIds.filter((id) => (state.tasks || []).some((q) => q.id === id)).slice(0, MEETING_LIMITS.tasks),
+      // The form never edits progress entries (the view owns them); the flag is always written as a boolean (v25).
+      progress: meeting?.progress || [],
+      aiHidden,
     };
     const refused = meeting ? onUpdate(meeting.id, next) : onAdd(next);
     if (refused) setErr(refused);
@@ -6975,6 +7167,13 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
             </div>
           )}
         </div>
+        <label className="flex items-start gap-2">
+          <input type="checkbox" checked={aiHidden} onChange={(e) => setAiHidden(e.target.checked)} className="mt-1 shrink-0" />
+          <span className="text-sm text-zinc-200">
+            AI에 보내지 않기
+            <span className="block text-xs text-zinc-600">켜면 오늘 업무 만들기 패킷에 이 회의록의 날짜와 제목만 실려요.</span>
+          </span>
+        </label>
         <p className="text-xs text-zinc-500">전체 녹취가 아니라 요약만 저장해요.</p>
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
@@ -6988,14 +7187,32 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   );
 }
 
-/* ── Meeting view — the full minutes, read from the live record ── */
-function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask }) {
+/* ── Meeting view — the full minutes, read from the live record. The progress log (v25) is added and deleted only
+   here: `onAddProgress(meetingId, text)` answers with an error string ("" = saved) like the meeting form's handlers. ── */
+function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress }) {
+  const [entry, setEntry] = useState(""); // the progress textarea — view state only, never stored
+  const [err, setErr] = useState("");
   const m = (state.meetings || []).find((x) => x.id === meetingId);
   if (!m) return null;
   // A linked id whose task no longer exists is skipped and counted, never cleaned up from here.
   const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean);
   const missing = (m.taskIds || []).length - linked.length;
   const project = (state.meetingProjects || []).find((p) => p.id === m.projectId);
+  // Newest first: by date, then the stored order (the handler prepends, so a same-day entry added later comes first).
+  const progress = (m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const addEntry = () => {
+    const t = entry.trim();
+    if (!t) { setErr("진행사항을 입력해 주세요."); return; }
+    if (t.length > MEETING_LIMITS.progress) { setErr(`진행사항은 ${MEETING_LIMITS.progress}자까지예요 — 지금 ${t.length}자예요.`); return; }
+    if (progress.length >= MEETING_PROGRESS_MAX) { setErr(`진행사항은 ${MEETING_PROGRESS_MAX}건까지예요.`); return; }
+    const refused = onAddProgress(m.id, t);
+    if (refused) { setErr(refused); return; }
+    setEntry(""); setErr("");
+  };
+  const removeEntry = (entryId) => {
+    if (!window.confirm("진행사항을 삭제해요. 계속할까요?")) return;
+    onRemoveProgress(m.id, entryId);
+  };
   const block = (label, text) => (
     <div>
       <SectionLabel>{label}</SectionLabel>
@@ -7010,10 +7227,35 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
           <CvFact label="날짜"><span className="font-mono">{m.date}</span></CvFact>
           <CvFact label="참석자" wrap>{m.attendees || "기록 없음"}</CvFact>
           <CvFact label="일정" wrap>{meetingEventText(state, m)}</CvFact>
+          <CvFact label="AI 전송">{m.aiHidden ? "보내지 않음" : "요약·진행사항 포함"}</CvFact>
         </div>
         {block("요약", m.summary)}
         {block("결정 사항", m.decisions)}
         {block("후속 조치", m.actions)}
+        <div>
+          <div className="flex items-baseline justify-between gap-2">
+            <SectionLabel>진행사항</SectionLabel>
+            <span className="text-xs font-mono text-zinc-500 shrink-0">{progress.length}건</span>
+          </div>
+          {progress.length === 0 ? (
+            <p className="text-sm text-zinc-500">진행사항이 없어요.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {progress.map((e) => (
+                <div key={e.id} className="flex items-start gap-2 bg-zinc-950 rounded-xl px-3 py-2">
+                  <span className="font-mono text-xs text-zinc-500 shrink-0 leading-5">{e.date}</span>
+                  <p className="flex-1 min-w-0 whitespace-pre-wrap break-words text-sm text-zinc-200">{e.text}</p>
+                  <button aria-label="진행사항 삭제" onClick={() => removeEntry(e.id)} className="text-zinc-500 shrink-0 mt-0.5 active:opacity-70"><X size={14} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 space-y-2">
+            <MeetingText value={entry} onChange={setEntry} placeholder="진행사항 추가 — 이 회의 뒤에 이어간 업무를 적어요" rows={2} cap={MEETING_LIMITS.progress} />
+            {err && <p className="text-xs text-rose-400">{err}</p>}
+            <button onClick={addEntry} className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">추가</button>
+          </div>
+        </div>
         <div>
           <SectionLabel>연결된 할 일</SectionLabel>
           {linked.length === 0 && missing === 0 ? (
@@ -7031,6 +7273,242 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
         <button onClick={() => onEdit(m.id)}
           className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">수정</button>
       </div>
+    </Modal>
+  );
+}
+
+/* ───────────────────────── Daily work — dated work items (schema v25) ───────────────────────── */
+/* A work item is a dated record of what the user did or means to do that day — typed by hand or proposed by the
+   assistant and confirmed per item — and never a task: no payout, no trophy, no goal, no KR, no streak, no evidence
+   gate, and nothing here reaches `todoOf`, `agendaOf`, `buildBriefing`, `computeGrades` or `krProgress` (rules 1, 7,
+   8, 9, 18). `done` is the one stored fact; the day view, the past-undone list and the link label are derived at
+   render. An item keeps its date: the tab pages by day, and undone items from earlier days are listed under
+   `지난 미완료` with one button that moves them to today (rule 13 — nothing is hidden). A link to a goal, a meeting or
+   a project is a reference only; a target deleted later is stated as `연결 대상이 삭제됐어요` and never cleaned up
+   (the same policy as a meeting's eventId).
+   Storage arithmetic (string length, the same 3.5 MB budget as the meetings region): the record overhead
+   `{"id":"…","date":"…","title":"","done":false,"source":"manual","createdAt":"…"}` is about 100 chars; with a
+   20-char title, a 30-char note (`,"note":""` + 30) and a link (`,"link":{"kind":"meeting","id":"…"}` ≈ 45) an item
+   is about 200 chars, about 150 without a link. Eight items a day for a year ≈ 2,920 × 150 ≈ 0.44 M chars (12 % of
+   the budget a year); at the cap of 20 a day with every field full (60 + 200 + link ≈ 400 chars) ≈ 2.9 M a year —
+   the tab states the storage in use, the backup path covers the rest, and `recordFits` refuses a save over the
+   budget. */
+const WORK_LIMITS = { title: 60, note: 200, perDay: 20 };
+const WORK_LINK_MEETINGS = 20; // meetings offered by the link picker, newest first
+const WORK_KIND_WORD = { goal: "목표", meeting: "회의록", project: "프로젝트" };
+// The title as the duplicate check sees it: trimmed, every space removed, lower-cased (`parseWorkReply`).
+const normWorkTitle = (t) => String(t || "").trim().replace(/\s+/g, "").toLowerCase();
+
+// The day's items: `createdAt` ascending, then stored order (a stable sort keeps a done item in its place).
+const workOn = (state, date) => (state.work || []).filter((w) => w.date === date)
+  .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+// Undone items dated before today, newest date first — the `지난 미완료` list.
+const workPastOpen = (state, today) => (state.work || []).filter((w) => !w.done && w.date < today)
+  .sort((a, b) => b.date.localeCompare(a.date));
+// The label of one link target, or null when the target no longer exists. One builder for the picker and the rows.
+const workLinkLabel = (state, link) => {
+  if (!link) return null;
+  if (link.kind === "goal") { const g = (state.goals || []).find((x) => x.id === link.id); return g ? `목표 · ${g.title}` : null; }
+  if (link.kind === "meeting") { const m = (state.meetings || []).find((x) => x.id === link.id); return m ? `회의록 · ${m.date} ${m.title}` : null; }
+  if (link.kind === "project") { const p = (state.meetingProjects || []).find((x) => x.id === link.id); return p ? `프로젝트 · ${p.name}` : null; }
+  return null;
+};
+const workLinkText = (state, item) => (item.link ? workLinkLabel(state, item.link) || "연결 대상이 삭제됐어요" : "");
+// The link picker's rows: active goals, the newest meetings, every project — `{ kind, id, label }`.
+const workLinkOptions = (state) => {
+  const row = (kind, id) => ({ kind, id, label: workLinkLabel(state, { kind, id }) });
+  return [
+    ...(state.goals || []).filter((g) => g.status === "active").map((g) => row("goal", g.id)),
+    ...(state.meetings || []).slice().sort(meetingOrder).slice(0, WORK_LINK_MEETINGS).map((m) => row("meeting", m.id)),
+    ...(state.meetingProjects || []).map((p) => row("project", p.id)),
+  ];
+};
+
+function WorkTab({ state, today, onAdd, onOpen, onMove, onBridge }) {
+  const [viewDate, setViewDate] = useState(today); // the day shown — component state only, never stored (rule 9)
+  const isToday = viewDate === today;
+  const used = useMemo(() => storageUsedWith(state), [state]);
+  const items = useMemo(() => workOn(state, viewDate), [state, viewDate]);
+  const past = useMemo(() => (isToday ? workPastOpen(state, today) : []), [state, today, isToday]);
+  const done = items.filter((w) => w.done).length;
+  const ai = items.filter((w) => w.source === "ai").length;
+  const marker = (w) => (WORK_KIND_WORD[w.link?.kind]
+    ? <span className="text-xs text-zinc-600 shrink-0">{WORK_KIND_WORD[w.link.kind]}</span>
+    : null);
+  const sourceLead = (w) => (w.source === "ai"
+    ? { text: "AI", tone: "text-violet-300 border-violet-700" }
+    : { text: "수기", tone: "text-zinc-400 border-zinc-700" });
+  const pager = "w-8 h-8 rounded-lg border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5";
+
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-2">
+          <SectionLabel tone="text-cyan-400">{isToday ? `오늘 업무 — ${today}` : `업무 — ${viewDate}`}</SectionLabel>
+          <button onClick={() => onAdd(viewDate)}
+            className="shrink-0 px-3.5 py-2.5 rounded-xl bg-cyan-400 text-zinc-950 text-sm font-bold flex items-center gap-1 active:translate-y-0.5">
+            <Plus size={14} /> 업무 추가
+          </button>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => setViewDate(shiftDay(viewDate, -1))} className={pager}>‹</button>
+          <button onClick={() => setViewDate(today)} disabled={isToday}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">오늘</button>
+          <button onClick={() => setViewDate(shiftDay(viewDate, 1))} className={pager}>›</button>
+          {/* On the pager row, not beside `업무 추가`: the label, both buttons and their gaps exceed the 326 px a 390 px screen leaves */}
+          <button onClick={onBridge}
+            className="ml-auto shrink-0 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">AI로 만들기 ›</button>
+        </div>
+        <p className="text-xs text-zinc-600 mt-2">업무는 기록이에요 — 목표·실행·점수에 반영되지 않아요.</p>
+        {/* Fragments are nowrap so a 390 px line breaks only between them */}
+        <p className="text-xs font-mono text-zinc-400 mt-2">
+          <span className="whitespace-nowrap">남음 {items.length - done}건</span>{" · "}
+          <span className="whitespace-nowrap">완료 {done}건</span>{" · "}
+          <span className="whitespace-nowrap">AI 제안 {ai}건</span>{" · "}
+          <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / 3.5MB</span>
+        </p>
+      </section>
+
+      {past.length > 0 && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+          <div className="flex items-center justify-between gap-2">
+            <SectionLabel tone="text-rose-400">지난 미완료 {past.length}건</SectionLabel>
+            <button onClick={() => onMove(past.map((w) => w.id))}
+              className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">오늘로 옮기기</button>
+          </div>
+          <div className="space-y-1.5">
+            {past.map((w) => (
+              <TodoRow key={w.id} lead={{ text: w.date.slice(5), tone: `${TODO_TONE.overdue} border-zinc-700` }} title={w.title}
+                marker={marker(w)} onOpen={() => onOpen(w.id)} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        {items.length === 0 ? (
+          <p className="text-sm text-zinc-500">{isToday ? "오늘 업무가 없어요." : "이 날짜에는 업무가 없어요."}</p>
+        ) : (
+          <div className="space-y-1.5">
+            {items.map((w) => (
+              <TodoRow key={w.id} lead={sourceLead(w)} title={w.title} done={w.done} marker={marker(w)} onOpen={() => onOpen(w.id)} />
+            ))}
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
+/* ── Work sheet — one form for add, edit, completion and deletion. `onAdd` / `onUpdate` answer with an error string
+   ("" = saved), so the per-day cap or the storage guard keeps the form open with everything typed. ── */
+function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggle, onRemove }) {
+  const linkKey = (l) => (l ? `${l.kind}:${l.id}` : "");
+  const [title, setTitle] = useState(work?.title || "");
+  const [note, setNote] = useState(work?.note || "");
+  const [link, setLink] = useState(linkKey(work?.link));
+  const [err, setErr] = useState("");
+  const options = useMemo(() => workLinkOptions(state), [state]);
+  // A link whose target was deleted stays selectable as itself, so saving the sheet does not silently drop it.
+  const stale = link && !options.some((o) => linkKey(o) === link) ? link : "";
+  const submit = () => {
+    const t = title.trim(), n = note.trim();
+    if (!t) { setErr("업무 제목을 입력해 주세요."); return; }
+    if (t.length > WORK_LIMITS.title) { setErr(`업무 제목은 ${WORK_LIMITS.title}자까지예요 — 지금 ${t.length}자예요.`); return; }
+    if (n.length > WORK_LIMITS.note) { setErr(`메모는 ${WORK_LIMITS.note}자까지예요 — 지금 ${n.length}자예요.`); return; }
+    const sep = link.indexOf(":");
+    const picked = sep > 0 ? { kind: link.slice(0, sep), id: link.slice(sep + 1) } : null;
+    // Only non-empty optional fields are written, so a cleared note or link disappears from the record.
+    const next = { date: work?.date || date || today, title: t, ...(n ? { note: n } : {}), ...(picked ? { link: picked } : {}) };
+    const refused = work ? onUpdate(work.id, next) : onAdd(next);
+    if (refused) setErr(refused);
+  };
+  return (
+    <Modal title={work ? "업무" : "업무 추가"} onClose={onClose}>
+      <div className="space-y-3">
+        {work && (
+          <div className="space-y-1.5">
+            <CvFact label="날짜"><span className="font-mono">{work.date}</span></CvFact>
+            <CvFact label="출처">{work.source === "ai" ? "AI 제안" : "수기"}</CvFact>
+            <CvFact label="상태">{work.done ? "완료" : "미완료"}</CvFact>
+            <CvFact label="연결" wrap>{workLinkText(state, work) || "연결 없음"}</CvFact>
+          </div>
+        )}
+        <BizField value={title} onChange={setTitle} placeholder="업무 제목 — 예: 견적서 송부" />
+        <MeetingText value={note} onChange={setNote} placeholder="메모 (선택)" rows={3} cap={WORK_LIMITS.note} />
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">연결 (선택)</div>
+          <select value={link} onChange={(e) => setLink(e.target.value)}
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm">
+            <option value="">연결 안 함</option>
+            {stale && <option value={stale}>연결 대상이 삭제됐어요</option>}
+            {options.map((o) => <option key={linkKey(o)} value={linkKey(o)}>{o.label}</option>)}
+          </select>
+        </div>
+        <p className="text-xs text-zinc-600">업무는 기록이에요 — 목표·실행·점수에 반영되지 않아요.</p>
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
+          {work ? "저장" : "등록"}
+        </button>
+        {work && (
+          <>
+            <button onClick={() => onToggle(work.id)}
+              className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">
+              {work.done ? "완료 취소" : "완료로 표시"}
+            </button>
+            <button onClick={() => onRemove(work.id)} className="w-full py-2.5 rounded-xl border border-rose-800 text-rose-300 font-bold text-xs">삭제</button>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Work bridge — `오늘 업무 만들기`: the work packet out, the reply's `work` proposals back, each ticked by the user
+   before it becomes a record with `source: "ai"` (rule 7 amendment 2026-09-17). The raw reply is not stored: it would
+   overwrite the day's journal reply, and nothing derived is stored (rule 9). Shares the send and paste panes with
+   `BridgeModal`; the confirm view is its own, since a work proposal has no goal, difficulty or type to pick. ── */
+function WorkBridgeModal({ state, today, onClose, onImport, onToast }) {
+  const [mode, setMode] = useState("send");
+  const [reply, setReply] = useState("");
+  const [parsed, setParsed] = useState(null);
+  const [picked, setPicked] = useState({});
+  const taRef = useRef(null);
+  const packet = useMemo(() => buildWorkPacket(state, today), [state, today]);
+  const check = () => {
+    const r = parseWorkReply(reply, state, today);
+    setParsed(r);
+    setPicked(Object.fromEntries(r.proposals.filter((p) => !p.reject).map((p) => [p.key, true])));
+  };
+  const confirm = () => onImport((parsed?.proposals || []).filter((p) => picked[p.key] && !p.reject));
+
+  return (
+    <Modal title={mode === "send" ? "오늘 업무 만들기" : "AI 답변 붙여넣기"} onClose={onClose}>
+      {mode === "send" ? (
+        <PacketSendPane packet={packet} taRef={taRef} onCopy={() => copyPacket(taRef, packet, onToast)} onPaste={() => setMode("paste")}
+          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요." />
+      ) : !parsed ? (
+        <ReplyPastePane reply={reply} setReply={setReply} onCheck={check} />
+      ) : (
+        <div className="space-y-3">
+          <div className="text-sm font-bold">제안 업무 확인 — {parsed.proposals.length}건</div>
+          {parsed.note && <p className="text-xs text-zinc-400">{parsed.note}</p>}
+          {parsed.proposals.length ? parsed.proposals.map((p) => (
+            <label key={p.key} className={`flex items-start gap-2 bg-zinc-950 rounded-xl p-3 ${p.reject ? "opacity-50" : ""}`}>
+              <input type="checkbox" disabled={!!p.reject} checked={!!picked[p.key]}
+                onChange={(e) => setPicked((s) => ({ ...s, [p.key]: e.target.checked }))} className="mt-0.5" />
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-semibold truncate">{p.title}</span>
+                <span className="block text-xs text-zinc-500 break-words">{p.linkText || "연결 없음"}{p.note ? ` · ${p.note}` : ""}</span>
+                {p.reject && <span className="block text-xs text-rose-400 mt-0.5">{p.reject}</span>}
+              </span>
+            </label>
+          )) : (
+            <p className="text-xs text-zinc-500">제안 업무 없음 — 등록할 항목이 없어요.</p>
+          )}
+          <button onClick={confirm} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">선택한 업무 등록</button>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -7519,15 +7997,24 @@ export default function LifeManager() {
   const setBizView = (v) => setState((prev) => ({ ...prev, ui: { ...(prev.ui || {}), bizView: v } }));
 
   /* Meetings — project minutes. A record, never a task: these handlers write `meetingProjects` and `meetings` and
-     nothing else — no act, tasks, goals, areas, room, exams or events (rules 1, 18). */
-  // Whether a meeting record still fits the storage budget, counted in string length like `storageUsedBytes`:
-  // the storage in use with the current state, plus the record, minus the record it replaces when editing.
-  const meetingFits = (next, prevLen = 0) => {
+     nothing else — no act, tasks, goals, areas, room, exams, events or work (rules 1, 18). */
+  // Whether a record (minutes, a progress entry, a work item) still fits the storage budget, counted in string length
+  // like `storageUsedBytes`: the storage in use with the current state, plus the record, minus the record it replaces
+  // when editing. `noun` is the object-marked word of the refusal (`회의록을` / `진행사항을` / `업무를`) — no grammar here.
+  const recordFits = (next, prevLen = 0, noun = "회의록을") => {
     const used = storageUsedWith(state);
     return used + JSON.stringify(next).length - prevLen <= STORAGE_BUDGET
       ? ""
-      : `저장 공간이 부족해요 — 현재 ${mbText(used)}MB 사용 중이라 회의록을 저장하지 않았어요. 백업을 내보낸 뒤 오래된 회의록이나 사진을 지워요.`;
+      : `저장 공간이 부족해요 — 현재 ${mbText(used)}MB 사용 중이라 ${noun} 저장하지 않았어요. 백업을 내보낸 뒤 오래된 회의록이나 사진을 지워요.`;
   };
+  // Replaces one meeting record in place; the caller has already built and budget-checked it.
+  const putMeeting = (rec) => setState((prev) => {
+    const s = structuredClone(prev);
+    const i = (s.meetings || []).findIndex((m) => m.id === rec.id);
+    if (i < 0) return prev;
+    s.meetings[i] = rec;
+    return s;
+  });
   const addProject = (p) => {
     setState((prev) => {
       const s = structuredClone(prev);
@@ -7559,7 +8046,7 @@ export default function LifeManager() {
   };
   const addMeeting = (next) => {
     const rec = { id: uid(), ...next, createdAt: today };
-    const refused = meetingFits(rec);
+    const refused = recordFits(rec);
     if (refused) return refused;
     setState((prev) => {
       const s = structuredClone(prev);
@@ -7574,15 +8061,9 @@ export default function LifeManager() {
     const cur = (state.meetings || []).find((m) => m.id === id);
     if (!cur) return "";
     const rec = { id: cur.id, ...next, createdAt: cur.createdAt }; // the form replaces the record, keeping id and createdAt
-    const refused = meetingFits(rec, JSON.stringify(cur).length);
+    const refused = recordFits(rec, JSON.stringify(cur).length);
     if (refused) return refused;
-    setState((prev) => {
-      const s = structuredClone(prev);
-      const i = (s.meetings || []).findIndex((m) => m.id === id);
-      if (i < 0) return prev;
-      s.meetings[i] = rec;
-      return s;
-    });
+    putMeeting(rec);
     setModal(null);
     showToast({ msg: "회의록을 수정했어요" });
     return "";
@@ -7594,6 +8075,93 @@ export default function LifeManager() {
     setState((prev) => ({ ...prev, meetings: (prev.meetings || []).filter((x) => x.id !== id) }));
     setModal(null);
     showToast({ msg: "회의록을 삭제했어요" });
+  };
+  // Progress entries (v25) grow an existing meeting record and touch nothing else — no tasks, goals, act, room,
+  // events or work. The view stays open, so the sheet shows the new entry at once.
+  const addProgress = (meetingId, text) => {
+    const cur = (state.meetings || []).find((m) => m.id === meetingId);
+    if (!cur) return "";
+    if ((cur.progress || []).length >= MEETING_PROGRESS_MAX) return `진행사항은 ${MEETING_PROGRESS_MAX}건까지예요.`;
+    const rec = { ...cur, progress: [{ id: uid(), date: today, text }, ...(cur.progress || [])] };
+    const refused = recordFits(rec, JSON.stringify(cur).length, "진행사항을");
+    if (refused) return refused;
+    putMeeting(rec);
+    showToast({ msg: "진행사항을 추가했어요" });
+    return "";
+  };
+  const removeProgress = (meetingId, entryId) => {
+    const cur = (state.meetings || []).find((m) => m.id === meetingId);
+    if (!cur) return;
+    putMeeting({ ...cur, progress: (cur.progress || []).filter((e) => e.id !== entryId) });
+    showToast({ msg: "진행사항을 삭제했어요" });
+  };
+
+  /* Daily work — dated work items (v25). A record, never a task: these handlers write `work` and nothing else — no
+     act, tasks, goals, areas, room, exams, events or meetings (rules 1, 9, 18). No streak, no trophy, no KR. */
+  const writeWork = (fn) => setState((prev) => {
+    const s = structuredClone(prev);
+    s.work = fn(s.work || []);
+    return s;
+  });
+  const workCapText = (n) => `업무는 하루 ${WORK_LIMITS.perDay}건까지예요${n == null ? "." : ` — ${n}건만 옮길 수 있어요.`}`;
+  const addWork = (next) => {
+    if (workOn(state, next.date).length >= WORK_LIMITS.perDay) return workCapText();
+    const rec = { id: uid(), ...next, done: false, source: "manual", createdAt: today };
+    const refused = recordFits(rec, 0, "업무를");
+    if (refused) return refused;
+    writeWork((list) => [rec, ...list]);
+    setModal(null);
+    showToast({ msg: "업무를 등록했어요" });
+    return "";
+  };
+  const updateWork = (id, next) => {
+    const cur = (state.work || []).find((w) => w.id === id);
+    if (!cur) return "";
+    // The sheet replaces title, note and link; id, date, done, source and createdAt are kept.
+    const rec = { id: cur.id, date: cur.date, title: next.title, ...(next.note ? { note: next.note } : {}), ...(next.link ? { link: next.link } : {}),
+      done: cur.done, source: cur.source, createdAt: cur.createdAt };
+    const refused = recordFits(rec, JSON.stringify(cur).length, "업무를");
+    if (refused) return refused;
+    writeWork((list) => list.map((w) => (w.id === id ? rec : w)));
+    setModal(null);
+    showToast({ msg: "업무를 수정했어요" });
+    return "";
+  };
+  const toggleWork = (id) => {
+    const cur = (state.work || []).find((w) => w.id === id);
+    if (!cur) return;
+    writeWork((list) => list.map((w) => (w.id === id ? { ...w, done: !w.done } : w)));
+    setModal(null);
+    showToast({ msg: cur.done ? "완료를 취소했어요" : "완료로 표시했어요" });
+  };
+  const removeWork = (id) => {
+    const cur = (state.work || []).find((w) => w.id === id);
+    if (!cur) return;
+    if (!window.confirm(`${cur.title} 업무를 삭제해요. 계속할까요?`)) return;
+    writeWork((list) => list.filter((w) => w.id !== id));
+    setModal(null);
+    showToast({ msg: "업무를 삭제했어요" });
+  };
+  // Sets `date = today` on the given items, newest first, as far as today's cap allows; the rest stay where they are.
+  const moveWorkToToday = (ids) => {
+    const room = Math.max(0, WORK_LIMITS.perDay - workOn(state, today).length);
+    const wanted = (state.work || []).filter((w) => ids.includes(w.id) && w.date !== today)
+      .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || ""));
+    const moving = new Set(wanted.slice(0, room).map((w) => w.id));
+    if (moving.size) writeWork((list) => list.map((w) => (moving.has(w.id) ? { ...w, date: today } : w)));
+    showToast({ msg: moving.size < wanted.length ? workCapText(moving.size) : `미완료 ${moving.size}건을 오늘로 옮겼어요` });
+  };
+  // Registers the ticked work proposals as today's items with `source: "ai"`, the first `n` that fit today's cap. An
+  // unresolved link is simply omitted. The raw reply is not stored anywhere — it would overwrite the day's journal reply.
+  const importWork = (list) => {
+    const room = Math.max(0, WORK_LIMITS.perDay - workOn(state, today).length);
+    const made = list.slice(0, room).map((p) => ({ id: uid(), date: today, title: p.title, ...(p.note ? { note: p.note } : {}),
+      ...(p.link ? { link: p.link } : {}), done: false, source: "ai", createdAt: today }));
+    const refused = recordFits(made, 0, "업무를");
+    if (refused) { showToast({ msg: refused }); return; }
+    if (made.length) writeWork((items) => [...made, ...items]);
+    setModal(null);
+    showToast({ msg: made.length < list.length ? `업무는 하루 ${WORK_LIMITS.perDay}건까지예요 — ${made.length}건만 등록했어요.` : `AI 제안 업무 ${made.length}건 등록` });
   };
 
   /* Daily assistant */
@@ -7772,6 +8340,7 @@ export default function LifeManager() {
     ["home", "프로필", IdCard],
     ["goals", "목표", Target],
     ["tasks", "할 일", ClipboardList],
+    ["work", "업무", ListChecks],
     ["schedule", "일정", CalendarDays],
     ["meetings", "미팅", MessagesSquare],
     ["biz", "사업", Briefcase],
@@ -7819,6 +8388,12 @@ export default function LifeManager() {
             onGoBiz={() => { setBizView("deals"); setTab("biz"); }}
             onBriefing={() => setModal({ type: "briefing" })} />
         )}
+        {tab === "work" && (
+          <WorkTab state={state} today={today}
+            onAdd={(date) => setModal({ type: "work", date })}
+            onOpen={(workId) => setModal({ type: "work", workId })}
+            onMove={moveWorkToToday} onBridge={() => setModal({ type: "workBridge" })} />
+        )}
         {tab === "schedule" && (
           <ScheduleTab state={state} today={today}
             onAdd={(date) => setModal({ type: "event", date })}
@@ -7842,7 +8417,7 @@ export default function LifeManager() {
         )}
       </main>
 
-      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-6 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
+      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-7 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
         {NAV.map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
@@ -7940,7 +8515,16 @@ export default function LifeManager() {
       {modal?.type === "meetingView" && (
         <MeetingViewModal state={state} meetingId={modal.meetingId} today={today} onClose={() => setModal(null)}
           onEdit={(meetingId) => setModal({ type: "meeting", meetingId })}
-          onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })} />
+          onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })}
+          onAddProgress={addProgress} onRemoveProgress={removeProgress} />
+      )}
+      {/* Work items — records outside the goal ladder: no payout, no goal, no streak (rules 1, 9, 18) */}
+      {modal?.type === "work" && (
+        <WorkModal state={state} today={today} date={modal.date} work={(state.work || []).find((w) => w.id === modal.workId)}
+          onClose={() => setModal(null)} onAdd={addWork} onUpdate={updateWork} onToggle={toggleWork} onRemove={removeWork} />
+      )}
+      {modal?.type === "workBridge" && (
+        <WorkBridgeModal state={state} today={today} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />

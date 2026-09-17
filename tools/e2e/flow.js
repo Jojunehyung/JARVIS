@@ -69,7 +69,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version and CV records", async () => {
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
-    if (st?.v !== 24) throw new Error("fresh save schema v" + st?.v + " (expected 24)");
+    if (st?.v !== 25) throw new Error("fresh save schema v" + st?.v + " (expected 25)");
     const p = st.profile || {};
     if (p.name !== "E2E테스터" || p.nick !== "E2E닉" || p.birth !== "1998-05-14") throw new Error("personal facts not stored: " + JSON.stringify({ name: p.name, nick: p.nick, birth: p.birth }));
     const e0 = (p.edus || [])[0] || {};
@@ -285,10 +285,10 @@ module.exports = async (h) => {
   await shot("home-cv");
 
   // ── Tab sweep + persistence
-  for (const tab of ["프로필", "할 일", "목표"]) {
+  for (const tab of ["프로필", "할 일", "업무", "목표"]) {
     await step(`switch tab: ${tab}`, async () => { await clickTab(tab); });
   }
-  await step("bottom nav order and one-line labels (profile, goals, to-do, schedule, meetings, business)", async () => {
+  await step("bottom nav order and one-line labels (profile, goals, to-do, work, schedule, meetings, business)", async () => {
     const nav = await page.evaluate(() => ({
       labels: [...document.querySelectorAll("nav button")].map((b) => (b.innerText || "").trim()),
       cls: document.querySelector("nav")?.className || "",
@@ -296,9 +296,9 @@ module.exports = async (h) => {
         text: (e.innerText || "").trim(), height: e.getBoundingClientRect().height, sw: e.scrollWidth, cw: e.clientWidth,
       })),
     }));
-    const want = ["프로필", "목표", "할 일", "일정", "미팅", "사업"];
+    const want = ["프로필", "목표", "할 일", "업무", "일정", "미팅", "사업"];
     if (nav.labels.join("·") !== want.join("·")) throw new Error("nav order: " + nav.labels.join("·"));
-    if (!nav.cls.includes("grid-cols-6")) throw new Error("the nav bar is not a six-column grid: " + nav.cls);
+    if (!nav.cls.includes("grid-cols-7")) throw new Error("the nav bar is not a seven-column grid: " + nav.cls);
     if (nav.spans.length !== want.length) throw new Error(`${nav.spans.length} nav label spans, expected ${want.length}`);
     for (const sp of nav.spans) {
       if (sp.height > 18) throw new Error(`the nav label "${sp.text}" wraps: ${sp.height}px tall`);
@@ -337,6 +337,7 @@ module.exports = async (h) => {
   await require("./flow8.js")(h);
   await require("./flow9.js")(h);
   await require("./flow10.js")(h); // before flow4, which replaces the save
+  await require("./flow11.js")(h); // before flow4, which replaces the save
   await require("./flow4.js")(h);
   await require("./flow6.js")(h);
 
@@ -366,9 +367,11 @@ module.exports = async (h) => {
     if (!res.grades) throw new Error("home does not show the grade rows after the area line was tapped");
   });
   await step("demo — sweep every tab", async () => {
-    for (const tab of ["할 일", "목표", "일정", "미팅", "사업", "프로필"]) {
+    for (const tab of ["할 일", "업무", "목표", "일정", "미팅", "사업", "프로필"]) {
       await clickTab(tab);
-      // The demo reproduces the two 2026-09-16 features: synthetic minutes, and an exact exam score on the CV.
+      // The demo reproduces the two 2026-09-16 features: synthetic minutes, and an exact exam score on the CV —
+      // and the 2026-09-17 work tab: one manual item open, one assistant-proposed item done.
+      if (tab === "업무") await expectText("남음 1건 · 완료 1건 · AI 제안 1건");
       if (tab === "미팅") await expectText("프로젝트 2개 · 회의록 3건");
       if (tab === "프로필") await expectText("TOEIC L&R 735");
     }
