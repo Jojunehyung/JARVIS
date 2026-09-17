@@ -47,9 +47,14 @@
             monthly?, costMonthly?, months?, startMonth?("YYYY-MM"),          // payment stamps; months, totals, margin and the
             paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
   meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
-  meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?,       // trophy, goal or streak (rules 1, 18). A meeting's time lives
-              summary, decisions?, actions?, eventId?, createdAt,           // only in events; eventId (+ date) points at one occurrence and
+  meetings: [{ id, projectId(string | null), date("YYYY-MM-DD"), title, attendees?,   // trophy, goal or streak (rules 1, 18). A meeting's time lives
+              summary, decisions?, actions?, transcript?, eventId?, createdAt,       // only in events; eventId (+ date) points at one occurrence and
               taskIds[],                                                 // nothing is copied from it. Order and storage use are derived.
+                                                                          // projectId null (2026-09-17) = an urgent memo with no project, listed
+                                                                          // under `프로젝트 없음 · 긴급 메모`; no backfill — every reader tolerates null.
+                                                                          // transcript (2026-09-17, optional, no migration): the pasted transcription
+                                                                          // as pasted, at most 30,000 chars; read only by the meeting form and view,
+                                                                          // never by a packet, the calendar file or the prep card (SECURITY.md).
                                                                           // taskIds (v24): ids of existing tasks the minutes refer to, at most
                                                                           // 10; linking changes no task, and the task sheet's reverse list is
                                                                           // derived at render. Deleting a task removes its id here.
@@ -85,7 +90,8 @@ the meetings tab's project order, row order and storage line (`meetingOrder`/`st
 a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`),
 the work tab's day view with the carried undone items and link labels (`workOn` with `today`/`workLinkText`),
 the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitFollowUpText`), the minutes row's
-`후속 {open}/{total}` marker, and the work packet (`buildWorkPacket`).
+`후속 {open}/{total}` marker, the memo group of the meetings tab and a transcript's `{n}자` length, and the work packet
+(`buildWorkPacket`).
 ```
 
 ## Fresh-state defaults (`freshState`)
@@ -209,7 +215,15 @@ const demoState = () => {
   // two open of three. Its id is a const so both sides of the link can name it.
   const mtgUpkeepId = uid();
   const fuA = { id: uid(), text: "긴급 대응 기준 초안 공유", mine: true, due: shiftDay(today, 2), done: false };
+  // An urgent memo (2026-09-17): no project, a pasted transcript, one progress entry, one follow-up owned by someone
+  // else so the demo work list is unchanged.
   s.meetings = [
+    { id: uid(), projectId: null, date: shiftDay(today, -1), title: "긴급 메모 — ◇◇스튜디오 전화",
+      summary: "예약 페이지 개편 문의 — 견적 범위와 일정 질문. 기존 예약 데이터 유지 필수.",
+      transcript: "네, 예약 페이지 개편 건으로 전화드렸어요. 지금 페이지가 모바일에서 예약 버튼이 잘 안 눌린다는 얘기가 계속 나와서요.\n일단 예약 폼이랑 결제 연결까지 한 번에 바꾸고 싶은데, 기간이 얼마나 걸릴지, 그리고 견적이 어느 정도 나올지 먼저 알고 싶어요. 다음 주 수요일까지 초안이라도 받을 수 있을까요?\n아, 그리고 기존 예약 데이터는 그대로 가져가야 해요. 사진 업로드 기능도 있으면 좋겠는데 그건 나중에 얘기해도 돼요. 네, 그럼 메일로 정리해서 보내 주세요.",
+      createdAt: shiftDay(today, -1), taskIds: [],
+      progress: [{ id: uid(), date: today, text: "개편 범위 정리 — 예약 폼·결제 연결·데이터 이관, 사진 업로드는 2차" }], aiHidden: false,
+      followUps: [{ id: uid(), text: "예약 페이지 개편 견적서 초안", mine: false, due: shiftDay(today, 3), done: false }] },
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
       decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [],
@@ -288,19 +302,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 4908 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 4908 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 4908 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 6622 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 6855 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 8082 | App root |
-| `liferpg-img-${slot}` | 8122 | App root |
-| `liferpg-img-ev-${id}` | 8145 | App root |
-| `liferpg-img-ev-${q.id}` | 8330 | App root |
-| `liferpg-img-ev-${t.id}` | 8847 | App root |
-| `liferpg-img-study-${t.id}-1` | 8847 | App root |
-| `liferpg-img-study-${t.id}-2` | 8847 | App root |
-| `liferpg-img-folio-${f.id}` | 8853 | App root |
+| `liferpg-img-ev-${task.id}` | 4923 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 4923 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 4923 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 6637 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 6870 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 8183 | App root |
+| `liferpg-img-${slot}` | 8223 | App root |
+| `liferpg-img-ev-${id}` | 8246 | App root |
+| `liferpg-img-ev-${q.id}` | 8431 | App root |
+| `liferpg-img-ev-${t.id}` | 8957 | App root |
+| `liferpg-img-study-${t.id}-1` | 8957 | App root |
+| `liferpg-img-study-${t.id}-2` | 8957 | App root |
+| `liferpg-img-folio-${f.id}` | 8963 | App root |
 
 ## Demo data (`demoState`)
 

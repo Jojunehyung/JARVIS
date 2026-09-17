@@ -5,13 +5,23 @@ the tab only for storing meeting content, because an automated meeting workflow 
 paid features the app deliberately does not have. `미팅` is storage only: hand-written or pasted minutes grouped
 by project, in the user's own words, never generated, never sent anywhere, never scored.
 
+Since 2026-09-17, the tab also holds **urgent memos** — meetings with no project (`projectId: null`), listed
+under their own group `프로젝트 없음 · 긴급 메모` — and an optional **transcript** (`meetings[].transcript`) kept
+exactly as pasted, up to 30,000 characters. This supersedes the "full transcripts are not stored" sentence below
+from 2026-09-16: the app still transcribes nothing itself (no recording, no speech-to-text, no API); the user
+pastes text they transcribed themselves, and the app stores it verbatim and never processes it — no summary, no
+split, no judgement ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
+
 ## What a meeting record is, and is not
 A record of what was said, never a task and never an appointment:
 ```
 meetingProjects: [{ id, name, note?, createdAt }]
-meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?, summary, decisions?, actions?, eventId?, createdAt, taskIds[],
+meetings: [{ id, projectId(string | null), date("YYYY-MM-DD"), title, attendees?, summary, decisions?, actions?, transcript?, eventId?, createdAt, taskIds[],
              progress[], aiHidden, followUps[{ id, text, mine, due?, done, workId? }] }]
 ```
+`projectId` may be `null` since 2026-09-17: an urgent memo with no project. No backfill was needed — the form
+always writes the key, so an absent `projectId` never occurs, and `null` is a value every existing reader now
+tolerates or has been updated to state (below).
 No time, place, repeat, reminder, status, goal, points or evidence field: **the time of a meeting lives only in
 `일정`** — this is the 2026-09-11 decision that removed the `meet` activity kind because a meeting overlaps the
 schedule tab, applied consistently here ([decision log](../design-docs/decision-log.md)). `date` is the day the
@@ -43,8 +53,13 @@ to show the link on both sides. A link is a reference: it pays nothing, complete
 streak ([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 9](../design-docs/core-beliefs.md#rule-9)). The
 reverse list on the task sheet (`meetingsOfTask`) is computed at render, never stored.
 
-Full transcripts are not stored, by the user's own decision: `summary` is a hand-written or pasted minutes-style
-summary, not a recording or a verbatim transcript.
+`summary` is a hand-written or pasted minutes-style summary, not a recording. **Superseded 2026-09-17**: `summary`
+is still that, but a meeting may separately carry `transcript` (optional, ≤ 30,000 chars) — the pasted text kept
+exactly as pasted, no normalisation, no clipping beyond the cap. It is written in `MeetingModal` (collapsed
+behind a `녹취록 붙여넣기` button while empty), read collapsed in `MeetingViewModal` (`녹취록 {n}자 · 펼치기`) and
+cleared on its own (`녹취록 지우기`, below) — never merged with `summary`, never summarised, split or judged by
+the app. Only the form, the view, `clearTranscript`, `recordFits` (through `JSON.stringify` of the whole record)
+and `demoState` read it; no packet, the calendar file or the prep card do ([Rule 7](../design-docs/core-beliefs.md#rule-7), [SECURITY.md](../SECURITY.md)).
 
 A meeting is a record, never a task ([Rule 1](../design-docs/core-beliefs.md#rule-1),
 [Rule 18](../design-docs/core-beliefs.md#rule-18)): no payout, no trophy, no goal, no streak, no evidence gate.
@@ -54,7 +69,7 @@ read `meetingProjects` or `meetings` — nothing here reaches the to-do list, th
 calendar file ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
 
 ## Caps and the storage arithmetic
-`MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17; `progress` is new at schema v25, `followUp` at schema v26),
+`MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200, transcript: 30000 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17; `progress` is new at schema v25, `followUp` at schema v26, `transcript` (2026-09-17, optional field, no migration) is `녹취록은` — placed last among the field caps, so the refusal order is title, attendees, summary, decisions, actions, then transcript, before the follow-up-row cap),
 `PROJECT_LIMITS = { name: 40, note: 200 }`. 5,000 Hangul characters is about three pages of key points — still short of a transcript, which runs about 21,000 characters for a 45-minute meeting.
 `MEETING_TASK_ROWS = 30` shapes the task-link picker (below); `MEETING_PROGRESS_MAX = 30` caps the progress
 entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per meeting, refusing with
@@ -88,6 +103,20 @@ entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per m
   `recordFits` refuses). Each `mine` follow-up also creates a work item — see [daily-work.md](daily-work.md)'s
   storage arithmetic; `commitMeeting` measures the meeting record **plus every work item its reconcile creates**
   before writing either.
+- Transcript (2026-09-17): `,"transcript":""` adds **15 chars**, only when a transcript exists; `"projectId":null`
+  (16 chars) against `"projectId":"xxxxxxxxxx"` (24) makes a project-less memo 8 chars **smaller**. `JSON.stringify`
+  writes every line break as `\n` (2 chars) and escapes every `"`, so a full 30,000-char transcript with ~300 line
+  breaks stores as ≈ **30,315 chars**; a completely full meeting with one reaches about 25,825 + 15 + 30,315 ≈
+  **56,140 chars**. Full transcripts alone: 3,672,064 / 30,315 ≈ **121** by the guard's own string-length unit;
+  browsers meter `localStorage` in UTF-16 units (commonly 5 MiB per origin ≈ 2.6 M chars), so the physical bound is
+  nearer **55** — the guard's own comment already calls it a heuristic ceiling, and this gap, pre-existing, is
+  sharper now that one field can be 30,000 chars ([TD-59](../exec-plans/tech-debt-tracker.md), accepted). Typical: a
+  ten-minute voice memo transcribed ≈ 2,500 Korean chars ≈ 2,540 stored; three such memos a week ≈ 0.4 M chars a
+  year (11 % of the budget); one transcript on every one of three meetings a working day turns the v26 horizon
+  (1,810 chars each, 37 % a year) into ≈ 4,350 × 750 ≈ 3.26 M a year (89 %), about **1 year 1 month** before
+  `recordFits` refuses. `recordFits` already measures the whole record, transcript included, before any write, and
+  the tab's `저장 공간` line already counts it; `clearTranscript` (`녹취록 지우기`) is the in-app way to reclaim it,
+  the backup path the way out of a full budget.
 - Typical record assumed: title 25, attendees 30, summary 400, decisions 100, actions 100 → 655 + 190 = **~850 chars**. Unchanged by the wider caps: a higher cap does not make minutes longer.
 - Frequency assumed: "several a day" = 3 meetings per working day × 250 days = **750 records a year** (2 a day = 500).
 
@@ -125,7 +154,9 @@ is `whitespace-nowrap`).
   as `일정 추가`); caption `회의 시간은 일정 탭에, 회의에서 나온 내용은 여기에 적어요. 회의록은 목표·실행·점수에
   반영되지 않아요.`; counts line (`font-mono text-xs text-zinc-400`) `프로젝트 {p}개 · 회의록 {n}건 · 저장 공간
   {mb}MB / 3.5MB` (`mb` to one decimal).
-- No project: one section `프로젝트가 없어요 — 프로젝트를 먼저 만들어요.`
+- No project: one section `프로젝트가 없어요 — 프로젝트를 먼저 만들어요.` — this card is about *project* minutes and
+  stays true even then; the memo group below it (next bullet) is the entry point for a memo when no project exists,
+  and in that case it is the only group and renders first, by the same code path.
 - One section per project, ordered by its newest minutes date (`meetingOrder`, descending), projects without
   minutes last, ordered by `createdAt` descending. Section head: the project name (`text-sm font-bold truncate`),
   `회의록 {n}건` (mono), buttons `프로젝트 수정` and `회의록 추가`. Rows are the newest-first minutes
@@ -135,7 +166,17 @@ is `whitespace-nowrap`).
   zero — each row opening `onOpenMeeting(id)`.
   The first `MEETING_ROWS_SHOWN` (5) rows show; beyond that, `{n}건 더 보기` / `접기` toggles a component-state
   expansion (`useState`, per-project, never stored — [Rule 9](../design-docs/core-beliefs.md#rule-9)). An empty
-  project reads `회의록이 없어요.`
+  project reads `회의록이 없어요.` Rows and their expander are built by a shared helper, `rowsBlock(key, rows,
+  emptyText)`, reused by the memo group below.
+- **The memo group** (2026-09-17): after every project section, **always** rendered — its `긴급 메모 추가` button
+  is the only way to start a memo when no project exists (a project section's own `회의록 추가` preselects that
+  project). Collects every meeting with `projectId == null`, sorted by `meetingOrder`, under a section with the
+  same shell: title `프로젝트 없음 · 긴급 메모` (`text-sm font-bold truncate`), mono `회의록 {n}건`, caption
+  `프로젝트 없이 적은 회의록이에요 — 나중에 수정에서 프로젝트를 고르면 그 프로젝트로 옮겨져요.` (`text-xs
+  text-zinc-600`), one button `긴급 메모 추가` (same border style as `회의록 추가`, calls `onAddMeeting(null)`),
+  rows via `rowsBlock("none", memos, "긴급 메모가 없어요.")` — the same `MEETING_ROWS_SHOWN` / `{n}건 더 보기`
+  expander, keyed `"none"`. When no project exists this is the only section and stands first, by the same code
+  path. Editing a memo and picking a project moves it into that project's section, and back.
 
 ## Sheets
 - **`ProjectModal({ project, meetingCount, onClose, onAdd, onUpdate, onRemove })`**, `modal: { type: "project",
@@ -147,8 +188,17 @@ is `whitespace-nowrap`).
   minutes too, not only through the disabled button, and toasts the same message.
 - **`MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpdate, onRemove })`**, `modal: { type:
   "meeting", meetingId?, projectId? }`, title `새 회의록` / `회의록 수정`: `프로젝트` chips (preselected from
-  `projectId` or the record's own), `날짜` date input (default `today`), inputs `회의 이름 — 예: 2차 요구사항
-  회의`, `참석자 (선택) — 예: 김OO, 박OO`; textareas (with `{n} / {cap}` counters, rose over cap, no
+  `projectId` or the record's own), with a first chip `없음 (긴급 메모)` (2026-09-17, `on={pid === null}`); under
+  the row, only while `pid === null`, the line `프로젝트 없이 저장돼요 — 미팅 탭의 '프로젝트 없음 · 긴급 메모'에
+  실려요.` Submit's guard changed the same day from "pick a project" to "a chosen id must be live": `pid !== null
+  && !projects.some((p) => p.id === pid)` refuses `프로젝트를 골라 주세요.` — a `null` id (the memo chip) never
+  does. `날짜` date input (default `today`), inputs `회의 이름 — 예: 2차 요구사항
+  회의`, `참석자 (선택) — 예: 김OO, 박OO`; between them and the summary, a **transcript block** (2026-09-17):
+  collapsed behind a border button `녹취록 붙여넣기` while the field is empty (so a new form's first textarea is
+  still `회의 요약`), which on tap opens `<MeetingText placeholder="녹취록 (선택) — 급히 녹음한 내용을 옮겨 적은
+  글을 그대로 붙여넣어요" rows={6} cap={MEETING_LIMITS.transcript} />`; a saved transcript opens it at once on
+  edit. Only the ends are trimmed on save — the interior (line breaks, spacing, punctuation) is byte-identical to
+  the paste; an all-whitespace transcript is not written. Then textareas (with `{n} / {cap}` counters, rose over cap, no
   `maxLength` — a paste is never silently truncated, the submit refuses instead) `회의 요약 — 논의한 내용을 요점
   으로 적어요` (`rows=8`), `결정 사항 (선택)`, `후속 조치 (선택)` (`rows=3` each); `일정 연결 (선택)` chips from
   `eventsOn(state, date)`: `연결 안 함` plus `{time || "시간 미정"} {title}` per occurrence that day, or the line
@@ -180,10 +230,14 @@ is `whitespace-nowrap`).
   업무로요.` Turning a row's `내 담당` on registers a work item once the record is saved (below); the form itself
   never touches `done`.
 
-  Note `전체 녹취가 아니라 요약만 저장해요.` Submit refuses, in order, with `프로젝트를 골라 주세요.`,
-  `날짜를 선택해 주세요.`, `회의 이름을 입력해 주세요.`, `회의 요약을 입력해 주세요.`, then the four
-  `{field}은/는 {cap}자까지예요 — 지금 {n}자예요.` cap messages, then, for each follow-up row over
-  `MEETING_LIMITS.followUp` (200), `후속 항목은 200자까지예요 — {k}번째 항목이 지금 {n}자예요.` (1-based `k`).
+  Note, since 2026-09-17, `녹취록은 붙여넣은 그대로 저장돼요 — AI 패킷에는 실리지 않아요.` (replaces the
+  2026-09-16 `전체 녹취가 아니라 요약만 저장해요.`, now false — a transcript is stored, verbatim, above). Submit
+  refuses, in order, with `프로젝트를 골라 주세요.`,
+  `날짜를 선택해 주세요.`, `회의 이름을 입력해 주세요.`, `회의 요약을 입력해 주세요.`, then the
+  `{field}은/는 {cap}자까지예요 — 지금 {n}자예요.` cap messages in field order — title, attendees, summary,
+  decisions, actions, then, last (2026-09-17), `녹취록은 30000자까지예요 — 지금 {n}자예요.` — then, for each follow-up row over
+  `MEETING_LIMITS.followUp` (200), `후속 항목은 200자까지예요 — {k}번째 항목이 지금 {n}자예요.` (1-based `k`). On
+  any refusal `submit` only calls `setErr` — no state reset — so the pasted transcript stays in the textarea.
   The record is built with only non-empty optional
   fields — a cleared field disappears from the save on an edit; `followUps` is always written as an array. `onAdd` / `onUpdate` answer with an error string
   (`""` = saved); a non-empty return — the storage-budget refusal — is shown as the modal error:
@@ -191,12 +245,19 @@ is `whitespace-nowrap`).
   사진을 지워요.` and the form stays open with everything typed. Edit mode adds `삭제` →
   `window.confirm("{title} 회의록을 삭제해요. 계속할까요?")`.
 - **`MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress,
-  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps })`**,
+  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps, onClearTranscript })`**,
   `modal: { type: "meetingView", meetingId }`,
-  title the meeting's own title: `CvFact wrap` rows `프로젝트`, `날짜` (mono), `참석자` (or `기록 없음`), `일정`
+  title the meeting's own title: `CvFact wrap` rows `프로젝트` (2026-09-17: `없음 (긴급 메모)` for a memo, else
+  `project?.name || "없음"`), `날짜` (mono), `참석자` (or `기록 없음`), `일정`
   (`{time || "시간 미정"} {title}` read live from the linked event; `연결 없음` with none; `연결된 일정이
   삭제됐어요` when `eventId` matches no live event), `AI 전송` (`보내지 않음` when `aiHidden`, else
-  `요약·진행사항 포함`); then three blocks with a `SectionLabel` each — `요약`,
+  `요약·진행사항 포함` — unchanged by the transcript, which the packet never carries anyway). Directly above
+  `요약`, a **transcript block** (2026-09-17): `SectionLabel` `녹취록` with a mono border button on the same
+  header row, `녹취록 {n}자 · 펼치기` (`n = m.transcript.length`, plain digits) toggling to `접기`; expanded, the
+  full text as `<p className="whitespace-pre-wrap break-words">` (never truncated) and, under it, a rose border
+  button `녹취록 지우기` that confirms `녹취록만 지워요. 요약·결정·후속·진행사항은 남아요. 계속할까요?` before
+  calling `onClearTranscript(m.id)`; without a transcript the block reads `없음`, the same `block(label, text)`
+  helper as `결정 사항`. Then three blocks with a `SectionLabel` each — `요약`,
   `결정 사항`, `후속 조치` — `<p className="whitespace-pre-wrap break-words">` (or `없음`).
 
   **후속 항목** block (schema v26), directly after `후속 조치`: `SectionLabel` plus a mono `{open}/{total}`.
@@ -272,6 +333,7 @@ the `work` items a mine follow-up mirrors (v26) — never `act`, `tasks`, `goals
 | `removeMeeting(id)` | confirms by name, then drops the record; no cascade to its work items (below) | `회의록을 삭제했어요` |
 | `addProgress(meetingId, text)` (schema v25) | refuses at `MEETING_PROGRESS_MAX` or `recordFits`; otherwise prepends `{ id: uid(), date: today, text }` to `progress` via `putMeeting` | `진행사항을 추가했어요` |
 | `removeProgress(meetingId, entryId)` (schema v25) | filters the entry out via `putMeeting` | `진행사항을 삭제했어요` |
+| `clearTranscript(meetingId)` (2026-09-17) | no-ops with no transcript; otherwise writes the record without its `transcript` key via `putMeeting` — every other field untouched, no budget check (the record shrinks) | `녹취록을 지웠어요` |
 | `toggleFollowUp(meetingId, fuId)` (v26) | flips that follow-up's `done`; if `workId` names a live item, sets its `done` to match, in the same update | `후속 항목을 완료로 표시했어요` / `후속 항목 완료를 취소했어요` |
 | `setFollowUpMine(meetingId, fuId, mine)` (v26) | `commitMeeting` with that flag flipped; a refusal is toasted instead of thrown | `내 담당으로 표시했어요{ · 업무 등록}` / `내 담당을 해제했어요{ · 미완료 업무 삭제}` |
 | `appendFollowUps(meetingId, items)` (v26) | refuses `후속 항목은 30건까지예요 — {room}건만 추가할 수 있어요.` past the cap; otherwise `commitMeeting` with the new rows appended | `후속 항목 {n}건을 추가했어요{ · 업무 {k}건 등록}` |
@@ -325,8 +387,10 @@ synthetic minutes dated 9, 3 and 1 days before today, with no personal names (`�
 one progress entry, and (schema v26) three follow-ups — one `mine` and mirrored to a demo work item, one owned
 by someone else, one done — so its minutes row states `후속 2/3`; `요구사항 1차 회의` is flagged
 `aiHidden: true`; every meeting carries an (empty or filled) `followUps` array. One demo event, `○○물산 주간
-점검` tomorrow, carries `projectId` naming the maintenance project. See
-[demo-data.md](../design-docs/demo-data.md).
+점검` tomorrow, carries `projectId` naming the maintenance project. Since 2026-09-17, `s.meetings` also carries
+one urgent memo, `긴급 메모 — ◇◇스튜디오 전화` (`projectId: null`, dated yesterday, a 259-char transcript, one
+progress entry, one `mine: false` follow-up so the demo work counts stay unchanged), prepended so the demo
+counts line reads `프로젝트 2개 · 회의록 4건`. See [demo-data.md](../design-docs/demo-data.md).
 
 ## Meeting-prep rows (`meetingPrepOf`, schema v26)
 
@@ -339,7 +403,11 @@ own `projectId`, or, when absent, by the newest meeting whose **trimmed title eq
 title** ([TD-55](../exec-plans/tech-debt-tracker.md): exact, case-sensitive; a retitled event or meeting stops
 matching) — it returns the project, the newest meeting for that project (`last`, by `meetingOrder`, or `null`),
 that meeting's open follow-ups (mine first), its newest `PREP_PROGRESS` (3) progress entries and its live linked
-tasks. Nothing here writes state or reaches `computeGrades` / `krProgress` / `todoOf`.
+tasks. Nothing here writes state or reaches `computeGrades` / `krProgress` / `todoOf`. A project-less memo never
+yields a prep row by design — `liveProject(null)` is `null` and `m.projectId === project.id` never matches
+`null` — but the title-match fallback names the **newest** same-title meeting whatever its project, so an event
+whose newest same-title meeting is a memo gets no prep row even when an older same-title meeting names a live
+project ([TD-60](../exec-plans/tech-debt-tracker.md), accepted).
 
 ## What a meeting never does
 - No `goalId`, no difficulty, no points, no trophy, no achievement record, no streak effect, no evidence gate.
@@ -365,3 +433,21 @@ tasks. Nothing here writes state or reaches `computeGrades` / `krProgress` / `to
 - Deleting a meeting (`removeMeeting`) does not cascade to the `source: "meeting"` work items its follow-ups
   registered — they stay, and the work sheet's `연결` line states `연결 대상이 삭제됐어요` (the TD-49 policy,
   [daily-work.md](daily-work.md)). A cascade may be added later at the user's request.
+- A transcript (2026-09-17) is never read anywhere but `MeetingModal`, `MeetingViewModal`, `clearTranscript`,
+  `recordFits` (through `JSON.stringify` of the whole record) and `demoState`: `buildWorkPacket`,
+  `buildAssistantPacket`, `calendarExportOf`, `buildIcs` and `meetingPrepOf` never read it — the app never
+  summarises, splits or judges a transcript ([Rule 7](../design-docs/core-beliefs.md#rule-7)); see
+  [SECURITY.md](../SECURITY.md).
+
+## E2E coverage (2026-09-17)
+
+`tools/e2e/flow10.js` (written, **not run** — standing user instruction) adds five steps after the follow-up
+steps: a memo saved with no project has `projectId: null` and lists under `프로젝트 없음 · 긴급 메모` after every
+project section; the view states the transcript's length collapsed, expands to the text and `녹취록 지우기`, and
+collapses again, with the packet-facing fact rows (`AI 전송`) unchanged; the transcript refuses 30,001 chars with
+the count and keeps the paste in the form, then accepts 30,000; `녹취록 지우기` removes the `transcript` key only
+— every other field byte-identical — and the block reads `없음`; moving a memo into a project relists it there,
+and back to `없음 (긴급 메모)` returns it to the group. `tools/e2e/flow11.js` adds two steps: the work packet
+states a project-less memo as `[프로젝트 없음] {title}` and carries none of its transcript (a sentinel string);
+`회의록 열기` on a meeting-linked work item opens that meeting's view in place of the sheet, and a goal-linked
+item has no such button. See [tools/e2e/README.md](../../tools/e2e/README.md).

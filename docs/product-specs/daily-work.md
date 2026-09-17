@@ -121,11 +121,17 @@ progress lines or `진행사항 없음`, and up to `PREP_TASKS` (5) linked-task 
 Tapping a block with a last meeting opens `MeetingViewModal` (`onOpenMeeting`); on-device only, so a meeting
 flagged `aiHidden` is stated in full here. `PREP_DAYS` (2), `PREP_DECISION_CLIP` (200 chars).
 
-## `WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggle, onRemove })`
+## `WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggle, onRemove, onOpenMeeting })`
 
 `modal: { type: "work", workId?, date? }`, title `업무 추가` / `업무`. In edit mode, facts first: `날짜` (mono;
 an undone item dated before today appends ` · 이월 {n}일`), `출처` (`수기` / `AI 제안` / `회의 후속` for
-`source === "meeting"`), `상태` (`완료` / `미완료`), `연결` (`workLinkText` or `연결 없음`). Fields: title
+`source === "meeting"`), `상태` (`완료` / `미완료`), `연결` (`workLinkText` or `연결 없음`). Directly under the
+`연결` fact, when `work.link?.kind === "meeting"` **and** the meeting still exists (`workLinkLabel(state,
+work.link)` non-null — a link stated as `연결 대상이 삭제됐어요` shows no button), a border button `회의록 열기`
+(2026-09-17) calls `onOpenMeeting(work.link.id)`, wired at the root to `setModal({ type: "meetingView",
+meetingId })`. The root has one modal slot, so opening the view **replaces this sheet**; closing the view lands
+on the `업무` tab underneath, not back in the sheet — anything typed and not saved is dropped, the same as
+closing the sheet any other way ([TD-58](../exec-plans/tech-debt-tracker.md), accepted). Fields: title
 input (`업무 제목 — 예: 견적서 송부`, no `maxLength` — the submit refuses instead of truncating a paste), a
 `메모 (선택)` textarea (`rows=3`, capped at `WORK_LIMITS.note`), in edit mode only a `처리 내용 (선택) — 어떻게 처리했는지 적어요` textarea (`rows=4`, capped at `WORK_LIMITS.result`; how the item was done, added 2026-09-17 at the user's request), and a `연결 (선택)` `<select>` of
 `연결 안 함` plus `workLinkOptions(state)` — active goals, the newest `WORK_LINK_MEETINGS` meetings, every
@@ -177,9 +183,9 @@ opened from the tab's `AI로 만들기 ›` button. Shares its send pane, paste 
 proposal has no goal, difficulty or type to choose.
 
 1. **Send** (`오늘 업무 만들기`): a read-only textarea holding `buildWorkPacket(state, today)`, `복사` and
-   `AI 답변 붙여넣기 ›`. Caption: `아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시
-   붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 보내지 않을 회의록은 회의록
-   수정에서 'AI에 보내지 않기'를 켜요.`
+   `AI 답변 붙여넣기 ›`. Caption (2026-09-17, gained one sentence): `아래 글을 복사해 Claude·ChatGPT 채팅에
+   붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 —
+   녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요.`
 2. **Paste** (`AI 답변 붙여넣기`): a textarea (`AI 답변을 여기에 붙여넣어요`) and `답변 확인`, which runs
    `parseWorkReply` and pre-ticks every non-rejected proposal.
 3. **Confirm**: `제안 업무 확인 — {n}건`, the reply's own `note` line, then one row per proposal — a checkbox
@@ -190,7 +196,10 @@ proposal has no goal, difficulty or type to choose.
 The packet, the parser and their caps are documented in full in
 [assistant-bridge.md](../design-docs/assistant-bridge.md); this spec covers the screen. Nothing here writes state
 before the user ticks and confirms; the raw reply is not stored anywhere
-([TD-50](../exec-plans/tech-debt-tracker.md)).
+([TD-50](../exec-plans/tech-debt-tracker.md)). A project-less memo (2026-09-17) still gets its own line
+(`- {date} [프로젝트 없음] {title}` — `buildWorkPacket`'s existing `?.name || "프로젝트 없음"` fallback needed no
+change), stated with its summary, decisions, follow-ups and progress exactly like a project's meeting; its
+`transcript` is never read by `meetingLines` — the packet states named fields only ([SECURITY.md](../SECURITY.md)).
 
 ## Backup and migration (schema v26)
 
@@ -231,7 +240,12 @@ a pasted reply importing two of three proposals (one rejected as a duplicate) wi
 naming `tasks`/`deals`/`events`/`meetings` creating none of them; the briefing's `이월 업무 {n}건 · 최장 {d}일`
 line opening the `업무` tab; a project-linked event and a title-matched event giving the tab's `오늘 회의 준비`
 two blocks, one tap opening its meeting, and the briefing's `회의 준비` section stating the same counts plus
-overdue follow-ups once one is late. Every step parses (`node --check`); none has been executed. See
+overdue follow-ups once one is late. **Urgent memos and transcripts (2026-09-17)** add two more steps: the work
+packet states a planted project-less memo as `- {today} [프로젝트 없음] {title}` with its `요약:` line and none
+of its transcript (a planted sentinel string, absent from the packet); and, with a meeting-linked and a
+goal-linked work item both planted, `회의록 열기` on the former replaces the sheet with the meeting's view (one
+overlay, the collapsed `녹취록 …자 · 펼치기` row), closing it lands on `업무`, and the goal-linked item has no
+such button. Every step parses (`node --check`); none has been executed. See
 [tools/e2e/README.md](../../tools/e2e/README.md).
 
 ## What a work item never does
