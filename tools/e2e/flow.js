@@ -394,6 +394,12 @@ module.exports = async (h) => {
         await expectText("요구사항 정의서 v1");
         await expectText("◇◇스튜디오 예약 페이지 현황 메모");
       }
+      // v28 Phase 2: the seeded roadmap — stage 1 done, stage 2 active, the other seven planned.
+      if (tab === "사업") {
+        await clickExact("로드맵");
+        await expectText("예정 7 · 진행 중 1 · 완료 1");
+        await expectText("계약금 입금 확인 — ETL 고도화 계약");
+      }
       if (tab === "프로필") {
         await expectText("TOEIC L&R 735");
         // v27: entering the demo opens nothing, so the daily reader is opened from the CV card's own button.

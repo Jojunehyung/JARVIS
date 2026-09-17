@@ -2356,6 +2356,99 @@ const bizSummary = (state, today) => {
   return { month, thisMonth, collected, backlog, pipeline, unpaid, counts };
 };
 
+/* ── Roadmap (v28) ── */
+/* Milestones are records, never tasks: a milestone pays nothing, completes nothing and moves no goal, grade or
+   proximity (rules 1, 14, 18). The status is the user's own field; the D-day, the linked-work completion, the pace and
+   the stage-order note are derived at render and never stored (rule 9). Storage: an empty milestone ≈ 120 chars plus
+   its title; a typical one (30-char title, a due, a stage, a 60-char condition, three links) ≈ 320; a full one (60 +
+   200 + three lists of 10) ≈ 900; the nine seeds ≈ 2.2 k once. Every write runs `recordFits` (`마일스톤을`). */
+const MILESTONE_LIMITS = { title: 60, condition: 200 };
+const MILESTONE_LINKS = 10;       // ids per link kind before the link refusal
+const MILESTONE_STATUS = { planned: "예정", active: "진행 중", done: "완료" };
+const ROADMAP_STAGES = 9;
+const ROADMAP_ALERT_MAX = 2;      // milestone lines the briefing names
+const MILESTONE_WORK_ROWS = 30;   // work rows the link picker lists, newest first
+// The user's own situation, 2026-09-17: nine stages from the first contract to the national project; the dates for
+// stages 5, 7 and 8 are interpolated and say so in their condition text; titles name no client; edited in the app.
+const ROADMAP_SEED = [
+  { stage: 1, title: "계약금 입금 확인 — ETL 고도화 계약", due: "2026-09-30", condition: "계약의 계약금 입금 예정 항목이 입금 확인으로 표시됨" },
+  { stage: 2, title: "챗봇 과업 추가 회의 · 단가표 개정", due: "2026-12-31", condition: "과업 추가 회의록 1건 · 개정 단가 등록" },
+  { stage: 3, title: "세부 계약 체결", due: "2027-01-31", condition: "2027-01 시작 계약 등록" },
+  { stage: 4, title: "챗봇 납품 · AI 포트폴리오 등록", due: "2027-06-30", condition: "납품 완료 · 포트폴리오에 AI 항목 1건" },
+  { stage: 5, title: "병원 세일즈 개시", due: "2027-07-31", condition: "리드 접촉 5건 · 시연 1건 (날짜는 추정치)" },
+  { stage: 6, title: "첫 병원 계약", due: "2027-09-30", condition: "병원 계약 1건" },
+  { stage: 7, title: "반복 매출", due: "2027-12-31", condition: "병원 계약 3건 · 월 계약 매출 500만원 (날짜·금액은 추정치)" },
+  { stage: 8, title: "국가사업 제안서 제출", due: "2027-10-31", condition: "공고 제출 1건 (날짜는 추정치)" },
+  { stage: 9, title: "국가사업 수주 — 전환 조건", due: "2027-12-31", condition: "공고 선정 1건 — 퇴사 조건" },
+];
+const seedMilestones = (today) => ROADMAP_SEED.map((m) => ({
+  id: uid(), ...m, status: "planned", dealIds: [], documentIds: [], workIds: [], createdAt: today,
+}));
+// Not done before done, then stage ascending, then due ascending (a missing stage or due last), then creation.
+const milestoneOrder = (a, b) => {
+  const nullLast = (x, y) => (x == null ? (y == null ? 0 : 1) : y == null ? -1 : x < y ? -1 : x > y ? 1 : 0);
+  return ((a.status === "done") - (b.status === "done"))
+    || nullLast(a.stage ?? null, b.stage ?? null)
+    || nullLast(a.due || null, b.due || null)
+    || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+};
+// Linked-work completion over the live items only: a dangling id is skipped and not counted.
+const milestoneWork = (state, m) => {
+  const items = (m?.workIds || []).map((id) => (state?.work || []).find((w) => w.id === id)).filter(Boolean);
+  return { done: items.filter((w) => w.done).length, total: items.length };
+};
+// `elapsedRatio` reads `Date.now()` and belongs to goals; this sibling keeps the roadmap pure for smoke and the reader.
+const elapsedBetween = (from, to, today) => {
+  if (!from || !to) return null;
+  return Math.max(0, Math.min(1, daysBetween(from, today) / Math.max(1, daysBetween(from, to))));
+};
+// The same thresholds and labels as `paceOf` (±5 %p), with progress = the linked work done ratio.
+const milestonePace = (state, m, today) => {
+  if (m.status === "done") return { p: 1, el: null, gap: null, label: "완료", cls: "text-emerald-400" };
+  if (!m.due) return { p: null, el: null, gap: null, label: "기한 없음 — 페이스 계산 불가", cls: "text-zinc-500" };
+  const { done, total } = milestoneWork(state, m);
+  if (!total) return { p: null, el: null, gap: null, label: "연결 업무 없음 — 페이스 계산 불가", cls: "text-zinc-500" };
+  const p = done / total;
+  const el = elapsedBetween(m.createdAt, m.due, today);
+  const gap = Math.round((p - el) * 100);
+  return {
+    p, el, gap,
+    label: gap <= -5 ? `${-gap}%p 뒤처짐` : gap >= 5 ? `${gap}%p 앞섬` : "궤도 유지",
+    cls: gap <= -5 ? "text-rose-400" : gap >= 5 ? "text-emerald-400" : "text-zinc-400",
+  };
+};
+// Stage order is stated, never enforced (TD-70): the lowest stage with an open milestone against an active one above it.
+const stageOrderNote = (milestones) => {
+  const open = (milestones || []).filter((m) => m.status !== "done" && Number.isFinite(m.stage));
+  if (!open.length) return null;
+  const a = Math.min(...open.map((m) => m.stage));
+  const above = open.filter((m) => m.status === "active" && m.stage > a).map((m) => m.stage);
+  return above.length ? `단계 순서: ${a}단계 미완 · ${Math.min(...above)}단계 진행 중` : null;
+};
+// The one line the roadmap rows, the reader and the review packet print.
+const milestoneLine = (state, m, today) => {
+  const { done, total } = milestoneWork(state, m);
+  return [
+    Number.isFinite(m.stage) ? `${m.stage}단계` : "단계 없음",
+    m.title,
+    m.due ? ddayStr(m.due) : "기한 없음",
+    `업무 ${done}/${total}`,
+    milestonePace(state, m, today).label,
+  ].join(" · ");
+};
+// A milestone linked to any live day-job record reads as `work`, so a briefing line naming it never reaches a packet
+// (`buildAssistantPacket` keeps only `PACKET_TRACKS`); otherwise it is business.
+const milestoneTrack = (state, m) => {
+  const linked = [
+    ...(m?.dealIds || []).map((id) => (state?.deals || []).find((d) => d.id === id)).filter(Boolean).map((d) => trackOf(d, "biz")),
+    ...(m?.documentIds || []).map((id) => (state?.documents || []).find((d) => d.id === id)).filter(Boolean).map((d) => trackOf(d)),
+    ...(m?.workIds || []).map((id) => (state?.work || []).find((w) => w.id === id)).filter(Boolean).map((w) => trackOf(w)),
+  ];
+  const project = m?.projectId ? (state?.meetingProjects || []).find((p) => p.id === m.projectId) : null;
+  if (project) linked.push(trackOf(project));
+  return linked.includes("work") ? "work" : "biz";
+};
+
 /* ───────────────────────── Daily assistant — agenda · briefing · bridge ───────────────────────── */
 // Standard achievements that would close each role-model gap. Shared by RoleAdviceModal and the briefing;
 // the tiering and payout logic is unchanged (rules 14, 15).
@@ -2694,6 +2787,14 @@ const buildBriefing = (state, today) => {
       .map(({ d, days }) => ({
         kind: "biz", severity: 2, track: trackOf(d, "biz"), text: `${d.client} ${d.title} — 견적 ${days}일 경과 · ${wonText(dealTotal(d))}`,
       })),
+    // Roadmap (v28): open milestones past due or due within 7 days. Each line carries `milestoneTrack`, so a milestone
+    // linked to a day-job record stays out of the daily packet.
+    ...(state.milestones || [])
+      .filter((m) => m.status !== "done" && m.due && daysBetween(today, m.due) <= 7)
+      .slice().sort(milestoneOrder).slice(0, ROADMAP_ALERT_MAX)
+      .map((m) => ({
+        kind: "biz", severity: m.due < today ? 3 : 2, track: milestoneTrack(state, m), text: `마일스톤 ${m.title} — ${ddayStr(m.due)}`,
+      })),
   ];
   // The month's figures are the reason this section exists, so the alerts yield to them rather than the other
   // way round: `add` slices at CAP, and three unpaid months plus two ending contracts would otherwise push the
@@ -2880,6 +2981,16 @@ const buildReader = (state, today) => {
   /* Contracts and payments, and goals behind pace — the briefing's own items, so both screens agree */
   const briefItems = (key) => brief.sections.find((s) => s.key === key)?.items || [];
   add("biz", "계약·입금 미확인", briefItems("biz").map((it) => ({ text: it.text })), { type: "biz" });
+  /* The roadmap (v28) — the stage-order note, then every milestone not yet done by `milestoneOrder`. A single-track
+     section: no heads. The reader never leaves the device, so a milestone linked to day-job records is listed here. */
+  const roadmapNote = stageOrderNote(state.milestones);
+  add("roadmap", "사업 로드맵", [
+    ...(roadmapNote ? [{ text: roadmapNote }] : []),
+    ...(state.milestones || []).filter((m) => m.status !== "done").slice().sort(milestoneOrder).map((m) => ({
+      text: milestoneLine(state, m, today),
+      sub: m.condition ? [`조건: ${oneLineText(m.condition, READER_CLIP)}`] : [],
+    })),
+  ], { type: "biz" });
   add("goals", "뒤처진 목표 페이스", briefItems("goals").filter((it) => it.severity === 3).map((it) => ({ text: it.text })), { type: "goals" });
 
   return { since, sections };
@@ -3966,6 +4077,13 @@ const demoState = () => {
     workFromJob,
     { id: uid(), date: today, title: "프로파일링 리포트 초안", done: false, source: "manual", createdAt: today, track: "work" },
   ];
+  // The seeded roadmap (v28): the first milestone done yesterday, the second active and linked to the first demo contract
+  // and the open manual business work item, so the view shows all three groups and a linked-work count of 0/1.
+  s.milestones = seedMilestones(today);
+  s.milestones[0] = { ...s.milestones[0], status: "done", doneAt: shiftDay(today, -1) };
+  s.milestones[1] = { ...s.milestones[1], status: "active",
+    dealIds: [s.deals.find((d) => d.client === "○○물산").id],
+    workIds: [s.work.find((w) => w.source === "manual" && trackOf(w) === "biz" && !w.done).id] };
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
     text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
@@ -6958,7 +7076,9 @@ const DEAL_GROUPS = [
   ["ended", "text-zinc-500"],
   ["lost", "text-zinc-600"],
 ];
-const BIZ_ADD_LABEL = { deals: "계약 추가", rates: "단가 추가", folio: "포트폴리오 추가" };
+const BIZ_ADD_LABEL = { deals: "계약 추가", rates: "단가 추가", folio: "포트폴리오 추가", roadmap: "마일스톤 추가" };
+// The modal each view's add button opens (v28). Declared for all six views; `leads` and `notices` render in a later phase.
+const BIZ_ADD_MODAL = { deals: "deals", rates: "rates", folio: "folio", roadmap: "milestone", leads: "lead", notices: "notice" };
 // Toast subject plus its Korean particle, so the one generic handler prints the right sentence per list.
 const BIZ_NOUN = { deals: "계약을", rates: "단가를", folio: "포트폴리오를" };
 const PAID_CHIP_MAX = 12;   // payment chips shown on one row; the rest are counted, so a 10-year rule cannot flood the card
@@ -7168,8 +7288,63 @@ function FolioView({ state, onEdit }) {
   );
 }
 
-function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid }) {
-  const v = view === "rates" || view === "folio" ? view : "deals"; // any other value, including a save written before v20, opens the contracts
+/* The roadmap (v28): milestones grouped by the user's status. Every D-day, completion count and the stage-order note are
+   derived at render (rule 9); nothing here pays, completes or promotes (rules 1, 18). */
+const ROADMAP_GROUPS = [["active", "text-cyan-400"], ["planned", "text-zinc-400"], ["done", "text-zinc-500"]];
+function RoadmapView({ state, today, onOpen, onSeed }) {
+  const list = state.milestones || [];
+  const count = (st) => list.filter((m) => m.status === st).length;
+  const note = stageOrderNote(list);
+  return (
+    <>
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <SectionLabel tone="text-cyan-400">로드맵</SectionLabel>
+        <p className="text-xs font-mono text-zinc-400">
+          <span className="whitespace-nowrap">예정 {count("planned")}</span>{" · "}
+          <span className="whitespace-nowrap">진행 중 {count("active")}</span>{" · "}
+          <span className="whitespace-nowrap">완료 {count("done")}</span>
+        </p>
+        {note && <p className="text-xs text-amber-300 mt-1">{note}</p>}
+        {list.length === 0 && (
+          <div className="mt-2.5 space-y-2">
+            <p className="text-sm text-zinc-500">로드맵이 비어 있어요.</p>
+            <button onClick={onSeed}
+              className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs active:translate-y-0.5">기본 로드맵 채우기</button>
+            <p className="text-xs text-zinc-600">상황에 맞춘 9단계를 넣어요 — 날짜·조건은 수정할 수 있어요.</p>
+          </div>
+        )}
+      </section>
+      {ROADMAP_GROUPS.map(([st, tone]) => {
+        const rows = list.filter((m) => m.status === st).slice().sort(milestoneOrder);
+        return rows.length > 0 && (
+          <section key={st} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+            <SectionLabel tone={tone}>{MILESTONE_STATUS[st]}</SectionLabel>
+            <div className="space-y-1.5">
+              {rows.map((m) => {
+                const w = milestoneWork(state, m);
+                const late = st !== "done" && m.due && m.due < today;
+                return (
+                  <TodoRow key={m.id} done={st === "done"} title={m.title} onOpen={() => onOpen(m.id)}
+                    lead={{ text: Number.isFinite(m.stage) ? `${m.stage}단계` : "단계 없음",
+                      tone: st === "active" ? "text-cyan-300 border-cyan-800" : "text-zinc-400 border-zinc-700" }}
+                    marker={<span className={`text-xs font-mono whitespace-nowrap shrink-0 ${late ? "text-rose-400" : "text-zinc-400"}`}>
+                      {m.due ? ddayStr(m.due) : "기한 없음"} · 업무 {w.done}/{w.total}</span>} />
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+      {list.length > 0 && (
+        <p className="text-xs text-zinc-600 px-1">마일스톤은 기록이에요 — 상태는 직접 바꾸고, 기한·연결 업무·페이스는 계산돼요.</p>
+      )}
+    </>
+  );
+}
+
+function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid, onOpenMilestone, onSeedRoadmap }) {
+  // Any other value, including a save written before v20, opens the contracts.
+  const v = ["rates", "folio", "roadmap"].includes(view) ? view : "deals";
   const sum = useMemo(() => bizSummary(state, today), [state, today]);
   return (
     <>
@@ -7193,16 +7368,18 @@ function BizTab({ state, today, view, onView, onAdd, onEdit, onTogglePaid }) {
           <span className="whitespace-nowrap">견적 대기 {wonText(sum.pipeline)}</span>{" · "}
           <span className={`whitespace-nowrap ${sum.counts.unpaid > 0 ? "text-rose-400" : ""}`}>입금 미확인 {sum.counts.unpaid}건</span>
         </p>
-        <div className="flex gap-1.5 mt-2.5">
+        <div className="flex flex-wrap gap-1.5 mt-2.5">
           <Chip on={v === "deals"} onClick={() => onView("deals")}>계약</Chip>
           <Chip on={v === "rates"} onClick={() => onView("rates")}>단가</Chip>
           <Chip on={v === "folio"} onClick={() => onView("folio")}>포트폴리오</Chip>
+          <Chip on={v === "roadmap"} onClick={() => onView("roadmap")}>로드맵</Chip>
         </div>
       </section>
 
       {v === "deals" && <DealsView state={state} month={sum.month} onEdit={onEdit} onTogglePaid={onTogglePaid} />}
       {v === "rates" && <RatesView state={state} onEdit={onEdit} />}
       {v === "folio" && <FolioView state={state} onEdit={onEdit} />}
+      {v === "roadmap" && <RoadmapView state={state} today={today} onOpen={onOpenMilestone} onSeed={onSeedRoadmap} />}
     </>
   );
 }
@@ -7219,7 +7396,7 @@ function BizField({ value, onChange, placeholder, num }) {
 
 function BizChips({ options, value, onPick }) {
   return (
-    <div className="flex gap-1.5">
+    <div className="flex flex-wrap gap-1.5">
       {options.map(([k, label]) => <Chip key={k} on={value === k} onClick={() => onPick(k)}>{label}</Chip>)}
     </div>
   );
@@ -7460,6 +7637,126 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
           )}
         </div>
         <BizFormFoot err={err} edit={!!folio} onSubmit={submit} onRemove={() => onRemove(folio.id)} />
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Milestone form (v28) — a record: no goal, no difficulty, no evidence, no payout (rules 1, 18). The D-day, the linked
+   work and the pace in the facts are derived at render (rule 9). ── */
+// One link block of the milestone form: a header with the count against MILESTONE_LINKS and one checkbox row per record.
+function MilestoneLinkList({ label, rows, ids, onToggle, empty }) {
+  return (
+    <div>
+      <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">
+        {label} <span className={`font-mono ${ids.length > MILESTONE_LINKS ? "text-rose-300" : ""}`}>({ids.length}/{MILESTONE_LINKS})</span>
+      </div>
+      {rows.length === 0 ? <p className="text-xs text-zinc-500">{empty}</p> : (
+        <div className="space-y-1 max-h-48 overflow-y-auto">
+          {rows.map((r) => {
+            const on = ids.includes(r.id);
+            return (
+              <button key={r.id} role="checkbox" aria-checked={on} onClick={() => onToggle(r.id)}
+                className={`w-full text-left flex items-center gap-2 rounded-xl px-2.5 py-2 border bg-zinc-950 ${on ? "border-cyan-700" : "border-zinc-800"}`}>
+                <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? "bg-cyan-400 border-cyan-300 text-zinc-950" : "border-zinc-600"}`}>
+                  {on && <Check size={12} />}
+                </span>
+                {r.lead && <span className="font-mono text-xs text-zinc-500 shrink-0">{r.lead}</span>}
+                <span className={`flex-1 min-w-0 text-sm truncate ${r.done ? "line-through text-zinc-500" : ""}`}>{r.text}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MilestoneModal({ state, milestone, today, onClose, onAdd, onUpdate, onRemove }) {
+  const deals = state.deals || [];
+  const projects = state.meetingProjects || [];
+  const documents = state.documents || [];
+  const works = state.work || [];
+  // A deleted link target is dropped from the initial selection, so it is never counted.
+  const live = (list, pool) => (list || []).filter((id) => pool.some((r) => r.id === id));
+  const [title, setTitle] = useState(milestone?.title || "");
+  const [stage, setStage] = useState(Number.isFinite(milestone?.stage) ? milestone.stage : null);
+  const [due, setDue] = useState(milestone?.due || "");
+  const [status, setStatus] = useState(milestone?.status || "planned");
+  const [condition, setCondition] = useState(milestone?.condition || "");
+  const [dealIds, setDealIds] = useState(() => live(milestone?.dealIds, deals));
+  const [projectId, setProjectId] = useState(() => (projects.some((p) => p.id === milestone?.projectId) ? milestone.projectId : ""));
+  const [documentIds, setDocumentIds] = useState(() => live(milestone?.documentIds, documents));
+  const [workIds, setWorkIds] = useState(() => live(milestone?.workIds, works));
+  const [err, setErr] = useState("");
+  const toggle = (setter) => (id) => setter((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  // The newest MILESTONE_WORK_ROWS items by date then creation, plus every already-linked item whatever its age.
+  const workRows = useMemo(() => {
+    const newest = works.slice().sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+    const older = newest.slice(MILESTONE_WORK_ROWS).filter((w) => (milestone?.workIds || []).includes(w.id));
+    return [...newest.slice(0, MILESTONE_WORK_ROWS), ...older].map((w) => ({ id: w.id, lead: w.date.slice(2), text: w.title, done: w.done }));
+  }, [works, milestone]);
+  const pace = milestone ? milestonePace(state, milestone, today) : null;
+  const work = milestone ? milestoneWork(state, milestone) : null;
+  const submit = () => {
+    const t = title.trim();
+    const c = condition.trim();
+    if (!t) { setErr("마일스톤 이름을 입력해 주세요."); return; }
+    if (t.length > MILESTONE_LIMITS.title) { setErr(`마일스톤 이름은 ${MILESTONE_LIMITS.title}자까지예요 — 지금 ${t.length}자예요.`); return; }
+    if (c.length > MILESTONE_LIMITS.condition) { setErr(`달성 조건은 ${MILESTONE_LIMITS.condition}자까지예요 — 지금 ${c.length}자예요.`); return; }
+    if ([dealIds, documentIds, workIds].some((l) => l.length > MILESTONE_LINKS)) { setErr(`연결은 종류별 ${MILESTONE_LINKS}개까지예요.`); return; }
+    const next = {
+      title: t, ...(stage != null ? { stage } : {}), ...(due ? { due } : {}), status,
+      ...(status === "done" ? { doneAt: milestone?.doneAt || today } : {}),
+      ...(c ? { condition: c } : {}),
+      dealIds, ...(projectId ? { projectId } : {}), documentIds, workIds,
+    };
+    const refused = milestone ? onUpdate(milestone.id, next) : onAdd(next);
+    if (refused) setErr(refused);
+  };
+  return (
+    <Modal title={milestone ? "마일스톤" : "마일스톤 추가"} onClose={onClose}>
+      <div className="space-y-3">
+        {milestone && (
+          <div className="space-y-1">
+            <CvFact label="기한"><span className="font-mono">{milestone.due ? `${milestone.due} (${ddayStr(milestone.due)})` : "없음"}</span></CvFact>
+            <CvFact label="연결 업무"><span className="font-mono">{work.done}/{work.total}</span></CvFact>
+            <CvFact label="페이스"><span className={pace.cls}>{pace.label}</span></CvFact>
+            <CvFact label="완료일"><span className="font-mono">{milestone.doneAt || "-"}</span></CvFact>
+          </div>
+        )}
+        <BizField value={title} onChange={setTitle} placeholder="마일스톤 — 예: 계약금 입금 확인" />
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">단계</div>
+          <BizChips value={stage == null ? "none" : String(stage)} onPick={(k) => setStage(k === "none" ? null : Number(k))}
+            options={[["none", "없음"], ...Array.from({ length: ROADMAP_STAGES }, (_, i) => [String(i + 1), String(i + 1)])]} />
+        </div>
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">기한 (선택)</div>
+          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="기한"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
+        </div>
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">상태</div>
+          <BizChips options={Object.entries(MILESTONE_STATUS)} value={status} onPick={setStatus} />
+        </div>
+        <MeetingText value={condition} onChange={setCondition} placeholder="달성 조건 (선택) — 사실로 확인할 수 있는 조건을 적어요" rows={2} cap={MILESTONE_LIMITS.condition} />
+        <MilestoneLinkList label="계약 연결" ids={dealIds} onToggle={toggle(setDealIds)} empty="등록한 계약이 없어요."
+          rows={deals.map((d) => ({ id: d.id, text: `${d.client} · ${d.title}` }))} />
+        <div>
+          <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">프로젝트 (선택)</div>
+          <select value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="프로젝트 (선택)"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm">
+            <option value="">연결 안 함</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+        <MilestoneLinkList label="문서 연결" ids={documentIds} onToggle={toggle(setDocumentIds)} empty="등록한 문서가 없어요."
+          rows={documents.map((d) => ({ id: d.id, text: d.title }))} />
+        <MilestoneLinkList label="업무 연결" ids={workIds} onToggle={toggle(setWorkIds)} empty="등록한 업무가 없어요."
+          rows={workRows} />
+        <BizFormFoot err={err} edit={!!milestone} onSubmit={submit}
+          onRemove={() => { if (window.confirm(`${milestone.title} 마일스톤을 삭제해요. 계속할까요?`)) onRemove(milestone.id); }} />
       </div>
     </Modal>
   );
@@ -9588,6 +9885,46 @@ export default function LifeManager() {
     showToast({ msg: "문서를 삭제했어요" });
   };
 
+  /* Roadmap (v28) — milestones are records, never tasks (rules 1, 18). These handlers write `milestones` and nothing
+     else; the status is the user's own field and `doneAt` is stamped only while it is done. */
+  const addMilestone = (next) => {
+    const { doneAt, ...rest } = next;
+    const rec = { id: uid(), ...rest, ...(next.status === "done" ? { doneAt: doneAt || today } : {}), createdAt: today };
+    const refused = recordFits(rec, 0, "마일스톤을");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, milestones: [rec, ...(prev.milestones || [])] }));
+    setModal(null);
+    showToast({ msg: "마일스톤을 등록했어요" });
+    return "";
+  };
+  const updateMilestone = (id, next) => {
+    const cur = (state.milestones || []).find((m) => m.id === id);
+    if (!cur) return "";
+    const { doneAt, ...rest } = next;
+    const rec = { id: cur.id, ...rest, ...(next.status === "done" ? { doneAt: cur.doneAt || today } : {}), createdAt: cur.createdAt };
+    const refused = recordFits(rec, JSON.stringify(cur).length, "마일스톤을");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, milestones: (prev.milestones || []).map((m) => (m.id === id ? rec : m)) }));
+    setModal(null);
+    showToast({ msg: "마일스톤을 수정했어요" });
+    return "";
+  };
+  // Confirmed in the sheet by title.
+  const removeMilestone = (id) => {
+    setState((prev) => ({ ...prev, milestones: (prev.milestones || []).filter((m) => m.id !== id) }));
+    setModal(null);
+    showToast({ msg: "마일스톤을 삭제했어요" });
+  };
+  // One tap fills the nine seeds, and only into an empty roadmap.
+  const seedRoadmap = () => {
+    if ((state.milestones || []).length) return;
+    const seeds = seedMilestones(today);
+    const refused = recordFits(seeds, 0, "마일스톤을");
+    if (refused) { showToast({ msg: refused }); return; }
+    setState((prev) => ((prev.milestones || []).length ? prev : { ...prev, milestones: seeds }));
+    showToast({ msg: `기본 로드맵 ${ROADMAP_STAGES}건을 채웠어요` });
+  };
+
   /* Daily work — dated work items (v25). A record, never a task: these handlers write `work`, plus the `done` state or
      the `workId` of the follow-up an item mirrors (v26), and nothing else — no act, tasks, goals, areas, room, exams or
      events (rules 1, 9, 18). No streak, no trophy, no KR. */
@@ -9950,9 +10287,11 @@ export default function LifeManager() {
         {tab === "biz" && (
           <BizTab state={state} today={today}
             view={state.ui?.bizView} onView={setBizView}
-            onAdd={(list) => setModal({ type: list })}
+            onAdd={(list) => setModal({ type: BIZ_ADD_MODAL[list] })}
             onEdit={(list, item) => setModal({ type: list, item })}
-            onTogglePaid={toggleDealPaid} />
+            onTogglePaid={toggleDealPaid}
+            onOpenMilestone={(id) => setModal({ type: "milestone", milestoneId: id })}
+            onSeedRoadmap={seedRoadmap} />
         )}
       </main>
 
@@ -10040,6 +10379,10 @@ export default function LifeManager() {
         <FolioModal folio={modal.item} onClose={() => setModal(null)}
           onAdd={(f, warn) => addBiz("folio", f, warn)} onUpdate={(id, next, warn) => updateBiz("folio", id, next, warn)}
           onRemove={(id) => removeBiz("folio", id)} />
+      )}
+      {modal?.type === "milestone" && (
+        <MilestoneModal state={state} today={today} milestone={(state.milestones || []).find((m) => m.id === modal.milestoneId)}
+          onClose={() => setModal(null)} onAdd={addMilestone} onUpdate={updateMilestone} onRemove={removeMilestone} />
       )}
       {/* Meeting records — no payout, no goal, no streak (rules 1, 18) */}
       {modal?.type === "project" && (

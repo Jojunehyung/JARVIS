@@ -521,4 +521,190 @@ module.exports = async (h) => {
       await h.reload();
     }
   });
+
+  /* ── Roadmap (schema v28, Phase 2, 2026-09-18, written, not run). A milestone is a record: these steps assert that the
+     seed, the form and the status changes write `milestones` only, and that D-day, linked-work completion, pace and the
+     stage-order note are derived. Every plant is removed and the roadmap reset to `[]` at the end of the last step. ── */
+  const dayIn = (delta) => page.evaluate((d) => {
+    const t = new Date(); t.setHours(12, 0, 0, 0); t.setDate(t.getDate() + d);
+    const pad = (n) => String(n).padStart(2, "0");
+    return [t.getFullYear(), pad(t.getMonth() + 1), pad(t.getDate())].join("-");
+  }, delta);
+  // Plants and resets go through the page's own storage, each with the mutation written inline (flow8's convention).
+  const KEY = "liferpg-state-v1";
+  // A milestone write may move `milestones` and nothing else: the record boundary plus the business and work lists.
+  const assertOnlyMilestones = (before, after, what) => {
+    assertOnlyDeals(before, after, what);
+    for (const k of ["deals", "work", "documents", "meetingProjects", "meetings", "events"]) {
+      if (JSON.stringify(before[k] || []) !== JSON.stringify(after[k] || [])) throw new Error(`${what} changed ${k}`);
+    }
+  };
+  const roadmapNote = () => page.evaluate(() => {
+    const p = [...document.querySelectorAll("main p")].find((x) => (x.innerText || "").startsWith("단계 순서:"));
+    return p ? p.innerText.trim() : null;
+  });
+  const tickLink = async (text) => {
+    const ok = await page.evaluate((t) => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = ov && [...ov.querySelectorAll('[role="checkbox"]')].find((x) => (x.innerText || "").includes(t));
+      if (!b) return false; b.scrollIntoView({ block: "center" }); b.click(); return true;
+    }, text);
+    if (!ok) throw new Error("link row not found: " + text);
+    await sleep(150);
+  };
+  const openRoadmap = async () => { await clickTab("사업"); await clickExact("로드맵"); await sleep(300); };
+
+  await step("the roadmap view seeds nine milestones once and states their D-days and stage order", async () => {
+    await closeModal();
+    await page.evaluate((k) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.milestones = [];
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY);
+    await h.reload();
+    await openRoadmap();
+    await expectText("로드맵이 비어 있어요.");
+    await expectText("상황에 맞춘 9단계를 넣어요 — 날짜·조건은 수정할 수 있어요.");
+    await expectText("마일스톤 추가");
+    const before = await readState();
+    const today = await dayIn(0);
+    await clickExact("기본 로드맵 채우기");
+    await sleep(400);
+    await expectText("기본 로드맵 9건을 채웠어요");
+    const after = await readState();
+    const ms = after.milestones || [];
+    if (ms.length !== 9) throw new Error("seeded milestones: " + ms.length);
+    if (JSON.stringify(ms.map((m) => m.stage).sort((a, b) => a - b)) !== "[1,2,3,4,5,6,7,8,9]") throw new Error("seeded stages: " + JSON.stringify(ms.map((m) => m.stage)));
+    for (const m of ms) {
+      if (m.status !== "planned" || m.createdAt !== today || "doneAt" in m) throw new Error("a seed is not a fresh planned record: " + JSON.stringify(m));
+      if (m.dealIds.length || m.documentIds.length || m.workIds.length || "projectId" in m) throw new Error("a seed carries links: " + JSON.stringify(m));
+    }
+    assertOnlyMilestones(before, after, "seeding the roadmap");
+    if (await hasText("기본 로드맵 채우기")) throw new Error("the seed button is still shown on a filled roadmap");
+    await expectText("예정 9 · 진행 중 0 · 완료 0");
+    const marker = await page.evaluate(() => {
+      const s = [...document.querySelectorAll("main span.font-mono.whitespace-nowrap")].find((x) => /업무 \d+\/\d+/.test(x.innerText || ""));
+      return s ? s.innerText.replace(/\s+/g, " ").trim() : "";
+    });
+    if (!/^(D-\d+|D-DAY|D\+\d+) · 업무 0\/0$/.test(marker)) throw new Error("the first roadmap row's marker: " + JSON.stringify(marker));
+    if (await roadmapNote()) throw new Error("a stage-order note on an all-planned roadmap");
+  });
+
+  await step("a milestone registers with links, moves to done with a stamped date, and the out-of-order note appears and disappears", async () => {
+    const today = await dayIn(0);
+    await page.evaluate((k, a) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.work = [{ id: "e2e-ms-work", date: a, title: "E2E 마일스톤 업무", done: false, source: "manual", createdAt: a, track: "biz" }, ...(s.work || []).filter((w) => w.id !== "e2e-ms-work")];
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, today);
+    await h.reload();
+    await openRoadmap();
+    let before = await readState();
+    await clickText("마일스톤 추가");
+    await sleep(400);
+    await typeInto("마일스톤 — 예", "E2E 마일스톤");
+    await clickInModalExact("5");
+    await clickInModalExact("진행 중");
+    await typeInto("달성 조건 (선택)", "E2E 조건 — 시연 1건");
+    await tickLink("재고 관리 자동화 도구");
+    await tickLink("E2E 마일스톤 업무");
+    await clickInModalExact("등록");
+    await sleep(500);
+    let after = await readState();
+    const added = (after.milestones || []).find((m) => m.title === "E2E 마일스톤");
+    if (!added || added.stage !== 5 || added.status !== "active" || added.dealIds.length !== 1 || JSON.stringify(added.workIds) !== '["e2e-ms-work"]' || "doneAt" in added) {
+      throw new Error("the registered milestone: " + JSON.stringify(added));
+    }
+    if (added.createdAt !== today || added.condition !== "E2E 조건 — 시연 1건") throw new Error("the milestone's stamps: " + JSON.stringify(added));
+    assertOnlyMilestones(before, after, "registering a milestone");
+    if ((await roadmapNote()) !== "단계 순서: 1단계 미완 · 5단계 진행 중") throw new Error("the stage-order note: " + (await roadmapNote()));
+
+    before = after;
+    await h.openTodo("계약금 입금 확인 — ETL 고도화 계약");
+    await clickInModalExact("완료");
+    await clickInModalExact("저장");
+    await sleep(500);
+    after = await readState();
+    const first = after.milestones.find((m) => m.stage === 1);
+    if (first.status !== "done" || first.doneAt !== today) throw new Error("the stage-1 milestone after done: " + JSON.stringify(first));
+    assertOnlyMilestones(before, after, "marking a milestone done");
+    if ((await roadmapNote()) !== "단계 순서: 2단계 미완 · 5단계 진행 중") throw new Error("the note after stage 1 is done: " + (await roadmapNote()));
+    await expectText("예정 8 · 진행 중 1 · 완료 1");
+
+    await h.openTodo("E2E 마일스톤");
+    await clickInModalExact("예정");
+    await clickInModalExact("저장");
+    await sleep(500);
+    if (await roadmapNote()) throw new Error("the stage-order note survived with no active milestone: " + (await roadmapNote()));
+    after = await readState();
+    if ("doneAt" in after.milestones.find((m) => m.title === "E2E 마일스톤")) throw new Error("a planned milestone carries doneAt");
+
+    await h.openTodo("E2E 마일스톤");
+    await setValue('.fixed.inset-0 input[placeholder^="마일스톤 — 예"]', "가".repeat(61));
+    await clickInModalExact("저장");
+    const err = await modalError();
+    if (err !== "마일스톤 이름은 60자까지예요 — 지금 61자예요.") throw new Error("the title refusal: " + JSON.stringify(err));
+    before = await readState();
+    await page.evaluate(() => { window.confirm = () => true; });
+    await clickInModalExact("삭제");
+    await sleep(500);
+    after = await readState();
+    if (after.milestones.length !== 9 || after.milestones.some((m) => m.title === "E2E 마일스톤")) throw new Error("milestones after the delete: " + after.milestones.length);
+    assertOnlyMilestones(before, after, "deleting a milestone");
+  });
+
+  await step("milestone pace follows linked work and the reader states the roadmap", async () => {
+    const [today, back, ahead] = [await dayIn(0), await dayIn(-10), await dayIn(10)];
+    try {
+      await page.evaluate((k, a) => {
+        const s = JSON.parse(localStorage.getItem(k));
+        s.work = [
+          { id: "e2e-pace-w1", date: a.today, title: "E2E 페이스 업무 1", done: true, source: "manual", createdAt: a.today, track: "biz" },
+          { id: "e2e-pace-w2", date: a.today, title: "E2E 페이스 업무 2", done: false, source: "manual", createdAt: a.today, track: "biz" },
+          ...(s.work || []).filter((w) => !w.id.startsWith("e2e-pace-")),
+        ];
+        s.milestones = [{ id: "e2e-pace-ms", title: "E2E 페이스 마일스톤", stage: 3, due: a.ahead, status: "active", dealIds: [], documentIds: [],
+          workIds: ["e2e-pace-w1", "e2e-pace-w2"], createdAt: a.back }, ...(s.milestones || []).filter((m) => m.id !== "e2e-pace-ms")];
+        localStorage.setItem(k, JSON.stringify(s));
+      }, KEY, { today, back, ahead });
+      await h.reload();
+      await openRoadmap();
+      await h.openTodo("E2E 페이스 마일스톤");
+      let sheet = await overlayText();
+      if (!sheet.includes("페이스 궤도 유지") || !sheet.includes("연결 업무 1/2")) throw new Error("the sheet at 1/2 done, half elapsed: " + sheet.slice(0, 200));
+      await closeModal();
+      await page.evaluate((k) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.work.find((w) => w.id === "e2e-pace-w2").done = true;
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY);
+      await h.reload();
+      await openRoadmap();
+      await h.openTodo("E2E 페이스 마일스톤");
+      sheet = await overlayText();
+      if (!sheet.includes("페이스 50%p 앞섬") || !sheet.includes("연결 업무 2/2")) throw new Error("the sheet at 2/2 done, half elapsed: " + sheet.slice(0, 200));
+      await closeModal();
+      await clickTab("프로필");
+      await clickText("오늘 읽을 것");
+      await sleep(500);
+      const reader = await overlayText();
+      const i = reader.indexOf("사업 로드맵");
+      if (i < 0) throw new Error("the reader has no roadmap section: " + reader.slice(0, 300));
+      const section = reader.slice(i, reader.indexOf("뒤처진 목표 페이스", i) > 0 ? reader.indexOf("뒤처진 목표 페이스", i) : undefined);
+      if (!section.includes("3단계 · E2E 페이스 마일스톤 · D-10 · 업무 2/2 · 50%p 앞섬")) throw new Error("the reader's roadmap line: " + section.slice(0, 300));
+      if (reader.indexOf("계약·입금 미확인") > i) throw new Error("the roadmap section is not after the contracts section");
+      await closeModal();
+    } finally {
+      // Leave the save as the next flow expects it: no plants, an empty roadmap, the contract view.
+      await closeModal();
+      await page.evaluate((k) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.work = (s.work || []).filter((w) => !w.id.startsWith("e2e-pace-") && w.id !== "e2e-ms-work");
+      s.milestones = [];
+      s.ui = { ...(s.ui || {}), bizView: "deals" };
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY);
+      await h.reload();
+    }
+  });
 };

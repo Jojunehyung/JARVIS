@@ -337,6 +337,13 @@ const demoState = () => {
     workFromJob,
     { id: uid(), date: today, title: "프로파일링 리포트 초안", done: false, source: "manual", createdAt: today, track: "work" },
   ];
+  // The seeded roadmap (v28): the first milestone done yesterday, the second active and linked to the first demo contract
+  // and the open manual business work item, so the view shows all three groups and a linked-work count of 0/1.
+  s.milestones = seedMilestones(today);
+  s.milestones[0] = { ...s.milestones[0], status: "done", doneAt: shiftDay(today, -1) };
+  s.milestones[1] = { ...s.milestones[1], status: "active",
+    dealIds: [s.deals.find((d) => d.client === "○○물산").id],
+    workIds: [s.work.find((w) => w.source === "manual" && trackOf(w) === "biz" && !w.done).id] };
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
     text: "CATIA 연습 1시간. 전기기사 필기 기출 20문항 — 정답률 65%.",
@@ -384,19 +391,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 5340 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 5340 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 5340 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 7117 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 7369 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 8938 | App root |
-| `liferpg-img-${slot}` | 8978 | App root |
-| `liferpg-img-ev-${id}` | 9001 | App root |
-| `liferpg-img-ev-${q.id}` | 9186 | App root |
-| `liferpg-img-ev-${t.id}` | 9804 | App root |
-| `liferpg-img-study-${t.id}-1` | 9804 | App root |
-| `liferpg-img-study-${t.id}-2` | 9804 | App root |
-| `liferpg-img-folio-${f.id}` | 9810 | App root |
+| `liferpg-img-ev-${task.id}` | 5458 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 5458 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 5458 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 7237 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 7546 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 9235 | App root |
+| `liferpg-img-${slot}` | 9275 | App root |
+| `liferpg-img-ev-${id}` | 9298 | App root |
+| `liferpg-img-ev-${q.id}` | 9483 | App root |
+| `liferpg-img-ev-${t.id}` | 10141 | App root |
+| `liferpg-img-study-${t.id}-1` | 10141 | App root |
+| `liferpg-img-study-${t.id}-2` | 10141 | App root |
+| `liferpg-img-folio-${f.id}` | 10147 | App root |
 
 ## Demo data (`demoState`)
 
