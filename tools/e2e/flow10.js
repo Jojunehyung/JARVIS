@@ -474,7 +474,7 @@ module.exports = async (h) => {
     await page.evaluate((k, r) => {
       const s = JSON.parse(localStorage.getItem(k));
       const p = (s.meetingProjects || [])[0];
-      s.meetings = [{ ...r, projectId: p.id }, ...(s.meetings || []).filter((m) => m.id !== r.id)];
+      s.meetings = [{ ...r, projectId: r.projectId === null ? null : p.id }, ...(s.meetings || []).filter((m) => m.id !== r.id)];
       localStorage.setItem(k, JSON.stringify(s));
     }, KEY, rec);
     await h.reload();
@@ -674,6 +674,157 @@ module.exports = async (h) => {
       s.work = (s.work || []).filter((w) => !(w.link?.kind === "meeting" && gone.has(w.link.id)));
       localStorage.setItem(k, JSON.stringify(s));
     }, KEY, [SPLIT_ID, CAP_ID, RAW_ID, HIDDEN_ID], FU_MEETING);
+    await h.reload();
+  });
+
+  // ── Urgent memos and transcripts (2026-09-17): a meeting with `projectId: null` listed under `프로젝트 없음 · 긴급 메모`,
+  // and a pasted transcript kept as pasted, read collapsed in the view and cleared on its own. Written under the standing
+  // instruction that the suite is not run.
+  const MEMO_TITLE = "E2E 긴급 메모", MEMO_GROUP = "프로젝트 없음 · 긴급 메모", SENTINEL = "E2E-TRANSCRIPT-SENTINEL-9f3a";
+  const TRANSCRIPT = "첫 줄 " + SENTINEL + NL + "  둘째 줄 (들여쓰기 유지)" + NL + NL + "넷째 줄";
+  const TRANSCRIPT_SEL = '.fixed.inset-0 textarea[placeholder^="녹취록"]';
+  const memo = async () => ((await readState()).meetings || []).find((m) => m.title === MEMO_TITLE);
+  // The section titles of the meetings tab in screen order (`.font-bold.truncate` — a project name or the memo group).
+  const sectionTitles = () => page.evaluate(() => [...document.querySelectorAll("main section")]
+    .map((s) => (s.querySelector(".font-bold.truncate")?.innerText || "").trim()).filter(Boolean));
+  // The memo chip of the open meeting form as `{ on }`, read off its class (`bg-cyan-400` = selected), or null.
+  const memoChip = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "없음 (긴급 메모)");
+    return b ? { on: /bg-cyan-400/.test(b.className || "") } : null;
+  });
+  const transcriptField = () => page.evaluate((sel) => { const el = document.querySelector(sel); return el ? el.value : null; }, TRANSCRIPT_SEL);
+
+  await step("a memo saved with no project has projectId null and lists under the project-less group after the project groups", async () => {
+    const before = await readState();
+    await clickTab("미팅");
+    await expectText(MEMO_GROUP);
+    await expectText("긴급 메모가 없어요.");
+    await clickText("긴급 메모 추가"); await sleep(400);
+    await expectText("새 회의록");
+    const chip = await memoChip();
+    if (!chip || !chip.on) throw new Error("the memo chip is not preselected: " + JSON.stringify(chip));
+    // Textarea 0 is still the summary: the transcript block is collapsed until its button is tapped.
+    await fillMeeting({ title: MEMO_TITLE, summary: "긴급 메모 확인" });
+    await clickInModalExact("녹취록 붙여넣기");
+    await setValue(TRANSCRIPT_SEL, TRANSCRIPT);
+    await clickInModalExact("등록");
+    await expectText("회의록을 등록했어요");
+    await sleep(300);
+    const after = await readState();
+    const m = (after.meetings || []).find((x) => x.title === MEMO_TITLE);
+    if (!m || !("projectId" in m) || m.projectId !== null) throw new Error("the memo's projectId: " + JSON.stringify(m));
+    if (m.transcript !== TRANSCRIPT) throw new Error("the transcript was not stored as pasted: " + JSON.stringify(m.transcript));
+    for (const k of ["id", "date", "title", "summary", "createdAt", "taskIds", "progress", "aiHidden", "followUps"]) if (!(k in m)) throw new Error("the memo lacks the key " + k);
+    assertBoundary(before, after, "saving a memo");
+    const list = await projectRows(MEMO_GROUP);
+    if (!list || !list.some((r) => r.title === MEMO_TITLE)) throw new Error("the memo group rows: " + JSON.stringify(list));
+    const titles = await sectionTitles();
+    const ip = titles.indexOf(PROJECT), im = titles.indexOf(MEMO_GROUP);
+    if (ip < 0 || im < 0 || ip > im) throw new Error("the memo group is not after the project sections: " + titles.join(" | "));
+  });
+
+  await step("the view states the transcript's length collapsed, expands and collapses it, and the packet-facing fact rows are unchanged", async () => {
+    await clickTab("미팅");
+    await openTodo(MEMO_TITLE);
+    const label = `녹취록 ${TRANSCRIPT.length}자 · 펼치기`;
+    let view = await overlayText();
+    if (!view.includes(label)) throw new Error("the collapsed transcript row: " + view.slice(0, 300));
+    if (!view.includes("프로젝트") || !view.includes("없음 (긴급 메모)")) throw new Error("the project fact of a memo: " + view.slice(0, 300));
+    if (!view.includes("요약·진행사항 포함")) throw new Error("the AI fact row changed: " + view.slice(0, 300));
+    if (view.includes(SENTINEL)) throw new Error("the collapsed view shows the transcript text");
+    await clickInModalExact(label);
+    view = await overlayText();
+    for (const t of [SENTINEL, "둘째 줄 (들여쓰기 유지)", "접기", "녹취록 지우기"]) if (!view.includes(t)) throw new Error(`the expanded view lacks "${t}": ` + view.slice(0, 400));
+    await clickInModalExact("접기");
+    if ((await overlayText()).includes(SENTINEL)) throw new Error("the transcript is still shown after collapsing");
+    await closeModal();
+  });
+
+  await step("the transcript refuses 30001 chars with the count, keeps the paste in the form, and accepts 30000", async () => {
+    await openTodo(MEMO_TITLE);
+    await clickInModalExact("수정");
+    await expectText("회의록 수정");
+    const opened = await transcriptField();
+    if (opened !== TRANSCRIPT) throw new Error("the edit form did not open the saved transcript: " + JSON.stringify(opened));
+    await setValue(TRANSCRIPT_SEL, "가".repeat(30001));
+    await clickInModalExact("저장");
+    const e = await modalError();
+    if (e !== "녹취록은 30000자까지예요 — 지금 30001자예요.") throw new Error("an over-cap transcript gave: " + (e || "no error"));
+    const kept = await transcriptField();
+    if ((kept || "").length !== 30001) throw new Error("the refused paste was not kept in the form: " + (kept || "").length);
+    await setValue(TRANSCRIPT_SEL, "가".repeat(30000));
+    await clickInModalExact("저장");
+    await expectText("회의록을 수정했어요");
+    await sleep(300);
+    const m = await memo();
+    if (!m || (m.transcript || "").length !== 30000) throw new Error("the 30000-char transcript was not stored: " + (m?.transcript || "").length);
+    const line = await countsLine();
+    if (!/저장 공간 \d+\.\dMB/.test(line)) throw new Error("meetings counts line after the transcript: " + JSON.stringify(line));
+  });
+
+  await step("clearing the transcript removes that field only and leaves summary, decisions, follow-ups and progress as they were", async () => {
+    const today = await dstrIn(0);
+    const id = (await memo()).id;
+    await page.evaluate((k, mid, d) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetings = s.meetings.map((m) => (m.id === mid ? { ...m, decisions: "E2E 결정",
+        followUps: [{ id: "e2e-memo-fu", text: "E2E 메모 후속", mine: false, done: false }],
+        progress: [{ id: "e2e-memo-pg", date: d, text: "E2E 메모 진행" }] } : m));
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, id, today);
+    await h.reload();
+    const before = await readState();
+    const memoBefore = before.meetings.find((m) => m.id === id);
+    await clickTab("미팅");
+    await openTodo(MEMO_TITLE);
+    await clickInModalExact(`녹취록 ${memoBefore.transcript.length}자 · 펼치기`);
+    await page.evaluate(() => { window.confirm = () => true; });
+    await clickInModalExact("녹취록 지우기");
+    await expectText("녹취록을 지웠어요");
+    await sleep(300);
+    const after = await readState();
+    const memoAfter = after.meetings.find((m) => m.id === id);
+    if (!memoAfter || "transcript" in memoAfter) throw new Error("the transcript key survived: " + JSON.stringify(memoAfter).slice(0, 200));
+    if (JSON.stringify({ ...memoBefore, transcript: undefined }) !== JSON.stringify({ ...memoAfter, transcript: undefined })) throw new Error("clearing the transcript changed another field: " + JSON.stringify(memoAfter).slice(0, 300));
+    const view = await overlayText();
+    if (!view.includes("녹취록 없음") || view.includes("펼치기")) throw new Error("the view after clearing: " + view.slice(0, 300));
+    assertBoundary(before, after, "clearing a transcript");
+  });
+
+  await step("moving a memo into a project relists it under that project, and back to the memo chip returns it to the group", async () => {
+    const pid = ((await readState()).meetingProjects || []).find((p) => p.name === PROJECT)?.id;
+    if (!pid) throw new Error("the project is missing from the save");
+    await closeModal();
+    await openTodo(MEMO_TITLE);
+    await clickInModalExact("수정");
+    await clickInModalExact(PROJECT);
+    await clickInModalExact("저장");
+    await expectText("회의록을 수정했어요");
+    await sleep(300);
+    if ((await memo()).projectId !== pid) throw new Error("the memo did not move into the project: " + JSON.stringify(await memo()));
+    const inProject = await projectRows(PROJECT);
+    let inGroup = await projectRows(MEMO_GROUP);
+    if (!inProject || !inProject.some((r) => r.title === MEMO_TITLE)) throw new Error("the project section does not list the moved memo: " + JSON.stringify(inProject));
+    if (!inGroup || inGroup.some((r) => r.title === MEMO_TITLE)) throw new Error("the memo group still lists the moved memo: " + JSON.stringify(inGroup));
+    await expectText("긴급 메모가 없어요.");
+    await openTodo(MEMO_TITLE);
+    await clickInModalExact("수정");
+    await clickInModalExact("없음 (긴급 메모)");
+    await clickInModalExact("저장");
+    await expectText("회의록을 수정했어요");
+    await sleep(300);
+    if ((await memo()).projectId !== null) throw new Error("the memo did not return to the memo group: " + JSON.stringify(await memo()));
+    inGroup = await projectRows(MEMO_GROUP);
+    if (!inGroup || !inGroup.some((r) => r.title === MEMO_TITLE)) throw new Error("the memo group does not list the memo again: " + JSON.stringify(inGroup));
+    // Leave the save as flow11 expects it: the memo gone, with any work item linked to it (none expected).
+    await page.evaluate((k, title) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      const gone = new Set(s.meetings.filter((x) => x.title === title).map((x) => x.id));
+      s.meetings = s.meetings.filter((x) => !gone.has(x.id));
+      s.work = (s.work || []).filter((w) => !(w.link?.kind === "meeting" && gone.has(w.link.id)));
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, MEMO_TITLE);
     await h.reload();
   });
 };

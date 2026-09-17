@@ -656,4 +656,71 @@ module.exports = async (h) => {
     }, KEY, PROJECT_ID, [MEETING_ID, MTG_A_ID, MTG_B_ID]);
     await h.reload();
   });
+
+  // ── Urgent memos (2026-09-17): the work packet states a project-less meeting under `[프로젝트 없음]` and never reads its
+  // transcript; a meeting-linked work item opens its minutes from the sheet. Written, not run.
+  const MEMO_ID = "e2e-memo-packet", MEMO_TITLE = "E2E 패킷 메모", MEMO_WORK_ID = "e2e-memo-work", MEMO_WORK = "E2E 메모 업무", SENTINEL = "E2E-PACKET-SENTINEL-51c0";
+  const GOAL_WORK_ID = "e2e-memo-work-goal", GOAL_WORK = "E2E 목표 업무";
+  const overlayCount = () => page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length);
+
+  await step("the work packet states a memo under the no-project head and carries none of its transcript", async () => {
+    const today = await dstrIn(0);
+    await page.evaluate((k, id, title, d, sentinel) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetings = [{ id, projectId: null, date: d, title, summary: "패킷 확인", transcript: "패킷 확인용 녹취 " + sentinel + "\n둘째 줄",
+        createdAt: d, taskIds: [], progress: [], aiHidden: false, followUps: [] }, ...(s.meetings || []).filter((m) => m.id !== id)];
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, MEMO_ID, MEMO_TITLE, today, SENTINEL);
+    await h.reload();
+    await openWorkBridge();
+    const txt = await packetText();
+    await closeModal();
+    if (!txt.includes(`- ${today} [프로젝트 없음] ${MEMO_TITLE}`)) throw new Error("the packet lacks the memo's head line: " + txt.slice(0, 400));
+    if (!txt.includes("  요약: 패킷 확인")) throw new Error("the packet lacks the memo's summary line: " + txt.slice(0, 400));
+    if (txt.includes(SENTINEL) || txt.includes("패킷 확인용 녹취")) throw new Error("the transcript reached the work packet");
+    if (txt.length > 20000) throw new Error("the work packet exceeds the 20000-char cap: " + txt.length);
+  });
+
+  await step("the open-minutes button on a meeting-linked work item opens that meeting's view in place of the sheet, and a goal-linked item has no such button", async () => {
+    const today = await dstrIn(0);
+    const goal = ((await readState()).goals || []).find((g) => g.status === "active");
+    if (!goal) throw new Error("no active goal to link a work item to");
+    await page.evaluate((k, items) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      const ids = new Set(items.map((w) => w.id));
+      s.work = [...(s.work || []).filter((w) => !ids.has(w.id)), ...items];
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, [
+      { id: MEMO_WORK_ID, date: today, title: MEMO_WORK, done: false, link: { kind: "meeting", id: MEMO_ID }, source: "manual", createdAt: today },
+      { id: GOAL_WORK_ID, date: today, title: GOAL_WORK, done: false, link: { kind: "goal", id: goal.id }, source: "manual", createdAt: today },
+    ]);
+    await h.reload();
+    await clickTab("업무");
+    await openTodo(MEMO_WORK);
+    const sheet = await overlayText();
+    for (const t of [`회의록 · ${today} ${MEMO_TITLE}`, "회의록 열기"]) if (!sheet.includes(t)) throw new Error(`the work sheet lacks "${t}": ` + sheet.slice(0, 300));
+    await clickInModalExact("회의록 열기");
+    await sleep(500);
+    const overlays = await overlayCount();
+    if (overlays !== 1) throw new Error("overlays after opening the minutes from the sheet: " + overlays);
+    const view = await overlayText();
+    if (!view.startsWith(MEMO_TITLE)) throw new Error("the overlay is not the memo's view: " + view.slice(0, 200));
+    if (!view.includes("녹취록 ") || !view.includes("자 · 펼치기")) throw new Error("the memo view lacks the collapsed transcript row: " + view.slice(0, 300));
+    await closeModal();
+    const left = await overlayCount();
+    if (left) throw new Error(`${left} overlay(s) still open after the view was closed`);
+    const active = await page.evaluate(() => [...document.querySelectorAll("nav button")].filter((b) => /text-cyan-300/.test(b.className)).map((b) => (b.innerText || "").trim()).join("·"));
+    if (active !== "업무") throw new Error("closing the view left the app on the tab: " + (active || "none"));
+    await openTodo(GOAL_WORK);
+    if ((await overlayText()).includes("회의록 열기")) throw new Error("a goal-linked item offers the minutes button");
+    await closeModal();
+    // Leave the save as flow4 expects it: the memo and both planted work items gone.
+    await page.evaluate((k, mid, wids) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetings = (s.meetings || []).filter((m) => m.id !== mid);
+      s.work = (s.work || []).filter((w) => !wids.includes(w.id));
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, MEMO_ID, [MEMO_WORK_ID, GOAL_WORK_ID]);
+    await h.reload();
+  });
 };

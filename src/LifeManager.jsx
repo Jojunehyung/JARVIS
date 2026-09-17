@@ -2937,6 +2937,7 @@ const buildWorkPacket = (state, today) => {
   const meetingLines = (list, summaryCap, progressN, followUpN) => list.flatMap((m) => {
     if (m.aiHidden) return [`- ${m.date} ${m.title}`, "  내용 비공개 (AI에 보내지 않기)"];
     const project = (state.meetingProjects || []).find((p) => p.id === m.projectId)?.name || "프로젝트 없음";
+    // `transcript` is never read here — the packet states named fields only (SECURITY.md).
     // Follow-up items (v26) after the decisions, open first and done last, so the trim drops the done ones first. The
     // free-text `후속` line stays only for a meeting with text and no items — with items it would state them twice.
     const fus = m.followUps || [];
@@ -3258,9 +3259,14 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *             monthly?, costMonthly?, months?, startMonth?("YYYY-MM"),          // payment stamps; months, totals, margin and the
  *             paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
  *   meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
- *   meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?,       // trophy, goal or streak (rules 1, 18). A meeting's time lives
- *               summary, decisions?, actions?, eventId?, createdAt,           // only in events; eventId (+ date) points at one occurrence and
+ *   meetings: [{ id, projectId(string | null), date("YYYY-MM-DD"), title, attendees?,   // trophy, goal or streak (rules 1, 18). A meeting's time lives
+ *               summary, decisions?, actions?, transcript?, eventId?, createdAt,       // only in events; eventId (+ date) points at one occurrence and
  *               taskIds[],                                                 // nothing is copied from it. Order and storage use are derived.
+ *                                                                           // projectId null (2026-09-17) = an urgent memo with no project, listed
+ *                                                                           // under `프로젝트 없음 · 긴급 메모`; no backfill — every reader tolerates null.
+ *                                                                           // transcript (2026-09-17, optional, no migration): the pasted transcription
+ *                                                                           // as pasted, at most 30,000 chars; read only by the meeting form and view,
+ *                                                                           // never by a packet, the calendar file or the prep card (SECURITY.md).
  *                                                                           // taskIds (v24): ids of existing tasks the minutes refer to, at most
  *                                                                           // 10; linking changes no task, and the task sheet's reverse list is
  *                                                                           // derived at render. Deleting a task removes its id here.
@@ -3296,7 +3302,8 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  * a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`),
  * the work tab's day view with the carried undone items and link labels (`workOn` with `today`/`workLinkText`),
  * the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitFollowUpText`), the minutes row's
- * `후속 {open}/{total}` marker, and the work packet (`buildWorkPacket`).
+ * `후속 {open}/{total}` marker, the memo group of the meetings tab and a transcript's `{n}자` length, and the work packet
+ * (`buildWorkPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -3547,7 +3554,15 @@ const demoState = () => {
   // two open of three. Its id is a const so both sides of the link can name it.
   const mtgUpkeepId = uid();
   const fuA = { id: uid(), text: "긴급 대응 기준 초안 공유", mine: true, due: shiftDay(today, 2), done: false };
+  // An urgent memo (2026-09-17): no project, a pasted transcript, one progress entry, one follow-up owned by someone
+  // else so the demo work list is unchanged.
   s.meetings = [
+    { id: uid(), projectId: null, date: shiftDay(today, -1), title: "긴급 메모 — ◇◇스튜디오 전화",
+      summary: "예약 페이지 개편 문의 — 견적 범위와 일정 질문. 기존 예약 데이터 유지 필수.",
+      transcript: "네, 예약 페이지 개편 건으로 전화드렸어요. 지금 페이지가 모바일에서 예약 버튼이 잘 안 눌린다는 얘기가 계속 나와서요.\n일단 예약 폼이랑 결제 연결까지 한 번에 바꾸고 싶은데, 기간이 얼마나 걸릴지, 그리고 견적이 어느 정도 나올지 먼저 알고 싶어요. 다음 주 수요일까지 초안이라도 받을 수 있을까요?\n아, 그리고 기존 예약 데이터는 그대로 가져가야 해요. 사진 업로드 기능도 있으면 좋겠는데 그건 나중에 얘기해도 돼요. 네, 그럼 메일로 정리해서 보내 주세요.",
+      createdAt: shiftDay(today, -1), taskIds: [],
+      progress: [{ id: uid(), date: today, text: "개편 범위 정리 — 예약 폼·결제 연결·데이터 이관, 사진 업로드는 2차" }], aiHidden: false,
+      followUps: [{ id: uid(), text: "예약 페이지 개편 견적서 초안", mine: false, due: shiftDay(today, 3), done: false }] },
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
       decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [],
@@ -6955,8 +6970,10 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
 /* A meeting is a record of what was said, never a task and never an appointment: no payout, no trophy, no goal, no
    streak, no evidence gate (rules 1, 18), and nothing here reaches the briefing, the to-do list or the assistant packet
    (rule 7). The time of a meeting lives only in `일정`; a meeting stores its date and, optionally, the id of the event
-   whose occurrence falls on that date, and reads that event's time and title at render. Full transcripts are not
-   stored — only a hand-written or pasted summary, capped below.
+   whose occurrence falls on that date, and reads that event's time and title at render. A meeting may have no project
+   (`projectId: null`, 2026-09-17): an urgent memo, listed under `프로젝트 없음 · 긴급 메모` after the project sections.
+   A pasted transcription may be kept as pasted in `transcript` (2026-09-17, capped below) — stored, never processed:
+   no summary, split or judgement is made from it, and nothing but the form and the view reads it (rule 7, SECURITY.md).
    Storage arithmetic (the budget is counted in string length, like `storageUsedBytes`: 3.5 × 1,048,576 = 3,672,064
    chars shared with the rest of the save and every thumbnail). An empty record costs about 190 chars (ids, both
    dates, keys, the comma); a record with every field full costs 40 + 80 + 5,000 + 600 + 600 + 190 = 6,510 chars plus one
@@ -6984,8 +7001,19 @@ function FolioModal({ folio, onClose, onAdd, onUpdate, onRemove }) {
    chars a year (37 % of the budget a year, about 2 years 8 months before `recordFits` refuses). Each mine follow-up
    also creates a work item — the v25 overhead (~100) + title (≤ 60) + a meeting link with `followUpId` (≈ 66) ≈ 210
    chars for a 40-char text; a text over 60 chars is copied whole into `note` (≤ 200), so the largest such item ≈ 436.
-   `commitMeeting` measures the meeting record plus every work item the reconcile creates before either is written. */
-const MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200 };
+   `commitMeeting` measures the meeting record plus every work item the reconcile creates before either is written.
+   A transcript (2026-09-17) adds `,"transcript":""` = 15 chars only when one exists; `"projectId":null` (16) against
+   `"projectId":"xxxxxxxxxx"` (24) makes a memo 8 chars smaller. `JSON.stringify` writes every line break as two chars
+   and escapes every double quote, so a full 30,000-char transcript with ~300 line breaks stores as ≈ 30,315 chars, and
+   a completely full meeting with one ≈ 25,825 + 15 + 30,315 ≈ 56,140. Full transcripts alone: 3,672,064 / 30,315 ≈ 121
+   by the guard's own unit; browsers meter localStorage in UTF-16 units (commonly 5 MiB an origin ≈ 2.6 M chars), so
+   the physical bound is nearer 55 — the guard is a heuristic ceiling and overstates the room (TD-59). Typical: a
+   ten-minute voice memo ≈ 2,500 Korean chars ≈ 2,540 stored; three a week ≈ 0.4 M chars a year (11 % of the budget);
+   one on every one of three meetings a working day turns the v26 horizon (1,810 each, 37 % a year) into ≈ 4,350 × 750
+   ≈ 3.26 M a year (89 %), about 1 year 1 month before `recordFits` refuses. `recordFits` already measures the whole
+   record, transcript included, and the tab's storage line already counts it; `clearTranscript` (`녹취록 지우기`) is
+   the in-app way to reclaim it. */
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200, transcript: 30000 };
 const MEETING_PROGRESS_MAX = 30;   // progress entries per meeting before `진행사항은 30건까지예요.`
 const MEETING_FOLLOWUPS_MAX = 30;  // follow-up items per meeting before `후속 항목은 30건까지예요.`
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
@@ -7140,6 +7168,33 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
       return (b.p.createdAt || "").localeCompare(a.p.createdAt || "");
     });
   }, [projects, meetings]);
+  // Project-less minutes (`projectId: null`, 2026-09-17): the urgent memos, one group after every project section.
+  const memos = useMemo(() => meetings.filter((m) => m.projectId == null).sort(meetingOrder), [meetings]);
+  // One group's rows — the first MEETING_ROWS_SHOWN, the rest behind `{n}건 더 보기` / `접기` — for a project and the memo group.
+  const rowsBlock = (key, rows, emptyText) => {
+    const open = !!expanded[key];
+    const shown = open ? rows : rows.slice(0, MEETING_ROWS_SHOWN);
+    return (
+      <>
+        {rows.length === 0 ? (
+          <p className="text-sm text-zinc-500 mt-3">{emptyText}</p>
+        ) : (
+          <div className="space-y-1.5 mt-3">
+            {shown.map((m) => (
+              <TodoRow key={m.id} lead={{ text: m.date.slice(2), tone: "text-zinc-400 border-zinc-700" }} title={m.title}
+                marker={meetingRowMarker(m)} onOpen={() => onOpenMeeting(m.id)} />
+            ))}
+          </div>
+        )}
+        {rows.length > MEETING_ROWS_SHOWN && (
+          <button onClick={() => setExpanded((x) => ({ ...x, [key]: !open }))}
+            className="mt-2 text-xs font-bold text-zinc-400 active:opacity-70">
+            {open ? "접기" : `${rows.length - MEETING_ROWS_SHOWN}건 더 보기`}
+          </button>
+        )}
+      </>
+    );
+  };
 
   return (
     <>
@@ -7166,40 +7221,35 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
         </section>
       )}
 
-      {groups.map(({ p, rows }) => {
-        const open = !!expanded[p.id];
-        const shown = open ? rows : rows.slice(0, MEETING_ROWS_SHOWN);
-        return (
-          <section key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-            <div className="flex items-baseline gap-2">
-              <div className="flex-1 min-w-0 text-sm font-bold truncate">{p.name}</div>
-              <span className="text-xs font-mono text-zinc-500 shrink-0">회의록 {rows.length}건</span>
-            </div>
-            <div className="flex gap-1.5 mt-2">
-              <button onClick={() => onEditProject(p.id)}
-                className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">프로젝트 수정</button>
-              <button onClick={() => onAddMeeting(p.id)}
-                className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">회의록 추가</button>
-            </div>
-            {rows.length === 0 ? (
-              <p className="text-sm text-zinc-500 mt-3">회의록이 없어요.</p>
-            ) : (
-              <div className="space-y-1.5 mt-3">
-                {shown.map((m) => (
-                  <TodoRow key={m.id} lead={{ text: m.date.slice(2), tone: "text-zinc-400 border-zinc-700" }} title={m.title}
-                    marker={meetingRowMarker(m)} onOpen={() => onOpenMeeting(m.id)} />
-                ))}
-              </div>
-            )}
-            {rows.length > MEETING_ROWS_SHOWN && (
-              <button onClick={() => setExpanded((x) => ({ ...x, [p.id]: !open }))}
-                className="mt-2 text-xs font-bold text-zinc-400 active:opacity-70">
-                {open ? "접기" : `${rows.length - MEETING_ROWS_SHOWN}건 더 보기`}
-              </button>
-            )}
-          </section>
-        );
-      })}
+      {groups.map(({ p, rows }) => (
+        <section key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+          <div className="flex items-baseline gap-2">
+            <div className="flex-1 min-w-0 text-sm font-bold truncate">{p.name}</div>
+            <span className="text-xs font-mono text-zinc-500 shrink-0">회의록 {rows.length}건</span>
+          </div>
+          <div className="flex gap-1.5 mt-2">
+            <button onClick={() => onEditProject(p.id)}
+              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">프로젝트 수정</button>
+            <button onClick={() => onAddMeeting(p.id)}
+              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">회의록 추가</button>
+          </div>
+          {rowsBlock(p.id, rows, "회의록이 없어요.")}
+        </section>
+      ))}
+      {/* Urgent memos — minutes with no project. Always rendered, after every project section: its `긴급 메모 추가` is
+          the one way to start a memo (a project's `회의록 추가` preselects that project). */}
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <div className="flex items-baseline gap-2">
+          <div className="flex-1 min-w-0 text-sm font-bold truncate">프로젝트 없음 · 긴급 메모</div>
+          <span className="text-xs font-mono text-zinc-500 shrink-0">회의록 {memos.length}건</span>
+        </div>
+        <p className="text-xs text-zinc-600 mt-0.5">프로젝트 없이 적은 회의록이에요 — 나중에 수정에서 프로젝트를 고르면 그 프로젝트로 옮겨져요.</p>
+        <div className="flex gap-1.5 mt-2">
+          <button onClick={() => onAddMeeting(null)}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">긴급 메모 추가</button>
+        </div>
+        {rowsBlock("none", memos, "긴급 메모가 없어요.")}
+      </section>
     </>
   );
 }
@@ -7261,6 +7311,10 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   const [summary, setSummary] = useState(meeting?.summary || "");
   const [decisions, setDecisions] = useState(meeting?.decisions || "");
   const [actions, setActions] = useState(meeting?.actions || "");
+  // The pasted transcription (2026-09-17), kept as pasted. The block is collapsed while empty so a paste-first flow
+  // starts under the title and the summary stays the first textarea of a new form; a saved transcript opens it at once.
+  const [transcript, setTranscript] = useState(meeting?.transcript || "");
+  const [transcriptOpen, setTranscriptOpen] = useState(!!meeting?.transcript);
   const [eventId, setEventId] = useState(meeting?.eventId || null);
   const [aiHidden, setAiHidden] = useState(meeting?.aiHidden === true); // v25: keeps this meeting's body out of the work packet
   // Linked task ids. A link whose task was deleted before this edit is dropped here, so it never counts toward the cap.
@@ -7298,12 +7352,14 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   };
 
   const submit = () => {
-    const v = { title: title.trim(), attendees: attendees.trim(), summary: summary.trim(), decisions: decisions.trim(), actions: actions.trim() };
-    if (!pid || !projects.some((p) => p.id === pid)) { setErr("프로젝트를 골라 주세요."); return; }
+    const v = { title: title.trim(), attendees: attendees.trim(), summary: summary.trim(), decisions: decisions.trim(), actions: actions.trim(),
+      transcript: transcript.trim() };
+    // A null id is a memo (no project); a non-null id must name a live project.
+    if (pid !== null && !projects.some((p) => p.id === pid)) { setErr("프로젝트를 골라 주세요."); return; }
     if (!date) { setErr("날짜를 선택해 주세요."); return; }
     if (!v.title) { setErr("회의 이름을 입력해 주세요."); return; }
     if (!v.summary) { setErr("회의 요약을 입력해 주세요."); return; }
-    const names = { title: "회의 이름은", attendees: "참석자는", summary: "회의 요약은", decisions: "결정 사항은", actions: "후속 조치는" };
+    const names = { title: "회의 이름은", attendees: "참석자는", summary: "회의 요약은", decisions: "결정 사항은", actions: "후속 조치는", transcript: "녹취록은" };
     for (const k of Object.keys(names)) {
       if (v[k].length > MEETING_LIMITS[k]) { setErr(`${names[k]} ${MEETING_LIMITS[k]}자까지예요 — 지금 ${v[k].length}자예요.`); return; }
     }
@@ -7322,6 +7378,8 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       summary: v.summary,
       ...(v.decisions ? { decisions: v.decisions } : {}),
       ...(v.actions ? { actions: v.actions } : {}),
+      // Only the ends are trimmed; the interior is byte-identical to the paste. An all-whitespace transcript is not written.
+      ...(v.transcript ? { transcript: v.transcript } : {}),
       ...(eventId ? { eventId } : {}),
       // Linking stores ids only and never changes a task (rules 1, 9, 18).
       taskIds: taskIds.filter((id) => (state.tasks || []).some((q) => q.id === id)).slice(0, MEETING_LIMITS.tasks),
@@ -7341,8 +7399,10 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
         <div>
           <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">프로젝트</div>
           <div className="flex flex-wrap gap-1.5">
+            <Chip on={pid === null} onClick={() => { setPid(null); setErr(""); }}>없음 (긴급 메모)</Chip>
             {projects.map((p) => <Chip key={p.id} on={pid === p.id} onClick={() => { setPid(p.id); setErr(""); }}>{p.name}</Chip>)}
           </div>
+          {pid === null && <p className="text-xs text-zinc-600 mt-1.5">프로젝트 없이 저장돼요 — 미팅 탭의 '프로젝트 없음 · 긴급 메모'에 실려요.</p>}
         </div>
         <div>
           <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">날짜</div>
@@ -7388,6 +7448,14 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
         </div>
         <BizField value={title} onChange={setTitle} placeholder="회의 이름 — 예: 2차 요구사항 회의" />
         <BizField value={attendees} onChange={setAttendees} placeholder="참석자 (선택) — 예: 김OO, 박OO" />
+        {transcriptOpen ? (
+          <MeetingText value={transcript} onChange={setTranscript} placeholder="녹취록 (선택) — 급히 녹음한 내용을 옮겨 적은 글을 그대로 붙여넣어요" rows={6} cap={MEETING_LIMITS.transcript} />
+        ) : (
+          <div>
+            <button onClick={() => setTranscriptOpen(true)}
+              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">녹취록 붙여넣기</button>
+          </div>
+        )}
         <MeetingText value={summary} onChange={setSummary} placeholder="회의 요약 — 논의한 내용을 요점으로 적어요" rows={8} cap={MEETING_LIMITS.summary} />
         <MeetingText value={decisions} onChange={setDecisions} placeholder="결정 사항 (선택)" rows={3} cap={MEETING_LIMITS.decisions} />
         <MeetingText value={actions} onChange={setActions} placeholder="후속 조치 (선택)" rows={3} cap={MEETING_LIMITS.actions} />
@@ -7443,7 +7511,7 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
             <span className="block text-xs text-zinc-600">켜면 오늘 업무 만들기 패킷에 이 회의록의 날짜와 제목만 실려요.</span>
           </span>
         </label>
-        <p className="text-xs text-zinc-500">전체 녹취가 아니라 요약만 저장해요.</p>
+        <p className="text-xs text-zinc-500">녹취록은 붙여넣은 그대로 저장돼요 — AI 패킷에는 실리지 않아요.</p>
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
           {meeting ? "저장" : "등록"}
@@ -7459,8 +7527,9 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
 /* ── Meeting view — the full minutes, read from the live record. The progress log (v25) is added and deleted only
    here: `onAddProgress(meetingId, text)` answers with an error string ("" = saved) like the meeting form's handlers. ── */
 function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress,
-  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps }) {
+  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps, onClearTranscript }) {
   const [entry, setEntry] = useState(""); // the progress textarea — view state only, never stored
+  const [showTranscript, setShowTranscript] = useState(false); // the transcript block, collapsed by default — view state only
   const [err, setErr] = useState("");
   // The split panel's candidates `[{ text, on, mine, dup, blocked }]`, or null when closed — component state only.
   const [split, setSplit] = useState(null);
@@ -7515,6 +7584,10 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
     if (!window.confirm("진행사항을 삭제해요. 계속할까요?")) return;
     onRemoveProgress(m.id, entryId);
   };
+  const askClearTranscript = () => {
+    if (!window.confirm("녹취록만 지워요. 요약·결정·후속·진행사항은 남아요. 계속할까요?")) return;
+    onClearTranscript(m.id);
+  };
   const block = (label, text) => (
     <div>
       <SectionLabel>{label}</SectionLabel>
@@ -7525,12 +7598,32 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
     <Modal title={m.title} onClose={onClose}>
       <div className="space-y-3">
         <div className="space-y-1.5">
-          <CvFact label="프로젝트" wrap>{project?.name || "없음"}</CvFact>
+          <CvFact label="프로젝트" wrap>{project?.name || "없음 (긴급 메모)"}</CvFact>
           <CvFact label="날짜"><span className="font-mono">{m.date}</span></CvFact>
           <CvFact label="참석자" wrap>{m.attendees || "기록 없음"}</CvFact>
           <CvFact label="일정" wrap>{meetingEventText(state, m)}</CvFact>
           <CvFact label="AI 전송">{m.aiHidden ? "보내지 않음" : "요약·진행사항 포함"}</CvFact>
         </div>
+        {/* The transcript (2026-09-17): collapsed by default because it is long; its length is stated so nothing is
+            hidden (rule 13). On-device only — never in a packet or file. */}
+        {m.transcript ? (
+          <div>
+            <div className="flex items-baseline justify-between gap-2">
+              <SectionLabel>녹취록</SectionLabel>
+              <button onClick={() => setShowTranscript((x) => !x)} aria-label={showTranscript ? "녹취록 접기" : "녹취록 펼치기"}
+                className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-mono active:translate-y-0.5">
+                {showTranscript ? "접기" : `녹취록 ${m.transcript.length}자 · 펼치기`}
+              </button>
+            </div>
+            {showTranscript && (
+              <>
+                <p className="text-sm text-zinc-200 whitespace-pre-wrap break-words">{m.transcript}</p>
+                <button onClick={askClearTranscript}
+                  className="mt-2 px-2.5 py-1.5 rounded-lg border border-rose-800 text-rose-300 text-xs font-bold active:translate-y-0.5">녹취록 지우기</button>
+              </>
+            )}
+          </div>
+        ) : block("녹취록", "")}
         {block("요약", m.summary)}
         {block("결정 사항", m.decisions)}
         {block("후속 조치", m.actions)}
@@ -7864,7 +7957,7 @@ function WorkTab({ state, today, onAdd, onOpen, onBridge, onRemoveMany, onOpenMe
 
 /* ── Work sheet — one form for add, edit, completion and deletion. `onAdd` / `onUpdate` answer with an error string
    ("" = saved), so the per-day cap or the storage guard keeps the form open with everything typed. ── */
-function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggle, onRemove }) {
+function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggle, onRemove, onOpenMeeting }) {
   const linkKey = (l) => (l ? `${l.kind}:${l.id}` : "");
   const [title, setTitle] = useState(work?.title || "");
   const [note, setNote] = useState(work?.note || "");
@@ -7908,6 +8001,14 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
             <CvFact label="출처">{work.source === "ai" ? "AI 제안" : work.source === "meeting" ? "회의 후속" : "수기"}</CvFact>
             <CvFact label="상태">{work.done ? "완료" : "미완료"}</CvFact>
             <CvFact label="연결" wrap>{workLinkText(state, work) || "연결 없음"}</CvFact>
+            {/* Opens the meeting's view in place of this sheet — the root has one modal slot — so the transcript and the
+                progress notes are one tap from the item; closing the view lands on the tab (TD-58). Live links only. */}
+            {work.link?.kind === "meeting" && workLinkLabel(state, work.link) && (
+              <div>
+                <button onClick={() => onOpenMeeting(work.link.id)}
+                  className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">회의록 열기</button>
+              </div>
+            )}
           </div>
         )}
         <BizField value={title} onChange={setTitle} placeholder="업무 제목 — 예: 견적서 송부" />
@@ -7970,7 +8071,7 @@ function WorkBridgeModal({ state, today, onClose, onImport, onToast }) {
     <Modal title={mode === "send" ? "오늘 업무 만들기" : "AI 답변 붙여넣기"} onClose={onClose}>
       {mode === "send" ? (
         <PacketSendPane packet={packet} taRef={taRef} onCopy={() => copyPacket(taRef, packet, onToast)} onPaste={() => setMode("paste")}
-          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요." />
+          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요." />
       ) : !parsed ? (
         <ReplyPastePane reply={reply} setReply={setReply} onCheck={check} />
       ) : (
@@ -8639,6 +8740,15 @@ export default function LifeManager() {
     putMeeting({ ...cur, progress: (cur.progress || []).filter((e) => e.id !== entryId) });
     showToast({ msg: "진행사항을 삭제했어요" });
   };
+  // Removes only a meeting's transcript (2026-09-17); every other field stays. Confirmed in the view; the record
+  // shrinks, so no budget check.
+  const clearTranscript = (meetingId) => {
+    const cur = (state.meetings || []).find((m) => m.id === meetingId);
+    if (!cur || !cur.transcript) return;
+    const { transcript, ...rest } = cur;
+    putMeeting(rest);
+    showToast({ msg: "녹취록을 지웠어요" });
+  };
 
   /* Daily work — dated work items (v25). A record, never a task: these handlers write `work`, plus the `done` state or
      the `workId` of the follow-up an item mirrors (v26), and nothing else — no act, tasks, goals, areas, room, exams or
@@ -9093,12 +9203,14 @@ export default function LifeManager() {
           onEdit={(meetingId) => setModal({ type: "meeting", meetingId })}
           onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })}
           onAddProgress={addProgress} onRemoveProgress={removeProgress}
-          onToggleFollowUp={toggleFollowUp} onSetFollowUpMine={setFollowUpMine} onAppendFollowUps={appendFollowUps} />
+          onToggleFollowUp={toggleFollowUp} onSetFollowUpMine={setFollowUpMine} onAppendFollowUps={appendFollowUps}
+          onClearTranscript={clearTranscript} />
       )}
       {/* Work items — records outside the goal ladder: no payout, no goal, no streak (rules 1, 9, 18) */}
       {modal?.type === "work" && (
         <WorkModal state={state} today={today} date={modal.date} work={(state.work || []).find((w) => w.id === modal.workId)}
-          onClose={() => setModal(null)} onAdd={addWork} onUpdate={updateWork} onToggle={toggleWork} onRemove={removeWork} />
+          onClose={() => setModal(null)} onAdd={addWork} onUpdate={updateWork} onToggle={toggleWork} onRemove={removeWork}
+          onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
       )}
       {modal?.type === "workBridge" && (
         <WorkBridgeModal state={state} today={today} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
