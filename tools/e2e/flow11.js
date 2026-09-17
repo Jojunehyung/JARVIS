@@ -336,15 +336,16 @@ module.exports = async (h) => {
     await sleep(500);
   };
 
-  await step("the work packet carries a meeting's summary and progress, only the title and date of a hidden meeting, and no profile identifier", async () => {
+  await step("the work packet carries a meeting's attendees, linked tasks, summary and progress, only the title and date of a hidden meeting, and no profile identifier", async () => {
     const today = await dstrIn(0), twoDaysAgo = await dstrIn(-2);
     // Two more meetings under the planted project: A visible with a progress entry, B flagged `AI에 보내지 않기`.
     await page.evaluate((k, pid, a, b, d, t) => {
       const st = JSON.parse(localStorage.getItem(k));
       st.meetings = [
-        { id: a.id, projectId: pid, date: d, title: a.title, summary: "검색 범위 협의 완료", createdAt: d, taskIds: [],
+        { id: a.id, projectId: pid, date: d, title: a.title, attendees: "E2E 참석 2명", summary: "검색 범위 협의 완료", createdAt: d,
+          taskIds: (st.tasks || []).slice(0, 1).map((q) => q.id),
           progress: [{ id: "e2e-work-prog-a", date: t, text: "색인 스크립트 초안 작성" }], aiHidden: false },
-        { id: b.id, projectId: pid, date: d, title: b.title, summary: b.summary, decisions: "단가 조정", createdAt: d, taskIds: [], progress: [], aiHidden: true },
+        { id: b.id, projectId: pid, date: d, title: b.title, attendees: "비공개 참석자", summary: b.summary, decisions: "단가 조정", createdAt: d, taskIds: [], progress: [], aiHidden: true },
         ...(st.meetings || []).filter((m) => m.id !== a.id && m.id !== b.id),
       ];
       localStorage.setItem(k, JSON.stringify(st));
@@ -352,15 +353,17 @@ module.exports = async (h) => {
     await h.reload();
     await openWorkBridge();
     const txt = await packetText();
+    const linkedTitle = ((await readState()).tasks || [])[0]?.title;
+    if (!linkedTitle) throw new Error("no task to link, so the linked-task line would prove nothing");
     if (!txt.startsWith("[인생 관리 — 오늘 업무 제안 요청 " + today + "]")) throw new Error("the packet does not open with the work request line: " + txt.slice(0, 80));
     if (txt.length > 20000) throw new Error("the work packet exceeds the 20000-char cap: " + txt.length);
     for (const t of ["## 이력", "## 목표", "## 열린 할 일", "## 최근 회의록", "## 업무 기록 (어제·오늘)",
-      `[${PROJECT}] ${MTG_A}`, "요약: 검색 범위 협의 완료", `진행 ${today}: 색인 스크립트 초안 작성`,
+      `[${PROJECT}] ${MTG_A}`, "참석: E2E 참석 2명", `연결된 할 일: ${linkedTitle} (`, "요약: 검색 범위 협의 완료", `진행 ${today}: 색인 스크립트 초안 작성`,
       `${twoDaysAgo} ${MTG_B}`, "내용 비공개 (AI에 보내지 않기)", `${today} 미완료 ${WORK_TITLE}`]) {
       if (!txt.includes(t)) throw new Error(`the work packet lacks "${t}" (${txt.length} chars)`);
     }
     // The hidden meeting: its body stays out, and its line names no project either — date and title only.
-    if (txt.includes(HIDDEN_SUMMARY) || txt.includes("단가 조정")) throw new Error("the hidden meeting's minutes reached the packet");
+    if (txt.includes(HIDDEN_SUMMARY) || txt.includes("단가 조정") || txt.includes("비공개 참석자")) throw new Error("the hidden meeting's minutes reached the packet");
     if (txt.includes(`[${PROJECT}] ${MTG_B}`)) throw new Error("the hidden meeting's line names its project");
     const iHidden = txt.indexOf(`${twoDaysAgo} ${MTG_B}`);
     if (!txt.slice(iHidden).split("\n")[1].includes("내용 비공개")) throw new Error("the hidden meeting's line is not followed by the closed-body line");

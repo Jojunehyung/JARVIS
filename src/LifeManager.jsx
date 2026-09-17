@@ -2747,7 +2747,7 @@ const PACKET_HEAD = [
 // ChatGPT, which take far more than the daily packet's 4,000; ChatGPT may attach a long paste as a file and still reads it.
 const WORK_PACKET_MAX = 20000;     // the work packet's own cap; the daily packet keeps PACKET_MAX
 const WORK_PROPOSAL_MAX = 8;       // proposals read from a work reply
-const WORK_PACKET_MEETINGS = 6;    // newest meetings by `meetingOrder`
+const WORK_PACKET_MEETINGS = 10;   // newest meetings by `meetingOrder` (6 until 2026-09-17)
 const WORK_PACKET_PROGRESS = 5;    // newest progress entries per meeting
 const WORK_PACKET_SUMMARY = 5000;  // chars of a meeting's summary — the whole summary (MEETING_LIMITS.summary)
 const WORK_PACKET_SUMMARY_TRIM = 1500; // the summary clip once the packet runs over WORK_PACKET_MAX
@@ -2884,7 +2884,7 @@ const parseAssistantReply = (text, state) => {
    flagged `aiHidden` contributes its date and title only. No photo, no evidence text, no journal entry.
    Summaries, decisions, follow-ups, progress entries and notes go whole (widened 2026-09-17). When the text exceeds
    WORK_PACKET_MAX the reductions below run one step at a time, rebuilding after each, until it fits: the summary clip
-   5,000 → 1,500, then meetings 6 → 2 (oldest first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
+   5,000 → 1,500, then meetings 10 → 2 (oldest first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
    then the business lines to the first, then the open tasks, then the work records (the parser dedupes by title on its
    own), and last meetings 2 → 0. The header, the CV line and the goals are never dropped — about 800 chars of header
    and 40 per goal line, far under the cap — so the packet always fits. */
@@ -2915,7 +2915,16 @@ const buildWorkPacket = (state, today) => {
       .map(([label, text, cap]) => `  ${label}: ${oneLine(text, cap)}`);
     const progress = (m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, progressN)
       .map((e) => `  진행 ${e.date}: ${oneLine(e.text, WORK_PACKET_CLIP)}`);
-    return [`- ${m.date} [${project}] ${m.title}`, ...body, ...progress];
+    // What the meeting view states besides the minutes (added 2026-09-17 — the packet had left them out): attendees,
+    // the linked schedule entry and every linked task with its state, read live like `MeetingViewModal`.
+    const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
+      .map((q) => `${q.title} (${q.type === "daily" ? "매일 · 오늘 " : ""}${taskClosedOn(q, today) ? "완료" : "미완료"})`);
+    const facts = [
+      String(m.attendees || "").trim() && `  참석: ${oneLine(m.attendees, MEETING_LIMITS.attendees)}`,
+      m.eventId && `  일정: ${meetingEventText(state, m)}`,
+      linked.length > 0 && `  연결된 할 일: ${linked.join(" · ")}`,
+    ].filter(Boolean);
+    return [`- ${m.date} [${project}] ${m.title}`, ...facts, ...body, ...progress];
   });
   const yesterday = shiftDay(today, -1);
   const recordLines = (state.work || []).filter((w) => w.date === yesterday || w.date === today)
