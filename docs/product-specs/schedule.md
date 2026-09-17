@@ -10,8 +10,8 @@ rules: [../design-docs/assistant-bridge.md](../design-docs/assistant-bridge.md).
 
 ## Screen
 `ScheduleTab` props: `state, today, onAdd, onEdit, onToggleDone, onSkip, onExport`. Tab key `schedule`, label
-`일정`, icon `CalendarDays`, fourth entry of `NAV` (`grid-cols-6` since the `미팅` tab landed, [meetings.md](meetings.md)),
-before `미팅` and `사업`.
+`일정`, icon `CalendarDays`, fifth entry of `NAV` (`grid-cols-7` since the `업무` tab landed, [daily-work.md](daily-work.md)),
+after `업무` and before `미팅` and `사업`.
 
 Calendar-only since 2026-09-16 (D-P2b, [decision log](../design-docs/decision-log.md)): the `목록` view, its
 `목록`/`달력` chips and the header's own `일정 추가` button are all gone, so `ScheduleTab` renders only the header
@@ -165,6 +165,13 @@ One form for both modes: `새 일정` when opened from `일정 추가`, `일정 
 | repeat | chips `반복 없음` / `매일` / `매주` / `매월`, then `반복 종료 (선택)` | the end-date input appears only once a repeat is chosen |
 | place | text, placeholder `장소 (선택)` | optional |
 | note | text, placeholder `메모 (선택)` | optional |
+| project (schema v26) | `<select aria-label="프로젝트 (선택)">` under the label `프로젝트 (선택)`, listing `meetingProjects` | optional; `연결 안 함` plus one option per project; no project → the line `프로젝트가 없어요 — 미팅 탭에서 만들어요.` instead of a picker; a `projectId` whose project no longer exists stays selectable as `연결 대상이 삭제됐어요` rather than being silently dropped |
+
+`EventModal`'s new `projects` prop is `state.meetingProjects || []`, passed by the root. Submit writes
+`...(projectId ? { projectId } : {})` into the record — `updateEvent` spreads the form's record over the
+stamps, so choosing `연결 안 함` on an edit removes the key from the save. `projectId` is a reference the
+meeting-prep card reads ([meetings.md](meetings.md#meeting-prep-rows-meetingprepof-schema-v26)); neither
+`calendarExportOf` nor `buildIcs` ever reads it.
 
 Submit is `등록` in add mode and `저장` in edit mode; edit mode also offers `삭제`. Validation, checked in this
 order and shown in rose above the button:
@@ -313,6 +320,9 @@ counts line (above) is the one on-screen summary outside this tab and the briefi
   [18](../design-docs/core-beliefs.md#rule-18), [19](../design-docs/core-beliefs.md#rule-19)).
 - It is excluded from `agendaOf`, `krProgress`, `goalProgress` and `paceOf`, so no event can move a goal's
   progress or its pace.
+- Its optional `projectId` (schema v26) is a reference only, read by the meeting-prep card
+  ([meetings.md](meetings.md)) — it moves no meeting, changes no follow-up, and neither `calendarExportOf` nor
+  `buildIcs` ever reads it.
 - A pasted assistant reply can never create or change one: `parseAssistantReply` reads `tasks` and nothing else.
 - `완료 표시` is a record of what happened, not a completion: it stores a date in `doneDates` and nothing more.
 - The calendar export reads events (and tasks and goals) and creates none: `calendarExportOf`/`buildIcs` call

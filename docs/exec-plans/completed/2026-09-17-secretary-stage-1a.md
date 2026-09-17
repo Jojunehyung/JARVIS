@@ -1,6 +1,6 @@
 # Secretary stage 1-A — structured meeting follow-ups, derived carry-forward of undone work, a meeting-prep card, and briefing lines
 
-- Status: active
+- Status: completed
 - Date: 2026-09-17
 - Needs approval: yes — a new `migrate` block (v26) and a per-item deletion path the user decided (turning `내 담당` off removes the still-undone work item it created). The user's four recorded decisions below are that approval; the implementer does not ask again. No existing `migrate` block, no `CERTS` / `EXAMS` / `WEIGHT_MATRIX` / `CERT_W_EXC` row, no `liferpg-*` key, no `store` call site is touched; the migration deletes nothing and rewrites no text (`actions` stays as typed).
 - Agents: planner → implementer (four phases) → cleanup → docs-syncer. The verifier's E2E run is **not** part of this plan (standing user instruction: the suite is written, parsed with `node --check`, never executed).
@@ -239,3 +239,67 @@ Four commits at the user's gates, or one squashed:
 - `feat(work): derive carry-forward of undone items into today's list; drop the past-undone section and the move button`
 - `feat(work): event projectId, the meeting-prep card, briefing counts and follow-up lines in the work packet`
 - `docs(secretary): stage 1-A specs, state lifecycle v26, bridge, security and reliability notes`
+
+## Completion note (docs-syncer, 2026-09-17)
+
+Phases 1–3 were already implemented and committed locally before this pass started — 293f623 (Phase 1, schema
+v26 follow-up items and the split tool), 8ff0c75 (Phase 2, derived carry-forward), 05f2432 (Phase 3, event
+`projectId`, the meeting-prep card, briefing lines and packet follow-up lines). This pass is Phase 4: docs sync.
+
+**Gates run.**
+- `npm run docs:gen` — `db-schema.md` regenerated at v26, 16 migration blocks, 14 storage keys; cert/exam/weight
+  tables unchanged; symbol index 345 symbols.
+- `npm run docs:check` — clean after this plan moved to `completed/` (the decision-log link only resolves once
+  moved).
+- `npm run verify`, `node tools/e2e/run.js` — **not run**, per the standing user instruction. Counted directly
+  (`await step(` across `tools/e2e/flow*.js`): **203** (`flow.js` 38, `flow2.js` 16, `flow3.js` 14, `flow4.js` 21,
+  `flow5.js` 16, `flow6.js` 6, `flow7.js` 26, `flow8.js` 19, `flow9.js` 8, `flow10.js` 22, `flow11.js` 17), matching
+  every implementer's phase-report figure and `tools/e2e/README.md`'s own count, which the implementers already
+  kept current per phase — verified, not re-written.
+- `src/`, `tools/e2e/*.js` and `tools/harness/*` were not edited by this pass, per the docs-syncer's own
+  constraint; every fact below was checked against `git show --stat`/diff of the three commits and, where the
+  claim outlived the diff (e.g. current file state), against the current source.
+
+**Docs written or updated.** `docs/product-specs/daily-work.md` (shape, `source`/`link.followUpId`, carry-forward
+replacing `지난 미완료`/`workPastOpen`/`moveWorkToToday`, `workLeadOf`, `MeetingPrepCard`, `WorkModal` `출처` and
+the meeting-sourced link line, handler table, storage arithmetic, packet section reference, demo content, E2E
+coverage, "what a work item never does"); `docs/product-specs/meetings.md` (shape, caps, storage table,
+`MeetingModal`/`MeetingViewModal` follow-up blocks and the split panel, `meetingRowMarker`, a new "Follow-up
+items" section for `reconcileFollowUps`/`commitMeeting`, handler table, `meetingPrepOf` section, migration v26,
+demo, "what a meeting never does"); `docs/product-specs/schedule.md` (`EventModal` field table, `projectId`
+paragraph, "what an event never does", the stale `grid-cols-6` correction); `docs/product-specs/daily-briefing.md`
+(the `회의 준비` row, the `오늘 할 일` carried-work line); `docs/design-docs/assistant-bridge.md` (`TAB_ACTIONS` six
+entries, the `prep` briefing section, the work-packet table's follow-up lines/records heading/`WORK_PACKET_FOLLOWUPS`/
+trim order, `workOn` signature, the daily packet's briefing-excerpt note); `docs/design-docs/state-lifecycle.md`
+(shape v26, the `v < 26` ledger row, `freshState` v26, the `flow4.js` fixture sentence);
+`docs/design-docs/information-architecture.md` (work/meetings screen-map rows); `docs/DESIGN.md` (the `회의` chip
+colour, the prep card and `이월` chip in the screen inventory); `ARCHITECTURE.md` (Meetings/Daily
+work/Daily-assistant/Schedule/App-root rows, glossary, Current status — schema v26, 203-step count);
+`docs/RELIABILITY.md` (migration ledger to v26, `flow10.js`/`flow11.js` rows, the storage-guard note, the
+"written, not run" paragraph, the step-count table); `docs/SECURITY.md` (follow-up items in the state and the
+work packet, the backup-file line); `docs/exec-plans/tech-debt-tracker.md` (TD-44 extended; new TD-54, TD-55,
+TD-56 as the plan named, plus TD-57 for the implementer-flagged demo gap — no past-dated demo work item, so
+carry-forward is invisible in the shipped demo); `docs/design-docs/decision-log.md` (one 2026-09-17 row, placed
+after the `daily-work` row it depends on rather than before it, matching the log's existing chronological
+order); `docs/design-docs/demo-data.md` (the three demo follow-ups, the third work item, the project-linked
+demo event, the four-event `달력` note); `docs/product-specs/index.md` (row descriptions for `daily-work.md`,
+`meetings.md`, `schedule.md`). `tools/e2e/README.md` was already current (verified against the phase commits'
+own diffs and the live `await step(` count) — no change needed.
+
+`docs/design-docs/index.md` and `docs/exec-plans/backlog.md` were left untouched: the former's `assistant-bridge.md`
+row already reads correctly at the index's level of detail, and the latter names no "secretary stage 1-B" item
+for the user to have requested.
+
+**Deviations reported by the implementers, recorded here per the plan's own instruction:**
+- Phase 2's commit message states 200 steps at that point; Phase 3 raised it to 203 (one `flow7.js` step, one
+  more each in `flow10.js`/`flow11.js`) — both are accounted for in the final 203 count above.
+- Phase 3's `flow10.js` addition also moved that file's closing cleanup step into the new, last step (step 21 →
+  22) — already reflected in the TD-44 extension above.
+- The shipped demo has no work item dated before today, so carry-forward (`이월 {n}일`, the counts line's
+  `이월` fragment) is never visible on the demo build itself — only in `flow11.js`'s planted fixtures. Recorded
+  as [TD-57](../tech-debt-tracker.md).
+
+**Screenshots**: regenerated (`npm run build:demo` then `node tools/harness/gen-screenshots.js`) — the demo's
+new project-linked event puts `MeetingPrepCard` at the top of the `업무` tab, so `public/screenshots/work.png`
+changed; the other five (`home.png`, `tasks.png`, `goals.png`, `calendar.png`, `meetings.png`) were regenerated
+alongside it (the tool always shoots all six) but their tabs are unaffected by this plan.

@@ -10,7 +10,7 @@ A record of what was said, never a task and never an appointment:
 ```
 meetingProjects: [{ id, name, note?, createdAt }]
 meetings: [{ id, projectId, date("YYYY-MM-DD"), title, attendees?, summary, decisions?, actions?, eventId?, createdAt, taskIds[],
-             progress[], aiHidden }]
+             progress[], aiHidden, followUps[{ id, text, mine, due?, done, workId? }] }]
 ```
 No time, place, repeat, reminder, status, goal, points or evidence field: **the time of a meeting lives only in
 `일정`** — this is the 2026-09-11 decision that removed the `meet` activity kind because a meeting overlaps the
@@ -26,6 +26,14 @@ at render. Deleting the linked event never deletes the minutes: the view states 
 (schema v25) is a boolean, always present, set from a checkbox in `MeetingModal`: when true, the work packet
 (`buildWorkPacket`, [assistant-bridge.md](../design-docs/assistant-bridge.md)) states only this meeting's date
 and title, never its summary, decisions, follow-ups or progress.
+
+`followUps` (schema v26, secretary stage 1-A, 2026-09-17) holds **structured** follow-up items next to the
+free-text `actions`, which the migration and everything else never rewrites
+([Rule 12](../design-docs/core-beliefs.md#rule-12)): `{ id, text (≤ 200, `MEETING_LIMITS.followUp`), mine
+(boolean, default `false`), due?("YYYY-MM-DD"), done (boolean), workId? }`, at most `MEETING_FOLLOWUPS_MAX` (30)
+per meeting. An item the user marks `내 담당` (`mine: true`) is **registered automatically as a work item**
+(`source: "meeting"`, [daily-work.md](daily-work.md)) and the two stay linked both ways — only `done` mirrors,
+in either direction; text, due date and the work item's date never mirror back. See "Follow-up items" below.
 
 `taskIds` (schema v24, 2026-09-16) holds the ids of existing tasks the minutes refer to, at most
 `MEETING_LIMITS.tasks` (10). The user asked, verbatim, `회의록 작성은 할일목록들과 매칭 가능하게 해줘`, and chose
@@ -46,10 +54,11 @@ read `meetingProjects` or `meetings` — nothing here reaches the to-do list, th
 calendar file ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
 
 ## Caps and the storage arithmetic
-`MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17; `progress` is new at schema v25),
+`MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17; `progress` is new at schema v25, `followUp` at schema v26),
 `PROJECT_LIMITS = { name: 40, note: 200 }`. 5,000 Hangul characters is about three pages of key points — still short of a transcript, which runs about 21,000 characters for a 45-minute meeting.
 `MEETING_TASK_ROWS = 30` shapes the task-link picker (below); `MEETING_PROGRESS_MAX = 30` caps the progress
-entries per meeting.
+entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per meeting, refusing with
+`후속 항목은 30건까지예요.`
 
 - Unit: `storageUsedBytes` counts string length, so the budget is `STORAGE_BUDGET` = 3.5 × 1,048,576 = 3,672,064
   chars, shared with the rest of the save and every thumbnail. `JSON.stringify` keeps Hangul as one char; a
@@ -68,6 +77,17 @@ entries per meeting.
   6,642 + 31 + 10,380 ≈ **17,050 chars**. Typical minutes (~850) with three typical entries (~125 each) reach
   about 850 + 31 + 375 ≈ **1,260 chars**; three a working day ≈ 0.95 M chars a year (26 % of the budget a year,
   about 3 years 10 months before the guard applies). `recordFits` measures the whole record, `progress` included.
+- Follow-up items (v26): `,"followUps":[]` adds **15 chars** to every record. One item,
+  `{"id":"…","text":"","mine":false,"done":false}`, is about 50 chars plus its text (+ 1 comma); `,"due":"YYYY-MM-DD"`
+  adds 19 and `,"workId":"…"` adds 22, so a fully-keyed item is ≈ 92 chars + text — a typical 40-char item ≈ 90
+  without a due date, ≈ 132 with a due date and a work link; a full 200-char item with both ≈ 292, and thirty of
+  them ≈ 8,760 chars. A completely full meeting (ten task links, thirty full progress entries, thirty full
+  follow-ups) reaches about 17,050 + 15 + 8,760 ≈ **25,825 chars**. Typical minutes with three typical progress
+  entries and four typical follow-ups (~4 × 130 = 520) reach about 850 + 375 + 31 + 15 + 520 ≈ **1,810 chars**;
+  three a working day ≈ 1.36 M chars a year (37 % of the budget a year, about 2 years 8 months before
+  `recordFits` refuses). Each `mine` follow-up also creates a work item — see [daily-work.md](daily-work.md)'s
+  storage arithmetic; `commitMeeting` measures the meeting record **plus every work item its reconcile creates**
+  before writing either.
 - Typical record assumed: title 25, attendees 30, summary 400, decisions 100, actions 100 → 655 + 190 = **~850 chars**. Unchanged by the wider caps: a higher cap does not make minutes longer.
 - Frequency assumed: "several a day" = 3 meetings per working day × 250 days = **750 records a year** (2 a day = 500).
 
@@ -76,10 +96,11 @@ entries per meeting.
 | 3/day, typical (850, no progress) | 0.64 M chars | 1.91 M (52 %) | 3.19 M (87 %) |
 | 2/day, typical (850, no progress) | 0.43 M chars | 1.28 M (35 %) | 2.13 M (58 %) |
 | 3/day, typical minutes + 3 progress entries (1,260) | 0.95 M chars | 2.84 M (77 %) | exceeds (about 3 years 10 months) |
-| 3/day, every field full incl. progress (17,050) | 12.79 M chars | exceeds (well under 1 year) | exceeds |
+| 3/day, typical minutes + progress + follow-ups (1,810) | 1.36 M chars | 4.08 M (exceeds, about 2 years 8 months) | exceeds |
+| 3/day, every field full incl. progress and follow-ups (25,825) | 19.37 M chars | exceeds (well under 1 year) | exceeds |
 
-Typical minutes fit three to five years at several a day; completely full records at three a day fit about
-nine months. The caps alone cannot promise more, so two facts guard the rest: (1) the tab always states its storage
+Typical minutes fit two and a half to five years at several a day; completely full records at three a day fit
+well under a year. The caps alone cannot promise more, so two facts guard the rest: (1) the tab always states its storage
 use, `저장 공간 {mb}MB / 3.5MB` (`storageUsedWith(state)`, memoised on `state`, not `storageUsedBytes()` alone —
 see below); (2) saving a meeting is refused, with the form kept open and nothing lost, when the record would push
 total usage over the budget. The backup file is the way out of a full budget (export, then delete old minutes).
@@ -109,7 +130,9 @@ is `whitespace-nowrap`).
   minutes last, ordered by `createdAt` descending. Section head: the project name (`text-sm font-bold truncate`),
   `회의록 {n}건` (mono), buttons `프로젝트 수정` and `회의록 추가`. Rows are the newest-first minutes
   (`meetingOrder`: `date` descending, then `createdAt` descending) rendered as `TodoRow`s ([tasks.md](tasks.md)) —
-  lead chip `{date.slice(2)}` (`YY-MM-DD`, zinc tone), the title, no marker — each opening `onOpenMeeting(id)`.
+  lead chip `{date.slice(2)}` (`YY-MM-DD`, zinc tone), the title, marker `meetingRowMarker(m)`: `진행 {n}건` and
+  `후속 {open}/{total}` joined by ` · `, each present only when its own total is above zero, none when both are
+  zero — each row opening `onOpenMeeting(id)`.
   The first `MEETING_ROWS_SHOWN` (5) rows show; beyond that, `{n}건 더 보기` / `접기` toggles a component-state
   expansion (`useState`, per-project, never stored — [Rule 9](../design-docs/core-beliefs.md#rule-9)). An empty
   project reads `회의록이 없어요.`
@@ -144,21 +167,57 @@ is `whitespace-nowrap`).
   possibly empty) with ids of live tasks only. Below the `일정 연결` chips, a checkbox `AI에 보내지 않기` (state
   `aiHidden`, schema v25, initialised from the record) with the caption `켜면 오늘 업무 만들기 패킷에 이
   회의록의 날짜와 제목만 실려요.` ([daily-work.md](daily-work.md)); the saved record always carries `aiHidden`
-  as a boolean and keeps the live `progress` array untouched — the form never edits entries. Note `전체 녹취가 아니라 요약만 저장해요.` Submit refuses, in order, with `프로젝트를 골라 주세요.`,
+  as a boolean and keeps the live `progress` array untouched — the form never edits entries.
+
+  **Follow-up items** (schema v26), below the `후속 조치 (선택)` textarea, which stays for free text — the two
+  never merge and `actions` is never rewritten by this block ([Rule 12](../design-docs/core-beliefs.md#rule-12)).
+  State initialised from `meeting?.followUps || []` (shallow copies; `done` and `workId` pass through
+  untouched — the form never edits either). Header `후속 항목` and a mono `{n} / 30` on the right. One card per
+  row, two lines so it fits 390 px: line 1 a text input (`후속 항목 — 예: 견적서 송부`, no `maxLength`) and an `X`
+  button (`aria-label="후속 항목 삭제"`); line 2 a `내 담당` `Chip` (off by default), a `type="date"` input
+  (`aria-label="후속 기한"`), and, when done, a mono `완료` tag. `항목 추가` appends a row, disabled at the cap
+  with `후속 항목은 30건까지예요.`; caption `내 담당을 켜면 업무 탭에 등록돼요 — 회의 날짜가 지났으면 오늘
+  업무로요.` Turning a row's `내 담당` on registers a work item once the record is saved (below); the form itself
+  never touches `done`.
+
+  Note `전체 녹취가 아니라 요약만 저장해요.` Submit refuses, in order, with `프로젝트를 골라 주세요.`,
   `날짜를 선택해 주세요.`, `회의 이름을 입력해 주세요.`, `회의 요약을 입력해 주세요.`, then the four
-  `{field}은/는 {cap}자까지예요 — 지금 {n}자예요.` cap messages. The record is built with only non-empty optional
-  fields — a cleared field disappears from the save on an edit. `onAdd` / `onUpdate` answer with an error string
+  `{field}은/는 {cap}자까지예요 — 지금 {n}자예요.` cap messages, then, for each follow-up row over
+  `MEETING_LIMITS.followUp` (200), `후속 항목은 200자까지예요 — {k}번째 항목이 지금 {n}자예요.` (1-based `k`).
+  The record is built with only non-empty optional
+  fields — a cleared field disappears from the save on an edit; `followUps` is always written as an array. `onAdd` / `onUpdate` answer with an error string
   (`""` = saved); a non-empty return — the storage-budget refusal — is shown as the modal error:
   `저장 공간이 부족해요 — 현재 {mb}MB 사용 중이라 회의록을 저장하지 않았어요. 백업을 내보낸 뒤 오래된 회의록이나
   사진을 지워요.` and the form stays open with everything typed. Edit mode adds `삭제` →
   `window.confirm("{title} 회의록을 삭제해요. 계속할까요?")`.
-- **`MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress })`**,
+- **`MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress,
+  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps })`**,
   `modal: { type: "meetingView", meetingId }`,
   title the meeting's own title: `CvFact wrap` rows `프로젝트`, `날짜` (mono), `참석자` (or `기록 없음`), `일정`
   (`{time || "시간 미정"} {title}` read live from the linked event; `연결 없음` with none; `연결된 일정이
   삭제됐어요` when `eventId` matches no live event), `AI 전송` (`보내지 않음` when `aiHidden`, else
   `요약·진행사항 포함`); then three blocks with a `SectionLabel` each — `요약`,
-  `결정 사항`, `후속 조치` — `<p className="whitespace-pre-wrap break-words">` (or `없음`); a `진행사항` block
+  `결정 사항`, `후속 조치` — `<p className="whitespace-pre-wrap break-words">` (or `없음`).
+
+  **후속 항목** block (schema v26), directly after `후속 조치`: `SectionLabel` plus a mono `{open}/{total}`.
+  When `actions` has text, a chip button `항목으로 나누기` on the same header row opens an inline preview panel
+  (component state inside this modal, not a new `modal.type` — the root has a single modal slot): tapping
+  computes `splitFollowUpText(m.actions)` — splitting on newlines, ` / `, before every circled number and before
+  ` 1) ` / ` 1. `, stripping one leading marker per piece, trimming, dropping empties and exact duplicates,
+  clipping to the item cap — into candidates `[{ text, on, mine }]`; a candidate equal to an existing follow-up
+  text starts unticked, tagged `이미 있어요`; a candidate past the remaining 30-item room starts unticked and
+  disabled, with the line `후속 항목은 30건까지예요 — {room}건만 추가할 수 있어요.` under the list. Panel: title
+  `후속 조치에서 항목 나누기 — {n}건`, rows of checkbox + text + `내 담당` chip, `나눌 항목이 없어요.` when empty,
+  buttons `추가` (disabled when nothing is ticked; calls `onAppendFollowUps`; a non-empty return shows as a rose
+  line in the panel; `""` closes it) and `취소`. The text in `actions` is never changed and the button stays
+  available after appending. Below: empty state `후속 항목이 없어요.`; each row (checkbox `aria-label="후속
+  완료"`, `checked={fu.done}`) shows the text (struck through when done) and a mono facts line joined by ` · `:
+  `내 담당` (cyan) or `타인` (zinc); `기한 {due}` (rose-400 when overdue and undone) or `기한 없음`; the linked
+  work item's state — `업무 미완료` / `업무 완료` when `workId` names a live item, `업무 삭제됨` when `mine` but
+  no live item, nothing when not mine — and a `내 담당` chip on the right (`onSetFollowUpMine`). Ticking the
+  checkbox calls `onToggleFollowUp`.
+
+  A `진행사항` block
   (schema v25) with a mono `{n}건` beside its label, newest-first entries (`date` descending, then stored order)
   each showing the entry's date (mono), its text, and an `X` button (`aria-label="진행사항 삭제"`) that confirms
   `진행사항을 삭제해요. 계속할까요?` before calling `onRemoveProgress(meetingId, entryId)`; empty state
@@ -175,36 +234,70 @@ is `whitespace-nowrap`).
   first, each a `TodoRow` led by the full `date` and titled with the meeting title, opening `MeetingViewModal`. The
   section is hidden when no meeting links the task ([tasks.md](tasks.md)).
 
+## Follow-up items — reconcile, root handlers and mirroring (schema v26)
+
+`reconcileFollowUps(work, rec, prev, today)`, pure, no `setState`: given the meeting record `rec` about to be
+written and `prev` (the stored record, or `null`), answers `{ work, meeting }` with no side effect. Per
+follow-up, in order: (1) a `workId` naming no live item is dropped from the follow-up (a dangling reference is
+never kept); (2) `fu.mine` with no live item, when `fu` is new or was not `mine` before, creates
+`followUpWorkItem(fu, rec, today)` — `date` = the meeting's date when it is today or later, otherwise today;
+`title` = the text clipped to `WORK_LIMITS.title`, with the full text copied to `note` when it overflows;
+`source: "meeting"`; `link: { kind: "meeting", id: rec.id, followUpId: fu.id }` — and sets `fu.workId` to it (a
+mine item whose work item the user deleted is **not** re-created by a later save, only a `mine` off→on flip or a
+new row creates one); (3) `!fu.mine` with a live undone item removes that item and drops `workId` (a **done**
+item stays linked, so its `done` keeps mirroring); (4) a live item whose `done` differs from the follow-up's
+takes the follow-up's value — the meeting side wins, since this runs on meeting writes. A follow-up **removed**
+from the record (present in `prev.followUps`, absent from `rec.followUps`) takes its still-**undone** linked
+item with it; a done one stays, its `followUpId` then dangling ([TD-54](../exec-plans/tech-debt-tracker.md)).
+
+`commitMeeting(rec, prev)` (root) runs the reconcile against the render's `state.work` — the same object
+`prev.work` would be for a user-driven write, the pattern `addMeeting` already used to build its own record
+([TD-56](../exec-plans/tech-debt-tracker.md)) — computes `created` (new work items) and `removed` (dropped
+ones), and checks `recordFits([meeting, ...created], prevLen, "회의록을")` against the meeting **plus every
+created work item** before writing either; a refusal writes nothing. `addMeeting` / `updateMeeting` both go
+through it and append ` · 업무 {n}건 등록` to their toast when `created > 0`.
+
 ## Root handlers and toasts
-Clone-pattern updates next to the business handlers, all reading and writing only `meetingProjects` and
-`meetings` — never `act`, `tasks`, `goals`, `areas`, `room`, `exams`, `events` or `work`
-([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 18](../design-docs/core-beliefs.md#rule-18)):
+Clone-pattern updates next to the business handlers, reading and writing `meetingProjects` and `meetings`, plus
+the `work` items a mine follow-up mirrors (v26) — never `act`, `tasks`, `goals`, `areas`, `room`, `exams` or
+`events` ([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 18](../design-docs/core-beliefs.md#rule-18)):
 
 | Handler | Effect | Toast |
 |---|---|---|
 | `addProject(p)` | prepends `{ id: uid(), ...p, createdAt: today }` | `프로젝트를 등록했어요` |
 | `updateProject(id, next)` | replaces the record, keeping `id` and `createdAt` | `프로젝트를 수정했어요` |
 | `removeProject(id)` | refuses (toast only, no state change) when the project still has minutes; otherwise drops it | `프로젝트를 삭제했어요` |
-| `addMeeting(next)` | refused by `recordFits` when it would cross the budget (returns the message, writes nothing); otherwise prepends `{ id: uid(), ...next, createdAt: today }` | `회의록을 등록했어요` |
-| `updateMeeting(id, next)` | refused the same way; otherwise replaces the record via `putMeeting`, keeping `id` and `createdAt` | `회의록을 수정했어요` |
-| `removeMeeting(id)` | confirms by name, then drops the record; no task changes | `회의록을 삭제했어요` |
+| `addMeeting(next)` | `commitMeeting({ id: uid(), ...next, createdAt: today }, null)`; a refusal writes nothing | `회의록을 등록했어요{ · 업무 {n}건 등록}` |
+| `updateMeeting(id, next)` | `commitMeeting({ id: cur.id, ...next, createdAt: cur.createdAt }, cur)`, same refusal | `회의록을 수정했어요{ · 업무 {n}건 등록}` |
+| `removeMeeting(id)` | confirms by name, then drops the record; no cascade to its work items (below) | `회의록을 삭제했어요` |
 | `addProgress(meetingId, text)` (schema v25) | refuses at `MEETING_PROGRESS_MAX` or `recordFits`; otherwise prepends `{ id: uid(), date: today, text }` to `progress` via `putMeeting` | `진행사항을 추가했어요` |
 | `removeProgress(meetingId, entryId)` (schema v25) | filters the entry out via `putMeeting` | `진행사항을 삭제했어요` |
+| `toggleFollowUp(meetingId, fuId)` (v26) | flips that follow-up's `done`; if `workId` names a live item, sets its `done` to match, in the same update | `후속 항목을 완료로 표시했어요` / `후속 항목 완료를 취소했어요` |
+| `setFollowUpMine(meetingId, fuId, mine)` (v26) | `commitMeeting` with that flag flipped; a refusal is toasted instead of thrown | `내 담당으로 표시했어요{ · 업무 등록}` / `내 담당을 해제했어요{ · 미완료 업무 삭제}` |
+| `appendFollowUps(meetingId, items)` (v26) | refuses `후속 항목은 30건까지예요 — {room}건만 추가할 수 있어요.` past the cap; otherwise `commitMeeting` with the new rows appended | `후속 항목 {n}건을 추가했어요{ · 업무 {k}건 등록}` |
 
 Two task handlers write `meetings` since v24, and only to remove a link: `removeTask(id)` drops the id from every
 meeting's `taskIds` in the same clone update that removes the task, and `removeGoal(id)` does the same for the
 open tasks it deletes with an active goal. Links therefore never dangle going forward; a dangling id from an older
 or hand-edited save is still skipped and counted at render, never cleaned up by a read.
 
+The mirror runs the other way too, in the daily-work handlers ([daily-work.md](daily-work.md)): `toggleWork`
+sets a linked follow-up's `done` to match; `removeWork` / `removeWorkMany` clear `workId` off the follow-up they
+unlink (leaving `mine` and `done` alone); `updateWork` keeps a `source: "meeting"` item's `link` regardless of
+what the sheet sends, since the link is owned by the follow-up.
+
 `recordFits(next, prevLen = 0, noun = "회의록을")` (renamed from `meetingFits` 2026-09-17, so the one guard also
-covers progress entries and work items — [daily-work.md](daily-work.md)):
+covers progress entries and work items — [daily-work.md](daily-work.md)); since v26, `commitMeeting` calls it
+with `next` as an **array** — the meeting record plus every work item the reconcile creates — measuring
+`JSON.stringify` of the whole array against the budget in one call:
 `storageUsedWith(state) + JSON.stringify(next).length - prevLen <= STORAGE_BUDGET` (`prevLen` is the stored
 length of the record being replaced, so editing a meeting is judged against the space it frees, not
 double-counted); `noun` is the object-marked word substituted into the refusal sentence, built by the caller
-(`"회의록을"` / `"진행사항을"` / `"업무를"`) — the helper does no grammar of its own. `putMeeting(rec)` replaces
-one meeting record in place; callers build and budget-check the record first.
+(`"회의록을"` / `"진행사항을"` / `"업무를"`) — the helper does no grammar of its own. `putMeeting(rec)` (still
+used by `addProgress` / `removeProgress`, which never touch follow-ups) replaces one meeting record in place;
+callers build and budget-check the record first.
 
-## Backup, reset and migration (schema v23–v25)
+## Backup, reset and migration (schema v23–v26)
 ```js
 if (s.v < 23) {
   s = { ...s, v: 23, meetingProjects: s.meetingProjects || [], meetings: s.meetings || [] };
@@ -216,8 +309,11 @@ if (s.v < 25) {
   s = { ...s, v: 25, work: Array.isArray(s.work) ? s.work : [],
     meetings: (s.meetings || []).map((m) => ({ ...m, progress: Array.isArray(m.progress) ? m.progress : [], aiHidden: m.aiHidden === true })) };
 }
+if (s.v < 26) {
+  s = { ...s, v: 26, meetings: (s.meetings || []).map((m) => ({ ...m, followUps: Array.isArray(m.followUps) ? m.followUps : [] })) };
+}
 ```
-`freshState`: `v: 25`, `meetingProjects: []`, `meetings: []`, `work: []`. `exportBackup` writes the whole
+`freshState`: `v: 26`, `meetingProjects: []`, `meetings: []`, `work: []`. `exportBackup` writes the whole
 `state`, so every array travels in the backup file with no code change of their own; `importBackup` runs the
 file's `state` through `migrate`, so an older backup gains the new fields on import; `resetAll` deletes the
 state key, which removes every project, every meeting and every work item along with the rest of the save. See
@@ -225,25 +321,47 @@ state key, which removes every project, every meeting and every work item along 
 
 `demoState` carries two synthetic projects (`○○물산 재고 관리 자동화`, `△△테크 문서 검색 AI`) and three short
 synthetic minutes dated 9, 3 and 1 days before today, with no personal names (`담당자 A`, `담당자 B`) and no
-`eventId` link. `유지보수 범위 협의` links two demo tasks (`이력서 초안 작성`, `CATIA·도면 연습 1시간`) so both
-sides of the task link show in the demo, and carries one progress entry; `요구사항 1차 회의` is flagged
-`aiHidden: true`; the other meeting carries `taskIds: []`, empty `progress` and `aiHidden: false`. See
+`eventId` link. `유지보수 범위 협의` links two demo tasks (`이력서 초안 작성`, `CATIA·도면 연습 1시간`), carries
+one progress entry, and (schema v26) three follow-ups — one `mine` and mirrored to a demo work item, one owned
+by someone else, one done — so its minutes row states `후속 2/3`; `요구사항 1차 회의` is flagged
+`aiHidden: true`; every meeting carries an (empty or filled) `followUps` array. One demo event, `○○물산 주간
+점검` tomorrow, carries `projectId` naming the maintenance project. See
 [demo-data.md](../design-docs/demo-data.md).
+
+## Meeting-prep rows (`meetingPrepOf`, schema v26)
+
+`meetingPrepOf(state, today)` (pure, derived at render — [Rule 9](../design-docs/core-beliefs.md#rule-9)) feeds
+the `업무` tab's `MeetingPrepCard` and the briefing's `회의 준비` section — see
+[daily-work.md](daily-work.md#meetingprepcard-state-today-onopenmeeting--오늘-회의-준비-schema-v26) for the card
+and [assistant-bridge.md](../design-docs/assistant-bridge.md) for the briefing lines. For every open schedule
+occurrence today and tomorrow (`PREP_DAYS` = 2) that belongs to a live meeting project — matched by the event's
+own `projectId`, or, when absent, by the newest meeting whose **trimmed title equals the event's trimmed
+title** ([TD-55](../exec-plans/tech-debt-tracker.md): exact, case-sensitive; a retitled event or meeting stops
+matching) — it returns the project, the newest meeting for that project (`last`, by `meetingOrder`, or `null`),
+that meeting's open follow-ups (mine first), its newest `PREP_PROGRESS` (3) progress entries and its live linked
+tasks. Nothing here writes state or reaches `computeGrades` / `krProgress` / `todoOf`.
 
 ## What a meeting never does
 - No `goalId`, no difficulty, no points, no trophy, no achievement record, no streak effect, no evidence gate.
 - Linking a task never changes it: no status, due date, goal, KR count or completion moves, and the task sheet's
-  `관련 회의록` list is derived at render. A meeting never creates a task.
+  `관련 회의록` list is derived at render. A meeting never creates a task — nor does a follow-up item: the work
+  item a `mine` follow-up registers is a record outside the goal ladder, with no `goalId`, difficulty or points
+  ([Rule 18](../design-docs/core-beliefs.md#rule-18)).
 - It never runs through `tryComplete`, `completeTask` or `needsEvidence` — there is no completion path for a
   meeting at all.
 - It is excluded from `agendaOf`, `todoOf`, `krProgress` and `goalProgress`; `할 일` never lists a meeting.
-- `buildBriefing` and `buildAssistantPacket` (the daily check-in packet) still never read `meetingProjects` or
-  `meetings` — a meeting title never appears in the daily briefing or that packet
-  ([Rule 7](../design-docs/core-beliefs.md#rule-7)). The **work packet** (`buildWorkPacket`,
-  `오늘 업무 만들기`) does read `meetings` by the user's own 2026-09-17 decision — reversing the prior default —
-  unless a meeting is flagged `aiHidden`, in which case only its date and title appear; see
+- `buildAssistantPacket` (the daily check-in packet) still never reads `meetingProjects` or `meetings` — a
+  meeting title never appears in that packet ([Rule 7](../design-docs/core-beliefs.md#rule-7)). `buildBriefing`
+  (schema v26) now reads `meetings` for the `회의 준비` section — the prep count today/tomorrow and overdue
+  follow-ups (`후속 기한 지남 {n}건 · 내 담당 {m}건`) — but only as **numbers**, never a meeting title or a
+  follow-up's text ([Rule 13](../design-docs/core-beliefs.md#rule-13)). The **work packet** (`buildWorkPacket`,
+  `오늘 업무 만들기`) does read every meeting's content by the user's own 2026-09-17 decision — reversing the
+  prior default — unless a meeting is flagged `aiHidden`, in which case only its date and title appear; see
   [daily-work.md](daily-work.md) and [assistant-bridge.md](../design-docs/assistant-bridge.md).
 - `calendarExportOf` never reads it — a meeting is not exported to the phone calendar; its time, if any, is
   whatever the linked `일정` event already exports.
 - Deleting the linked `일정` event never deletes or edits the minutes; the view states the link is gone rather
   than hiding or fabricating a time ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
+- Deleting a meeting (`removeMeeting`) does not cascade to the `source: "meeting"` work items its follow-ups
+  registered — they stay, and the work sheet's `연결` line states `연결 대상이 삭제됐어요` (the TD-49 policy,
+  [daily-work.md](daily-work.md)). A cascade may be added later at the user's request.

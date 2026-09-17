@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 25 |
+| State schema version (`freshState.v`) | 26 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v25 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v26 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 25,
+  v: 26,
   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -36,7 +36,9 @@
                 | { id, type:"cert",   title, certName, done? }] }],
   events: [{ id, title, kind("appt"|"due"), date("YYYY-MM-DD"), time?("HH:MM"), note?, place?,   // schedule records: appointments and deadlines —
              repeat?{ freq("daily"|"weekly"|"monthly"), until? },                                // never tasks, never paid, never a metric source
-             skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt }],                        // occurrences are expanded at render, not stored
+             skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt,                           // occurrences are expanded at render, not stored
+             projectId? }],                                                                     // projectId (v26, optional): the meeting project this event
+                                                                                                 // belongs to — read by the prep card, never by the export
   folio: [{ id, title, summary?, role?, stack?[string],                       // business records: what was built, what it sells for,
             period?{ from("YYYY-MM"), to("YYYY-MM") },                        // and what is contracted — records, never tasks: no payout,
             links[{ label, url }], createdAt }],                              // no trophy, no goal, no streak (rules 1, 18).
@@ -51,13 +53,17 @@
                                                                           // taskIds (v24): ids of existing tasks the minutes refer to, at most
                                                                           // 10; linking changes no task, and the task sheet's reverse list is
                                                                           // derived at render. Deleting a task removes its id here.
-              progress: [{ id, date("YYYY-MM-DD"), text }], aiHidden }], // progress (v25): the work that followed the meeting, dated entries,
+              progress: [{ id, date("YYYY-MM-DD"), text }], aiHidden,   // progress (v25): the work that followed the meeting, dated entries,
                                                                           // at most 30 of 300 chars; aiHidden (v25): true = excluded from the
                                                                           // work packet body (its date and title still appear).
+              followUps: [{ id, text, mine, due?("YYYY-MM-DD"), done,    // follow-up items (v26): `mine` = the user's own; a mine item is
+                            workId? }] }],                               // mirrored as a `source: "meeting"` work item named by `workId`;
+                                                                          // only `done` mirrors, both ways; at most 30 of 200 chars.
   work: [{ id, date("YYYY-MM-DD"), title, note?, done,                   // daily work items (v25): records outside the goal ladder — no
-           link?{ kind("goal"|"meeting"|"project"), id },                 // payout, trophy, goal, KR or streak (rules 1, 7, 9, 18); `done` is
-           source("manual"|"ai"), createdAt }],                           // a stored fact; the day view, the past-undone list and the link
-                                                                          // label are derived.
+           link?{ kind("goal"|"meeting"|"project"), id, followUpId? },    // payout, trophy, goal, KR or streak (rules 1, 7, 9, 18); `done` is
+           source("manual"|"ai"|"meeting"), createdAt }],                 // a stored fact; the day view, the past-undone list and the link
+                                                                          // label are derived. followUpId (v26): the follow-up this item
+                                                                          // mirrors, on a `meeting` link only.
   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -77,14 +83,15 @@ business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBri
 the displayed age (`ageText`) and the total months of practice (`careerMonths`), the calendar export file (`buildIcs`),
 the meetings tab's project order, row order and storage line (`meetingOrder`/`storageUsedWith`),
 a task's related minutes (`meetingsOfTask`) and a meeting's task-link candidates (`meetingTaskCandidates`),
-the work tab's day view, past-undone list and link labels (`workOn`/`workPastOpen`/`workLinkText`),
-and the work packet (`buildWorkPacket`).
+the work tab's day view with the carried undone items and link labels (`workOn` with `today`/`workLinkText`),
+the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitFollowUpText`), the minutes row's
+`후속 {open}/{total}` marker, and the work packet (`buildWorkPacket`).
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 25,
+  v: 26,
   profile: null,
   areas,
   tasks: [],
@@ -197,25 +204,44 @@ const demoState = () => {
   // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
   const linkedTaskIds = s.tasks.filter((q) => q.title === "이력서 초안 작성" || q.title === "CATIA·도면 연습 1시간").map((q) => q.id);
   // The newest meeting is flagged `aiHidden` and the second carries one progress entry, so the demo shows both v25 fields.
+  // The second meeting also carries three follow-up items (schema v26): one mine and mirrored as today's work item (its
+  // `workId` is set below, once that item exists), one owned by someone else, and one done — so its minutes row states
+  // two open of three. Its id is a const so both sides of the link can name it.
+  const mtgUpkeepId = uid();
+  const fuA = { id: uid(), text: "긴급 대응 기준 초안 공유", mine: true, due: shiftDay(today, 2), done: false };
   s.meetings = [
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
       decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [],
-      progress: [], aiHidden: true },
-    { id: uid(), projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
+      progress: [], aiHidden: true, followUps: [] },
+    { id: mtgUpkeepId, projectId: mp1.id, date: shiftDay(today, -3), title: "유지보수 범위 협의", attendees: "담당자 A",
       summary: "월 유지보수 시간 한도와 긴급 대응 기준을 논의.", decisions: "월 10시간, 초과분은 시간 단가 청구", createdAt: shiftDay(today, -3),
       taskIds: linkedTaskIds,
-      progress: [{ id: uid(), date: shiftDay(today, -2), text: "월 10시간 한도를 반영한 유지보수 견적서 초안 작성" }], aiHidden: false },
+      progress: [{ id: uid(), date: shiftDay(today, -2), text: "월 10시간 한도를 반영한 유지보수 견적서 초안 작성" }], aiHidden: false,
+      followUps: [
+        fuA,
+        { id: uid(), text: "초과분 시간 단가표 회신", mine: false, due: shiftDay(today, 5), done: false },
+        { id: uid(), text: "월 리포트 양식 확정", mine: false, done: true },
+      ] },
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
       summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9), taskIds: [],
-      progress: [], aiHidden: false },
+      progress: [], aiHidden: false, followUps: [] },
   ];
-  // Two work items for today (schema v25): one typed by hand and open, one proposed by the assistant and done.
-  // Records, never tasks — neither pays, moves a goal or touches the streak.
+  // One demo event names its meeting project (schema v26), so the prep card has a project-linked event tomorrow. It is
+  // appended here, not in the schedule list above, because `mp1` is declared after that list.
+  s.events = [...s.events,
+    { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2) }];
+  // Three work items for today: one typed by hand and open, one proposed by the assistant and done (schema v25), and one
+  // registered from the mine follow-up above, linked both ways (schema v26).
+  // Records, never tasks — none pays, moves a goal or touches the streak.
+  const workFromFollowUp = { id: uid(), date: today, title: fuA.text, done: false,
+    link: { kind: "meeting", id: mtgUpkeepId, followUpId: fuA.id }, source: "meeting", createdAt: today };
+  fuA.workId = workFromFollowUp.id;
   s.work = [
     { id: uid(), date: today, title: "○○물산 유지보수 견적서 송부", note: "월 10시간 · 초과분 시간 단가", done: false,
       link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today },
     { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today },
+    workFromFollowUp,
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -255,25 +281,26 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v23 → v23 | v23: meeting minutes — meetingProjects[] and meetings[], hand-written records grouped by project. A record, never a task: no payout, no trophy, no goal, no streak (rules 1, 18). The time of a meeting stays a schedule event; a meeting stores only its date and an optional eventId. Nothing existing is changed. |
 | < v24 → v24 | v24: meeting task links — meetings[].taskIds, the ids of existing tasks the minutes refer to. A link is a reference only: it pays nothing, completes nothing and moves no goal or streak (rules 1, 9, 18). Every meeting is backfilled with an empty list; no other field is changed. |
 | < v25 → v25 | v25: daily work items — work[], dated records outside the goal ladder (typed by hand or proposed by the assistant and confirmed by the user) — and two meeting fields: progress[] (dated entries of the work that followed the meeting) and aiHidden (true = the work packet carries this meeting's date and title only). Records, never tasks: |
+| < v26 → v26 | v26: meeting follow-up items — meetings[].followUps, structured follow-ups next to the free-text `actions`, which is never rewritten (rule 12). A follow-up is a record on the meeting; a mine item is mirrored as a work item, a record outside the goal ladder (rules 1, 9, 18). Events gain an optional projectId that nothing backfills; work |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 4837 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 4837 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 4837 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 6532 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 6765 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 7653 | App root |
-| `liferpg-img-${slot}` | 7693 | App root |
-| `liferpg-img-ev-${id}` | 7716 | App root |
-| `liferpg-img-ev-${q.id}` | 7901 | App root |
-| `liferpg-img-ev-${t.id}` | 8330 | App root |
-| `liferpg-img-study-${t.id}-1` | 8330 | App root |
-| `liferpg-img-study-${t.id}-2` | 8330 | App root |
-| `liferpg-img-folio-${f.id}` | 8336 | App root |
+| `liferpg-img-ev-${task.id}` | 4907 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 4907 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 4907 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 6621 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 6854 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 8063 | App root |
+| `liferpg-img-${slot}` | 8103 | App root |
+| `liferpg-img-ev-${id}` | 8126 | App root |
+| `liferpg-img-ev-${q.id}` | 8311 | App root |
+| `liferpg-img-ev-${t.id}` | 8819 | App root |
+| `liferpg-img-study-${t.id}-1` | 8819 | App root |
+| `liferpg-img-study-${t.id}-2` | 8819 | App root |
+| `liferpg-img-folio-${f.id}` | 8825 | App root |
 
 ## Demo data (`demoState`)
 

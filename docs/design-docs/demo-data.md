@@ -51,13 +51,15 @@ Every task carries a `goalId` ([Rule 18](core-beliefs.md#rule-18)), so the demo 
 | `부품사 1차 면접` | `약속` | today + 3 | 14:00 | `place: "판교 본사"`, `note: "도면 출력본 지참"`, created today − 2 |
 | `전기기사 실기 원서 접수 마감` | `마감` | today + 9 | — | `note: "접수 후 수험표 확인"`, created today − 3 |
 | `영어 스터디 모임` | `약속` | today + 1 | 20:00 | `place: "온라인"`, `repeat: { freq: "weekly" }`, created today − 7 |
+| `○○물산 주간 점검` | `약속` | today + 1 | 11:00 | `place: "온라인"`, `projectId: mp1.id` (schema v26), created today − 2 |
 
-The three cover both kinds, a timed and an untimed row, and a repeat. None of them carries a `goalId`, points or
-a flag: an event is a record, not a 실행 (task) ([../product-specs/schedule.md](../product-specs/schedule.md)).
+The first three cover both kinds, a timed and an untimed row, and a repeat; the fourth (schema v26) names a
+meeting project, so the `업무` tab's `MeetingPrepCard` has a matched row for tomorrow. None of them carries a
+`goalId`, points or a flag: an event is a record, not a 실행 (task) ([../product-specs/schedule.md](../product-specs/schedule.md)).
 The weekly appointment is what the `이후` group collapses — expanded it would produce twelve rows over the 90-day
 horizon, so the demo tab shows four rows in total (`내일` 1, `이후` 3) instead of fifteen.
 
-The same three events are what the `달력` view needs, so the demo needed no new event for it: the weekly
+The same four events are what the `달력` view needs, so the demo needed no new event beyond the v26 addition above: the weekly
 appointment marks four or five cells of the current month in cyan and the deadline one in rose, which is both
 dot colours on one grid. `ui.scheduleView` comes from `freshState`, so the demo opens the tab on `목록`; the
 manifest screenshot `public/screenshots/calendar.png` is this save with `달력` clicked
@@ -115,8 +117,8 @@ section reserves before its closing summary line.
 - `reviews`: one entry for last week (`weekOf` = that Monday), which leaves this week's review outstanding.
 - `room.trophies`: one `{ kind: "rank", label: "직업·커리어 실무자", date: today − 20 }`, so the achievement wall is not empty on first open.
 - `role`: `{ name: "완성차 1차사 하네스 설계 책임", targets: { 직업·커리어: 6, 기본지식: 4 } }` — two targeted areas, which makes `roleGap` computable and the RANK UP proximity line meaningful.
-- `meetings` (schema v25): the newest demo meeting, `요구사항 1차 회의`, is flagged `aiHidden: true`, so its work-packet line states only its date and title; `유지보수 범위 협의` carries one `progress` entry (`월 10시간 한도를 반영한 유지보수 견적서 초안 작성`, dated two days before today), so the demo shows both new fields at once; the third meeting carries empty `progress` and `aiHidden: false`.
-- `work` (schema v25): two items dated today — `○○물산 유지보수 견적서 송부` (manual, open, `note: "월 10시간 · 초과분 시간 단가"`, linked to the `○○물산 재고 관리 자동화` project) and `전기기사 필기 기출 1회분 채점` (`source: "ai"`, `done: true`, linked to the `하네스 설계 엔지니어 취업` goal) — so the demo `업무` tab shows one open manual row and one done AI-proposed row, and its counts line reads `남음 1건 · 완료 1건 · AI 제안 1건`. See [../product-specs/daily-work.md](../product-specs/daily-work.md).
+- `meetings` (schema v25; `followUps` schema v26): the newest demo meeting, `요구사항 1차 회의`, is flagged `aiHidden: true`, so its work-packet line states only its date and title; `유지보수 범위 협의` carries one `progress` entry (`월 10시간 한도를 반영한 유지보수 견적서 초안 작성`, dated two days before today) and three follow-up items — `긴급 대응 기준 초안 공유` (`mine: true`, due today + 2, mirrored to the demo work item below), `초과분 시간 단가표 회신` (`mine: false`, due today + 5), `월 리포트 양식 확정` (`mine: false`, `done: true`) — so its minutes row states `후속 2/3` and the demo shows the v25 and v26 fields at once; the third meeting carries empty `progress` and `followUps`, and `aiHidden: false`.
+- `work` (schema v25; a third `source: "meeting"` item schema v26): three items dated today — `○○물산 유지보수 견적서 송부` (manual, open, `note: "월 10시간 · 초과분 시간 단가"`, linked to the `○○물산 재고 관리 자동화` project), `전기기사 필기 기출 1회분 채점` (`source: "ai"`, `done: true`, linked to the `하네스 설계 엔지니어 취업` goal), and `긴급 대응 기준 초안 공유` (`source: "meeting"`, open, `link: { kind: "meeting", id: <유지보수 범위 협의>, followUpId: <fuA.id> }`) — so the demo `업무` tab shows one open manual row, one done AI-proposed row and one open `회의`-chip row, and its counts line reads `남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건`. See [../product-specs/daily-work.md](../product-specs/daily-work.md).
 
 ## Derived values and known deviations
 Progress computes to roughly 3 % (하네스), 46 % (어학) and 10 % (체력), with role-model proximity about 25 %. Two deviations are deliberate and harmless:
