@@ -12,7 +12,7 @@ source (`source: "meeting"`) for a work item a follow-up registers — see the s
 
 A dated record of something the user did or means to do that day, never a task:
 ```
-work: [{ id, date("YYYY-MM-DD"), title, note?, done, link?{ kind("goal"|"meeting"|"project"), id, followUpId? }, source("manual"|"ai"|"meeting"), createdAt }]
+work: [{ id, date("YYYY-MM-DD"), title, note?, result?, done, link?{ kind("goal"|"meeting"|"project"), id, followUpId? }, source("manual"|"ai"|"meeting"), createdAt }]
 ```
 Rule 19's amendment restricts goal tasks to reading, exercise, certifications and study, so an item like
 `견적서 송부` cannot be a task ([Rule 19](../design-docs/core-beliefs.md#rule-19)). A work item pays nothing,
@@ -47,7 +47,7 @@ later is stated as `연결 대상이 삭제됐어요` and never cleaned up, the 
 
 ## Caps and the storage arithmetic
 
-`WORK_LIMITS = { title: 60, note: 200 }` — no per-day count cap (the cap of 20 was removed 2026-09-17 at the user's request: undone items are carried to the next day, so a day's list grows; only `recordFits` bounds it); `WORK_LINK_MEETINGS = 20` (meetings offered by the link
+`WORK_LIMITS = { title: 60, note: 200, result: 1000 }` (`result` added 2026-09-17, optional, no migration) — no per-day count cap (the cap of 20 was removed 2026-09-17 at the user's request: undone items are carried to the next day, so a day's list grows; only `recordFits` bounds it); `WORK_LINK_MEETINGS = 20` (meetings offered by the link
 picker, newest first by `meetingOrder`).
 
 - Record overhead `{"id":"…","date":"…","title":"","done":false,"source":"manual","createdAt":"…"}` is about 100
@@ -127,15 +127,15 @@ flagged `aiHidden` is stated in full here. `PREP_DAYS` (2), `PREP_DECISION_CLIP`
 an undone item dated before today appends ` · 이월 {n}일`), `출처` (`수기` / `AI 제안` / `회의 후속` for
 `source === "meeting"`), `상태` (`완료` / `미완료`), `연결` (`workLinkText` or `연결 없음`). Fields: title
 input (`업무 제목 — 예: 견적서 송부`, no `maxLength` — the submit refuses instead of truncating a paste), a
-`메모 (선택)` textarea (`rows=3`, capped at `WORK_LIMITS.note`), and a `연결 (선택)` `<select>` of
+`메모 (선택)` textarea (`rows=3`, capped at `WORK_LIMITS.note`), in edit mode only a `처리 내용 (선택) — 어떻게 처리했는지 적어요` textarea (`rows=4`, capped at `WORK_LIMITS.result`; how the item was done, added 2026-09-17 at the user's request), and a `연결 (선택)` `<select>` of
 `연결 안 함` plus `workLinkOptions(state)` — active goals, the newest `WORK_LINK_MEETINGS` meetings, every
 project — **except** for `source === "meeting"`, where the picker is replaced by the line `연결은 회의록의 후속
 항목을 따라요.` (the `연결` fact row above still shows `회의록 · {date} {title}`; the link is owned by the
 follow-up, schema v26). Submit refuses in order: `업무 제목을 입력해 주세요.`, `업무 제목은 60자까지예요 — 지금 {n}자예요.`,
-`메모는 200자까지예요 — 지금 {n}자예요.`, then whatever `onAdd`/`onUpdate` returns (the
-storage-budget line). The record keeps only non-empty optional fields, so a cleared note or link disappears on
+`메모는 200자까지예요 — 지금 {n}자예요.`, `처리 내용은 1000자까지예요 — 지금 {n}자예요.`, then whatever `onAdd`/`onUpdate` returns (the
+storage-budget line). The record keeps only non-empty optional fields, so a cleared note, result or link disappears on
 an edit; `updateWork` keeps a `source: "meeting"` item's `link` whatever the sheet sends. Buttons: `등록` (add) / `저장` (edit), then, in edit mode, a full-width `완료로 표시` / `완료 취소`
-(`onToggle`, closes the sheet) and `삭제` (`onRemove`, confirmed by name: `{title} 업무를 삭제해요. 계속할까요?`;
+(`onToggle(id, draft)`: the toggle validates and writes what the sheet shows — title, note, result and link — in the same update, so a result typed before tapping it is kept; a refusal keeps the sheet open; closes the sheet) and `삭제` (`onRemove`, confirmed by name: `{title} 업무를 삭제해요. 계속할까요?`;
 deleting a follow-up-mirrored item leaves the follow-up on its meeting, unlinked — [meetings.md](meetings.md)).
 
 **Select mode** (2026-09-17, the user asked for selected and all-at-once deletion). When the day shown has any

@@ -2775,6 +2775,7 @@ const WORK_PACKET_PROGRESS = 5;    // newest progress entries per meeting
 const WORK_PACKET_SUMMARY = 5000;  // chars of a meeting's summary — the whole summary (MEETING_LIMITS.summary)
 const WORK_PACKET_SUMMARY_TRIM = 1500; // the summary clip once the packet runs over WORK_PACKET_MAX
 const WORK_PACKET_CLIP = 600;      // chars of decisions, follow-ups and a progress entry — their whole text
+const WORK_PACKET_RESULT = 300;    // chars of a done item's result (`처리:`) in the records section
 const WORK_PACKET_NOTE = 200;      // chars of a work item's note — its whole text (WORK_LIMITS.note)
 const WORK_PACKET_TASKS = 10;      // open task rows
 const WORK_PACKET_EVENTS = 8;      // schedule rows inside PACKET_EVENT_DAYS
@@ -2964,7 +2965,7 @@ const buildWorkPacket = (state, today) => {
   const recordItems = [...workOn(state, today, today), ...(state.work || []).filter((w) => w.date === yesterday)]
     .filter((w, i, all) => all.findIndex((x) => x.id === w.id) === i)
     .sort((a, b) => a.date.localeCompare(b.date) || byCreated(a, b));
-  const recordLines = recordItems.map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"}${!w.done && w.date < today ? ` · 이월 ${daysBetween(w.date, today)}일` : ""} ${w.title}${w.note ? ` · 메모: ${oneLineText(w.note, WORK_PACKET_NOTE)}` : ""}`);
+  const recordLines = recordItems.map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"}${!w.done && w.date < today ? ` · 이월 ${daysBetween(w.date, today)}일` : ""} ${w.title}${w.note ? ` · 메모: ${oneLineText(w.note, WORK_PACKET_NOTE)}` : ""}${w.done && w.result ? ` · 처리: ${oneLineText(w.result, WORK_PACKET_RESULT)}` : ""}`);
 
   // The knobs the reductions turn; `build` reads them fresh each time.
   const k = { meetings: meetings.length, summary: WORK_PACKET_SUMMARY, progress: WORK_PACKET_PROGRESS,
@@ -3269,7 +3270,7 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *               followUps: [{ id, text, mine, due?("YYYY-MM-DD"), done,    // follow-up items (v26): `mine` = the user's own; a mine item is
  *                             workId? }] }],                               // mirrored as a `source: "meeting"` work item named by `workId`;
  *                                                                           // only `done` mirrors, both ways; at most 30 of 200 chars.
- *   work: [{ id, date("YYYY-MM-DD"), title, note?, done,                   // daily work items (v25): records outside the goal ladder — no
+ *   work: [{ id, date("YYYY-MM-DD"), title, note?, result?, done,                   // daily work items (v25): records outside the goal ladder — no
  *            link?{ kind("goal"|"meeting"|"project"), id, followUpId? },    // payout, trophy, goal, KR or streak (rules 1, 7, 9, 18); `done` is
  *            source("manual"|"ai"|"meeting"), createdAt }],                 // a stored fact; the day view, the past-undone list and the link
  *                                                                           // label are derived. followUpId (v26): the follow-up this item
@@ -7663,7 +7664,8 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
    budget. */
 // No per-day count cap (removed 2026-09-17 at the user's request: undone items are carried to the next day, so a day's
 // list grows); `recordFits` still refuses a save past the storage budget.
-const WORK_LIMITS = { title: 60, note: 200 };
+// `result` (added 2026-09-17, optional, no migration): how a finished item was done, written in the sheet.
+const WORK_LIMITS = { title: 60, note: 200, result: 1000 };
 const WORK_LINK_MEETINGS = 20; // meetings offered by the link picker, newest first
 const WORK_KIND_WORD = { goal: "목표", meeting: "회의록", project: "프로젝트" };
 // The title as the duplicate check sees it: trimmed, every space removed, lower-cased (`parseWorkReply`).
@@ -7866,21 +7868,35 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
   const linkKey = (l) => (l ? `${l.kind}:${l.id}` : "");
   const [title, setTitle] = useState(work?.title || "");
   const [note, setNote] = useState(work?.note || "");
+  const [result, setResult] = useState(work?.result || "");
   const [link, setLink] = useState(linkKey(work?.link));
   const [err, setErr] = useState("");
   const options = useMemo(() => workLinkOptions(state), [state]);
   // A link whose target was deleted stays selectable as itself, so saving the sheet does not silently drop it.
   const stale = link && !options.some((o) => linkKey(o) === link) ? link : "";
-  const submit = () => {
-    const t = title.trim(), n = note.trim();
-    if (!t) { setErr("업무 제목을 입력해 주세요."); return; }
-    if (t.length > WORK_LIMITS.title) { setErr(`업무 제목은 ${WORK_LIMITS.title}자까지예요 — 지금 ${t.length}자예요.`); return; }
-    if (n.length > WORK_LIMITS.note) { setErr(`메모는 ${WORK_LIMITS.note}자까지예요 — 지금 ${n.length}자예요.`); return; }
+  // The record the sheet would save, or an error string. the done toggle saves it first, so a result typed before
+  // completing is kept.
+  const draft = () => {
+    const t = title.trim(), n = note.trim(), r = result.trim();
+    if (!t) return "업무 제목을 입력해 주세요.";
+    if (t.length > WORK_LIMITS.title) return `업무 제목은 ${WORK_LIMITS.title}자까지예요 — 지금 ${t.length}자예요.`;
+    if (n.length > WORK_LIMITS.note) return `메모는 ${WORK_LIMITS.note}자까지예요 — 지금 ${n.length}자예요.`;
+    if (r.length > WORK_LIMITS.result) return `처리 내용은 ${WORK_LIMITS.result}자까지예요 — 지금 ${r.length}자예요.`;
     const sep = link.indexOf(":");
     const picked = sep > 0 ? { kind: link.slice(0, sep), id: link.slice(sep + 1) } : null;
-    // Only non-empty optional fields are written, so a cleared note or link disappears from the record.
-    const next = { date: work?.date || date || today, title: t, ...(n ? { note: n } : {}), ...(picked ? { link: picked } : {}) };
+    // Only non-empty optional fields are written, so a cleared note, result or link disappears from the record.
+    return { date: work?.date || date || today, title: t, ...(n ? { note: n } : {}), ...(r ? { result: r } : {}), ...(picked ? { link: picked } : {}) };
+  };
+  const submit = () => {
+    const next = draft();
+    if (typeof next === "string") { setErr(next); return; }
     const refused = work ? onUpdate(work.id, next) : onAdd(next);
+    if (refused) setErr(refused);
+  };
+  const toggle = () => {
+    const next = draft();
+    if (typeof next === "string") { setErr(next); return; }
+    const refused = onToggle(work.id, next);
     if (refused) setErr(refused);
   };
   return (
@@ -7896,6 +7912,9 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
         )}
         <BizField value={title} onChange={setTitle} placeholder="업무 제목 — 예: 견적서 송부" />
         <MeetingText value={note} onChange={setNote} placeholder="메모 (선택)" rows={3} cap={WORK_LIMITS.note} />
+        {work && (
+          <MeetingText value={result} onChange={setResult} placeholder="처리 내용 (선택) — 어떻게 처리했는지 적어요" rows={4} cap={WORK_LIMITS.result} />
+        )}
         {work?.source === "meeting" ? (
           // A follow-up's item: the link is owned by the follow-up, so the sheet offers no picker (v26).
           <p className="text-xs text-zinc-500">연결은 회의록의 후속 항목을 따라요.</p>
@@ -7917,7 +7936,7 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
         </button>
         {work && (
           <>
-            <button onClick={() => onToggle(work.id)}
+            <button onClick={toggle}
               className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">
               {work.done ? "완료 취소" : "완료로 표시"}
             </button>
@@ -8644,8 +8663,8 @@ export default function LifeManager() {
     // The sheet replaces title, note and link; id, date, done, source and createdAt are kept. A follow-up's item keeps
     // its link whatever the sheet sends: the link is owned by the follow-up (v26).
     const link = cur.source === "meeting" ? cur.link : next.link;
-    const rec = { id: cur.id, date: cur.date, title: next.title, ...(next.note ? { note: next.note } : {}), ...(link ? { link } : {}),
-      done: cur.done, source: cur.source, createdAt: cur.createdAt };
+    const rec = { id: cur.id, date: cur.date, title: next.title, ...(next.note ? { note: next.note } : {}),
+      ...(next.result ? { result: next.result } : {}), ...(link ? { link } : {}), done: cur.done, source: cur.source, createdAt: cur.createdAt };
     const refused = recordFits(rec, JSON.stringify(cur).length, "업무를");
     if (refused) return refused;
     writeWork((list) => list.map((w) => (w.id === id ? rec : w)));
@@ -8657,13 +8676,21 @@ export default function LifeManager() {
   const mirroredFollowUp = (s, w) => (w?.link?.kind === "meeting" && w.link.followUpId
     ? ((s.meetings || []).find((m) => m.id === w.link.id)?.followUps || []).find((f) => f.id === w.link.followUpId) || null
     : null);
-  const toggleWork = (id) => {
+  // Flips done. From the sheet, `next` carries what the sheet shows (title, note, result, link), written in the same
+  // update so a result typed before completing is kept; answers an error string when storage refuses it.
+  const toggleWork = (id, next) => {
     const cur = (state.work || []).find((w) => w.id === id);
-    if (!cur) return;
+    if (!cur) return "";
+    const fields = next ? { title: next.title, note: next.note, result: next.result, ...(cur.source === "meeting" ? {} : { link: next.link }) } : {};
+    if (next) {
+      const refused = recordFits({ ...cur, ...fields }, JSON.stringify(cur).length, "업무를");
+      if (refused) return refused;
+    }
     setState((prev) => {
       const s = structuredClone(prev);
       const w = (s.work || []).find((x) => x.id === id);
       if (!w) return prev;
+      for (const [key, value] of Object.entries(fields)) { if (value) w[key] = value; else delete w[key]; }
       w.done = !w.done;
       const fu = mirroredFollowUp(s, w);
       if (fu) fu.done = w.done;
@@ -8671,6 +8698,7 @@ export default function LifeManager() {
     });
     setModal(null);
     showToast({ msg: cur.done ? "완료를 취소했어요" : "완료로 표시했어요" });
+    return "";
   };
   // Deletes the given work items; a follow-up one of them mirrored stays on its meeting, unlinked (`mine` and `done` kept).
   const dropWork = (drop) => setState((prev) => {

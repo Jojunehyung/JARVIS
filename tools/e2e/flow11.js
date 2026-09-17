@@ -219,6 +219,35 @@ module.exports = async (h) => {
     if ((await readState()).work.find((x) => x.title === WORK_TITLE).done !== false) throw new Error("done was not reverted");
   });
 
+  // The result note (2026-09-17): how a finished item was done, typed in the sheet and kept by the done toggle itself.
+  await step("a result typed in the sheet is stored by the done toggle, refused over 1000 chars, and removed when cleared", async () => {
+    const RESULT = "견적서 PDF를 메일로 보냈어요";
+    const itemOf = async () => (await readState()).work.find((x) => x.title === WORK_TITLE);
+    const typeResult = async (text) => {
+      await setValue('.fixed.inset-0 textarea[placeholder^="처리 내용"]', text);
+      await sleep(150);
+    };
+    await clickTab("업무");
+    await openTodo(WORK_TITLE);
+    await typeResult(RESULT);
+    await clickInModalExact("완료로 표시");
+    await sleep(500);
+    let item = await itemOf();
+    if (!item.done || item.result !== RESULT) throw new Error("completion did not store the result: " + JSON.stringify(item));
+    await openTodo(WORK_TITLE);
+    await typeResult("가".repeat(1001));
+    await clickInModalExact("완료 취소");
+    const e = await modalError();
+    if (e !== "처리 내용은 1000자까지예요 — 지금 1001자예요.") throw new Error("an over-cap result gave: " + (e || "no error"));
+    item = await itemOf();
+    if (!item.done || item.result !== RESULT) throw new Error("a refused result changed the record: " + JSON.stringify(item));
+    await typeResult("");
+    await clickInModalExact("완료 취소");
+    await sleep(500);
+    item = await itemOf();
+    if (item.done || "result" in item) throw new Error("undoing with a cleared result left: " + JSON.stringify(item));
+  });
+
   // Carry-forward is derived (2026-09-17): an undone item from an earlier day is listed first on today's view with its
   // age and keeps its own date and its own day; nothing is moved or rewritten.
   await step("an undone item from a past date is carried into today's list with its age, keeps its own date, and is absent on other days", async () => {
