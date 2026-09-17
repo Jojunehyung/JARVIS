@@ -154,6 +154,28 @@ module.exports = async (h) => {
     if (d.monthly !== 1200000 || d.costMonthly !== 300000 || d.months !== 3) throw new Error("the billing rule was not stored as entered: " + JSON.stringify(d));
   });
 
+  // Tracks (schema v28, Phase 1, 2026-09-17, written, not run): a contract is business by default.
+  await step("a new deal defaults to the business track, stores it, and its row shows the tag", async () => {
+    const d = ((await readState()).deals || []).find((x) => x.title === "재고 관리 자동화 도구");
+    if (!d || d.track !== "biz") throw new Error("the contract's track: " + JSON.stringify(d));
+    const tag = await page.evaluate((t) => {
+      const card = [...document.querySelectorAll("button")].filter((b) => (b.innerText || "").trim() === "수정")
+        .map((b) => b.parentElement.parentElement).find((c) => (c.innerText || "").includes(t));
+      const span = card && [...card.querySelectorAll("span.font-mono")].find((s) => (s.innerText || "").trim() === "사업");
+      return span ? span.className : null;
+    }, "재고 관리 자동화 도구");
+    if (!tag || !/text-cyan-300/.test(tag)) throw new Error("the contract row does not carry the business tag: " + JSON.stringify(tag));
+    await openAdd("계약 추가");
+    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    const on = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "사업");
+      return b ? /bg-cyan-400/.test(b.className || "") : null;
+    });
+    if (on !== true) throw new Error("the new contract form does not open on the business track: " + JSON.stringify(on));
+    await closeModal();
+  });
+
   await step("a payment chip stores only its month stamp", async () => {
     const before = await readState();
     const month = await monthIn(0);

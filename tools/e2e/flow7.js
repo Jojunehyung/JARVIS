@@ -15,14 +15,15 @@ module.exports = async (h) => {
   // repeat, `texts` carries the occurrence date next to the title so one occurrence is addressed rather than the whole event.
   const openEventModal = async () => { await clickText("일정 추가"); await sleep(400); };
   // Register one event through the modal: a title, a day offset from today, and optionally a time,
-  // the `마감` kind chip and a repeat chip (all of them Korean UI copy, used here as selectors).
-  const addEvent = async (title, delta, { kind = null, time = null, freq = null } = {}) => {
+  // the `마감` kind chip, a repeat chip and a track chip (v28) (all of them Korean UI copy, used here as selectors).
+  const addEvent = async (title, delta, { kind = null, time = null, freq = null, track = null } = {}) => {
     await openEventModal();
     await typeInto("일정 이름", title);
     if (kind) await clickInModalExact(kind);
     await setValue('.fixed.inset-0 input[type="date"]', await dstrIn(delta));
     if (time) await setValue('.fixed.inset-0 input[type="time"]', time);
     if (freq) await clickInModalExact(freq);
+    if (track) await clickInModalExact(track);
     await clickInModalExact("등록");
     await sleep(700);
   };
@@ -163,7 +164,7 @@ module.exports = async (h) => {
   });
 
   await step("weekly repeat marks both weeks and the to-do list collapses the later ones", async () => {
-    await addEvent("주간 스터디", 1, { time: "20:00", freq: "매주" });
+    await addEvent("주간 스터디", 1, { time: "20:00", freq: "매주", track: "개인" }); // v28: a packet track, for the packet step below
     for (const delta of [1, 8]) {
       await showDay(await dstrIn(delta));
       const day = await rows(["주간 스터디"]);
@@ -292,6 +293,56 @@ module.exports = async (h) => {
     if ((st.events || []).some((x) => x.title === TITLE) || (st.meetingProjects || []).some((p) => p.id === "pE")) throw new Error("the planted project or its event survived the cleanup");
   });
 
+  // Tracks (schema v28, Phase 1, 2026-09-17, written, not run): the form's chips store `track`; picking a project follows
+  // that project's track until a track chip is tapped in the same form.
+  await step("the event form's track chips store track, and picking a project follows the project's track until a chip is tapped", async () => {
+    const TITLE = "E2E 트랙 일정", PLAIN = "E2E 트랙 없는 일정";
+    const PICKER = '.fixed.inset-0 select[aria-label="프로젝트 (선택)"]';
+    const chipOn = (label) => page.evaluate((l) => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
+      return b ? /bg-cyan-400/.test(b.className || "") : null;
+    }, label);
+    const eventBy = async (title) => ((await readState()).events || []).find((x) => x.title === title);
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      s.meetingProjects = [...(s.meetingProjects || []).filter((p) => p.id !== "pT"), { id: "pT", name: "E2E 트랙 프로젝트", createdAt: "2026-01-01", track: "biz" }];
+      localStorage.setItem("liferpg-state-v1", JSON.stringify(s));
+    });
+    await h.reload();
+    await showDay(await dstrIn(0));
+    await openEventModal();
+    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    if ((await chipOn("직장")) !== true) throw new Error("a new event does not default to the day-job track");
+    await typeInto("일정 이름", TITLE);
+    await page.select(PICKER, "pT");
+    if ((await chipOn("사업")) !== true) throw new Error("picking a business project did not move the track chip");
+    await clickInModalExact("등록");
+    await sleep(700);
+    if ((await eventBy(TITLE))?.track !== "biz") throw new Error("the event did not store its project's track: " + JSON.stringify(await eventBy(TITLE)));
+    await showDay(await dstrIn(0));
+    const r = await rows([TITLE], "수정");
+    if (!r.clicked) throw new Error("the track event row has no edit button: " + r.rows.join(" | "));
+    if (!r.rows[0].includes("사업")) throw new Error("the event row does not state its track: " + r.rows[0]);
+    await sleep(400);
+    await clickInModalExact("개인");
+    await page.select(PICKER, "");
+    await page.select(PICKER, "pT");
+    if ((await chipOn("개인")) !== true) throw new Error("a project pick overrode a tapped track chip");
+    await clickInModalExact("저장");
+    await sleep(700);
+    if ((await eventBy(TITLE))?.track !== "personal") throw new Error("the tapped track was not stored: " + JSON.stringify(await eventBy(TITLE)));
+    await addEvent(PLAIN, 0);
+    if ((await eventBy(PLAIN))?.track !== "work") throw new Error("an event with no project and no chip is not on the day-job track: " + JSON.stringify(await eventBy(PLAIN)));
+    await page.evaluate((titles) => {
+      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+      s.events = (s.events || []).filter((e) => !titles.includes(e.title));
+      s.meetingProjects = (s.meetingProjects || []).filter((p) => p.id !== "pT");
+      localStorage.setItem("liferpg-state-v1", JSON.stringify(s));
+    }, [TITLE, PLAIN]);
+    await h.reload();
+  });
+
   await step("deleting removes the event from the tab", async () => {
     await showDay(await dstrIn(1));
     const r = await rows(["면접 리허설 2차"], "수정");
@@ -307,7 +358,7 @@ module.exports = async (h) => {
 
   await step("briefing states the schedule between the tasks and the streak", async () => {
     await clickTab("일정");
-    await addEvent("서류 제출 마감", 0, { kind: "마감" });
+    await addEvent("서류 제출 마감", 0, { kind: "마감", track: "개인" }); // v28: a packet track, for the packet step below
     await clickTab("할 일");
     await clickText("브리핑 열기");
     await sleep(500);

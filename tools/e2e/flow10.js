@@ -73,7 +73,8 @@ module.exports = async (h) => {
     const st = await readState();
     if ((st.meetingProjects || []).length !== 1) throw new Error("stored projects: " + JSON.stringify(st.meetingProjects));
     const keys = Object.keys(st.meetingProjects[0]).sort().join(",");
-    if (keys !== "createdAt,id,name" || st.meetingProjects[0].name !== PROJECT) throw new Error("stored project record: " + JSON.stringify(st.meetingProjects[0]));
+    // v28: the form writes the track, `work` by default.
+    if (keys !== "createdAt,id,name,track" || st.meetingProjects[0].name !== PROJECT || st.meetingProjects[0].track !== "work") throw new Error("stored project record: " + JSON.stringify(st.meetingProjects[0]));
   });
 
   await step("the meeting form refuses a missing title, a missing summary and an over-cap summary", async () => {
@@ -629,6 +630,13 @@ module.exports = async (h) => {
     const today = await dstrIn(0);
     const RAW_ID = "e2e-raw-mtg", RAW_TITLE = "E2E 원문 후속 회의";
     const HIDDEN_ID = "e2e-hidden-fu-mtg", HIDDEN_TITLE = "E2E 비공개 후속 회의";
+    // v28: a day-job project's minutes stay out of the packet, so the project is on the business track for this step only.
+    const setProjectTrack = (track) => page.evaluate((k, name, t) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetingProjects = (s.meetingProjects || []).map((p) => (p.name === name ? { ...p, track: t } : p));
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, PROJECT, track);
+    await setProjectTrack("biz");
     await plantMeetingRecord({ id: RAW_ID, date: today, title: RAW_TITLE, summary: "원문 확인", actions: "원문 후속",
       createdAt: today, taskIds: [], progress: [], aiHidden: false, followUps: [] });
     await plantMeetingRecord({ id: HIDDEN_ID, date: today, title: HIDDEN_TITLE, summary: "비공개 요약", actions: "비공개 원문 후속",
@@ -674,6 +682,7 @@ module.exports = async (h) => {
       s.work = (s.work || []).filter((w) => !(w.link?.kind === "meeting" && gone.has(w.link.id)));
       localStorage.setItem(k, JSON.stringify(s));
     }, KEY, [SPLIT_ID, CAP_ID, RAW_ID, HIDDEN_ID], FU_MEETING);
+    await setProjectTrack("work");
     await h.reload();
   });
 
@@ -888,7 +897,7 @@ module.exports = async (h) => {
     const d = after.documents.find((x) => x.title === DOC_TITLE);
     if (!d || d.projectId !== pid || d.source !== "spec-v1.pdf" || d.summary !== summary || d.addedAt !== today) throw new Error("the document record: " + JSON.stringify(d));
     const keys = Object.keys(d).sort().join(",");
-    if (keys !== ["id", "projectId", "title", "source", "summary", "addedAt"].sort().join(",")) throw new Error("the document keys: " + keys);
+    if (keys !== ["id", "projectId", "title", "source", "summary", "addedAt", "track"].sort().join(",") || d.track !== "work") throw new Error("the document keys: " + keys + " · track " + d.track);
     assertBoundary(before, after, "adding a document");
     for (const k of ["meetings", "work"]) if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) throw new Error("adding a document changed " + k);
     const head = await sectionCount(PROJECT);
@@ -1006,5 +1015,67 @@ module.exports = async (h) => {
     const end = await readState();
     if ((end.documents || []).length !== docsBeforeCount) throw new Error("documents after the cleanup: " + (end.documents || []).length);
     if ((end.meetingProjects || []).some((p) => p.id === "e2e-doc-project")) throw new Error("the planted project survived");
+  });
+
+  // ── Tracks (schema v28, Phase 1, 2026-09-17): a project and a memo store their own track; a project meeting inherits and
+  // stores none. Written under the standing instruction that the suite is not run.
+  await step("a project stores its track, a memo carries its own, and a project meeting inherits without storing one", async () => {
+    const BIZ_PROJECT = "E2E 사업 프로젝트", BIZ_MEETING = "E2E 사업 회의", TRACK_MEMO = "E2E 개인 메모";
+    await clickTab("미팅");
+    await clickText("프로젝트 추가"); await sleep(400);
+    await expectText("새 프로젝트");
+    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    if ((await chipOn("직장")) !== true) throw new Error("a new project does not default to the day-job track");
+    await typeInto("프로젝트 이름", BIZ_PROJECT);
+    await clickInModalExact("사업");
+    await clickInModalExact("등록");
+    await sleep(500);
+    let st = await readState();
+    const project = (st.meetingProjects || []).find((p) => p.name === BIZ_PROJECT);
+    if (!project || project.track !== "biz") throw new Error("the project's track: " + JSON.stringify(project));
+    const tag = await page.evaluate((n) => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.querySelector(".font-bold.truncate")?.innerText || "").trim() === n);
+      return sec ? [...sec.querySelector(".font-bold.truncate").parentElement.querySelectorAll("span")].map((x) => (x.innerText || "").trim()) : null;
+    }, BIZ_PROJECT);
+    if (!tag || tag[0] !== "사업") throw new Error("the project head does not carry the business tag: " + JSON.stringify(tag));
+    await clickInSection(BIZ_PROJECT, "회의록 추가");
+    await expectText("새 회의록");
+    if ((await chipOn("개인")) !== null) throw new Error("the track chips show while a project is picked");
+    await fillMeeting({ title: BIZ_MEETING, summary: "트랙 상속 확인" });
+    await clickInModalExact("등록");
+    await expectText("회의록을 등록했어요");
+    await sleep(300);
+    st = await readState();
+    const inherited = (st.meetings || []).find((m) => m.title === BIZ_MEETING);
+    if (!inherited || "track" in inherited) throw new Error("a project meeting stored a track: " + JSON.stringify(inherited));
+    await clickText("긴급 메모 추가"); await sleep(400);
+    if ((await chipOn("개인")) !== false) throw new Error("the track chips do not show while the memo chip is on");
+    await clickInModalExact(BIZ_PROJECT);
+    if ((await chipOn("개인")) !== null) throw new Error("the track chips stay after a project chip is tapped");
+    await clickInModalExact("없음 (긴급 메모)");
+    await clickInModalExact("개인");
+    await fillMeeting({ title: TRACK_MEMO, summary: "메모 트랙 확인" });
+    await clickInModalExact("등록");
+    await expectText("회의록을 등록했어요");
+    await sleep(300);
+    st = await readState();
+    let memoRec = (st.meetings || []).find((m) => m.title === TRACK_MEMO);
+    if (!memoRec || memoRec.projectId !== null || memoRec.track !== "personal") throw new Error("the memo's track: " + JSON.stringify(memoRec));
+    await openTodo(TRACK_MEMO);
+    await clickInModalExact("수정");
+    await clickInModalExact(BIZ_PROJECT);
+    await clickInModalExact("저장");
+    await expectText("회의록을 수정했어요");
+    await sleep(300);
+    memoRec = ((await readState()).meetings || []).find((m) => m.title === TRACK_MEMO);
+    if (!memoRec || memoRec.projectId !== project.id || "track" in memoRec) throw new Error("the moved memo kept its own track: " + JSON.stringify(memoRec));
+    // Leave the save as flow11 expects it: the project and both meetings gone.
+    await page.evaluate((k, pid) => {
+      const s = JSON.parse(localStorage.getItem(k));
+      s.meetings = (s.meetings || []).filter((m) => m.projectId !== pid);
+      s.meetingProjects = (s.meetingProjects || []).filter((p) => p.id !== pid);
+      localStorage.setItem(k, JSON.stringify(s));
+    }, KEY, project.id);
+    await h.reload();
   });
 };

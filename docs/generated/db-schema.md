@@ -3,7 +3,7 @@
 
 | Constant | Value |
 |---|---|
-| State schema version (`freshState.v`) | 27 |
+| State schema version (`freshState.v`) | 28 |
 | `DIFF_RAW_VERSION` (difficulty table version) | 1.3 |
 | `POINT_POLICY_VERSION` (exam payout policy) | 1.0 |
 | Primary storage key `KEY` | `liferpg-state-v1` |
@@ -11,10 +11,10 @@
 ## Field reference
 
 ```js
-@schema v27 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
+@schema v28 — persisted state under storage key `KEY` (`liferpg-state-v1`). Canonical field reference;
 `tools/harness/gen-schema.js` copies this block verbatim into docs/generated/db-schema.md.
 {
-  v: 27,
+  v: 28,
   profile: { name, nick, birth("YYYY-MM-DD"), gender, status, email?, phone?,
              edus: [{ id, school, major?, field?(MAJOR_FIELDS), degree("hs"|"assoc"|"ba"|"ms"|"phd" — EDU_OPTS keys),
                       status("enroll"|"leave"|"expect"|"grad"|"course"|"drop"), from?("YYYY-MM"), to?("YYYY-MM") }],
@@ -39,19 +39,27 @@
              skip?["YYYY-MM-DD"], doneDates?["YYYY-MM-DD"], createdAt,                           // occurrences are expanded at render, not stored
              projectId?,                                                                        // projectId (v26, optional): the meeting project this event
                                                                                                  // belongs to — read by the prep card, never by the export
-             checks?[{ id, text, done, source("manual"|"ai") }] }],                             // checks (v27, optional, no backfill): `확인할 것` for that
+             checks?[{ id, text, done, source("manual"|"ai") }],                                // checks (v27, optional, no backfill): `확인할 것` for that
                                                                                                  // event, at most 30 of 200 chars; edited on the prep card and
                                                                                                  // the event sheet, imported from the prep packet's reply; never
                                                                                                  // read by the export or the daily packet; a repeating event
                                                                                                  // carries one list for every occurrence (TD-61)
+             track("work"|"biz"|"personal") }],                                                // track (v28): the day job, the business or private life; `work`
+                                                                                                 // never enters a packet (SECURITY.md); backfilled `work` (`biz` on a deal)
   folio: [{ id, title, summary?, role?, stack?[string],                       // business records: what was built, what it sells for,
             period?{ from("YYYY-MM"), to("YYYY-MM") },                        // and what is contracted — records, never tasks: no payout,
             links[{ label, url }], createdAt }],                              // no trophy, no goal, no streak (rules 1, 18).
   rates: [{ id, name, unit("month"|"day"|"project"), price, cost?, note?, createdAt }],   // cost is optional and never defaults to 0
   deals: [{ id, client, title, status("lead"|"quote"|"won"|"lost"),           // a period contract is a billing rule plus the user's own
             monthly?, costMonthly?, months?, startMonth?("YYYY-MM"),          // payment stamps; months, totals, margin and the
-            paidMonths?["YYYY-MM"], note?, createdAt }],                      // upcoming/active/ended phase are all derived at render
-  meetingProjects: [{ id, name, note?, createdAt }],                      // meeting minutes (v23): records, never tasks — no payout,
+            paidMonths?["YYYY-MM"], note?, createdAt,                         // upcoming/active/ended phase are all derived at render
+            track("work"|"biz"|"personal"),                                   // track (v28): the day job, the business or private life; `work` never
+                                                                              // enters a packet (SECURITY.md); backfilled `work` (`biz` on a deal)
+            payments?[{ id, kind("deposit"|"interim"|"final"|"other"), due("YYYY-MM-DD"), amount, paidAt?("YYYY-MM-DD") }] }],
+                                                                              // lump-sum payment lines (v28, optional, no backfill): a deposit, an interim
+                                                                              // or a final payment beside the monthly `paidMonths`; never summed into the
+                                                                              // monthly figures
+  meetingProjects: [{ id, name, note?, createdAt, track("work"|"biz"|"personal") }],   // meeting minutes (v23): records, never tasks — no payout,
   meetings: [{ id, projectId(string | null), date("YYYY-MM-DD"), title, attendees?,   // trophy, goal or streak (rules 1, 18). A meeting's time lives
               summary, decisions?, actions?, transcript?, eventId?, createdAt,       // only in events; eventId (+ date) points at one occurrence and
               taskIds[],                                                 // nothing is copied from it. Order and storage use are derived.
@@ -67,18 +75,35 @@
                                                                           // at most 30 of 300 chars; aiHidden (v25): true = excluded from the
                                                                           // work packet body (its date and title still appear).
               followUps: [{ id, text, mine, due?("YYYY-MM-DD"), done,    // follow-up items (v26): `mine` = the user's own; a mine item is
-                            workId? }] }],                               // mirrored as a `source: "meeting"` work item named by `workId`;
+                            workId? }],                                  // mirrored as a `source: "meeting"` work item named by `workId`;
                                                                           // only `done` mirrors, both ways; at most 30 of 200 chars.
+                                                                          // meetingProjects[].track (v28): the day job, the business or private
+                                                                          // life; `work` never enters a packet (SECURITY.md); backfilled `work`
+                                                                          // (`biz` on a deal)
+              track?("work"|"biz"|"personal") }],                         // track (v28, memos only): a project-less memo's own track; a project
+                                                                          // meeting inherits its project's (`meetingTrack`), never stores one
   work: [{ id, date("YYYY-MM-DD"), title, note?, result?, done,                   // daily work items (v25): records outside the goal ladder — no
            link?{ kind("goal"|"meeting"|"project"), id, followUpId? },    // payout, trophy, goal, KR or streak (rules 1, 7, 9, 18); `done` is
-           source("manual"|"ai"|"meeting"), createdAt }],                 // a stored fact; the day view, the past-undone list and the link
-                                                                          // label are derived. followUpId (v26): the follow-up this item
+           source("manual"|"ai"|"meeting"), createdAt,                    // a stored fact; the day view, the past-undone list and the link
+           track("work"|"biz"|"personal"), minutes? }],                   // label are derived. followUpId (v26): the follow-up this item
                                                                           // mirrors, on a `meeting` link only.
-  documents: [{ id, projectId(string | null), title, source?, summary, addedAt("YYYY-MM-DD") }],   // document summaries (v27): what a file says, in the
+                                                                          // track (v28): the day job, the business or private life; `work` never
+                                                                          // enters a packet (SECURITY.md); backfilled `work` (`biz` on a deal)
+                                                                          // minutes (v28, optional): how long a done item took, typed on
+                                                                          // completion; the weekly sum reads `timeLog`, never this
+  documents: [{ id, projectId(string | null), title, source?, summary, addedAt("YYYY-MM-DD"), track("work"|"biz"|"personal") }],   // document summaries (v27): what a file says, in the
                                                                           // user's words — a record, never a task (rules 1, 18); no file is stored,
                                                                           // `source` is a file name or link as text; projectId null = no project,
                                                                           // listed under `프로젝트 없음 · 긴급 메모`. Read by the meetings tab, the
                                                                           // prep card, the prep packet (title + summary only) and the daily reader.
+                                                                          // track (v28): the day job, the business or private life; `work` never
+                                                                          // enters a packet (SECURITY.md); backfilled `work` (`biz` on a deal)
+  milestones: [{ id, title, stage?(1-9), due?("YYYY-MM-DD"), status("planned"|"active"|"done"), doneAt?, condition?,   // roadmap (v28): the user's own status; D-day,
+                 dealIds[], projectId?, documentIds[], workIds[], createdAt }],                                        // linked-work completion and pace are derived
+  timeLog: [{ id, date("YYYY-MM-DD"), track, minutes, workId?, createdAt }],   // time log (v28): minutes spent, by day and track; a completion with minutes writes one
+                                                                                // entry (`workId`), the quick entry writes one without; the weekly sum reads only this
+  leads: [{ id, name, stage("potential"|"contact"|"demo"|"proposal"|"quote"|"won"), stageAt, contact?, nextAction?, nextDue?, note?, dealId?, createdAt }],   // pipeline (v28)
+  notices: [{ id, title, agency, postedAt?, deadline, status("review"|"writing"|"submitted"|"selected"|"rejected"), documentIds[], note?, createdAt }],   // notices (v28)
   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
@@ -86,9 +111,13 @@
   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
-  role: { name, targets{areaId: requiredGrade(1-8)} } | null,   // proximity is derived by roleGap
-  ui: { bizView("deals"|"rates"|"folio") },   // which view the business tab opens on — a preference, never derived data
+  role: { name, targets{areaId: requiredGrade(1-8)},             // proximity is derived by roleGap
+          stages?[{ id, name, conds[{ type, arg?, min }] }] } | null,   // role stages (v28, optional): fact conditions evaluated from the save
+                                                                // (`roleStageOf`); the current stage is derived, never stored; proximity
+                                                                // (`roleGap`) is untouched
+  ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
                                               // (scheduleView was retired 2026-09-16 and dropped at v22)
+  settings: { bizHoursPerWeek },   // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
   lastTick, dModel
 }
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
@@ -103,13 +132,16 @@ the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitF
 `후속 {open}/{total}` marker, the memo group of the meetings tab and a transcript's `{n}자` length, the work packet
 (`buildWorkPacket`), the document rows and counts of the meetings tab (`docOrder`), the event → project match
 (`eventProjectOf`), the prep packet (`buildPrepPacket`), the same-client contracts (`dealsOfProject`), and the daily
-reader (`buildReader`, `readerSince`).
+reader (`buildReader`, `readerSince`), the track order of every list (`byTrack`, `meetingTrack`), the roadmap's D-day,
+completion and pace (`milestoneWork`, `milestonePace`, `stageOrderNote`), the weekly time sums (`weekMinutes`), the
+payment figures of `bizSummary`, the role stage and every condition value (`roleStageOf`, `condValue`), the review
+facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds.
 ```
 
 ## Fresh-state defaults (`freshState`)
 
 ```js
-  v: 27,
+  v: 28,
   profile: null,
   areas,
   tasks: [],
@@ -122,6 +154,10 @@ reader (`buildReader`, `readerSince`).
   meetings: [],
   work: [],
   documents: [],
+  milestones: [],
+  timeLog: [],
+  leads: [],
+  notices: [],
   journal: [],
   reviews: [],
   act: { streak: 0, lastActive: null, shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: null },
@@ -130,6 +166,7 @@ reader (`buildReader`, `readerSince`).
   room: { trophies: [] },
   role: null,
   ui: { bizView: "deals" },
+  settings: { bizHoursPerWeek: 20 },
   lastTick: dstr(),
   dModel: DIFF_RAW_VERSION,
 });
@@ -183,9 +220,9 @@ const demoState = () => {
     { id: uid(), title: "아침 운동 30분", areaId: p4.id, goalId: gFit.id, kind: "fit", diff: "E", type: "daily", status: "todo", doneDates: [shiftDay(today, -1)], createdAt: shiftDay(today, -10) },
   ];
   s.events = [
-    { id: uid(), title: "부품사 1차 면접", kind: "appt", date: shiftDay(today, 3), time: "14:00", place: "판교 본사", note: "도면 출력본 지참", createdAt: shiftDay(today, -2) },
-    { id: uid(), title: "전기기사 실기 원서 접수 마감", kind: "due", date: shiftDay(today, 9), note: "접수 후 수험표 확인", createdAt: shiftDay(today, -3) },
-    { id: uid(), title: "영어 스터디 모임", kind: "appt", date: shiftDay(today, 1), time: "20:00", place: "온라인", repeat: { freq: "weekly" }, createdAt: shiftDay(today, -7) },
+    { id: uid(), title: "부품사 1차 면접", kind: "appt", date: shiftDay(today, 3), time: "14:00", place: "판교 본사", note: "도면 출력본 지참", createdAt: shiftDay(today, -2), track: "personal" },
+    { id: uid(), title: "전기기사 실기 원서 접수 마감", kind: "due", date: shiftDay(today, 9), note: "접수 후 수험표 확인", createdAt: shiftDay(today, -3), track: "personal" },
+    { id: uid(), title: "영어 스터디 모임", kind: "appt", date: shiftDay(today, 1), time: "20:00", place: "온라인", repeat: { freq: "weekly" }, createdAt: shiftDay(today, -7), track: "personal" },
   ];
   // Business records. The finished contract ended two months ago and the signed one starts next month, so this
   // month is contracted at 0; its third billed month carries no payment stamp, so one unpaid month is outstanding.
@@ -211,15 +248,18 @@ const demoState = () => {
     },
   ];
   s.deals = [
-    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140) },
-    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6) },
-    { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9) },
-    { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3) },
+    { id: uid(), client: "○○물산", title: "재고 관리 자동화 도구", status: "won", monthly: 1200000, costMonthly: 300000, months: 3, startMonth: monthAdd(month, -4), paidMonths: [monthAdd(month, -4), monthAdd(month, -3)], note: "세금계산서 발행 후 30일", createdAt: shiftDay(today, -140), track: "biz" },
+    { id: uid(), client: "△△테크", title: "사내 문서 검색 AI 구축", status: "won", monthly: 3000000, costMonthly: 800000, months: 4, startMonth: monthAdd(month, 1), paidMonths: [], note: "착수 전 요구사항 정리 2주", createdAt: shiftDay(today, -6), track: "biz" },
+    { id: uid(), client: "□□랩스", title: "리드 수집 크롤러", status: "quote", monthly: 1500000, months: 2, createdAt: shiftDay(today, -9), track: "biz" },
+    { id: uid(), client: "◇◇스튜디오", title: "예약 페이지 개편", status: "lead", createdAt: shiftDay(today, -3), track: "biz" },
   ];
   // Synthetic minutes: made-up companies, no personal names (SECURITY.md), no event link.
-  const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20) };
-  const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6) };
-  s.meetingProjects = [mp2, mp1];
+  const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20), track: "biz" };
+  const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6), track: "biz" };
+  // A day-job project (v28, `track: "work"`): its minutes, follow-up, work item and event stay out of every packet —
+  // synthetic institution, no personal names.
+  const mpJob = { id: uid(), name: "데이터 프로파일링 — 데모기관", createdAt: shiftDay(today, -15), track: "work" };
+  s.meetingProjects = [mpJob, mp2, mp1];
   // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
   const linkedTaskIds = s.tasks.filter((q) => q.title === "이력서 초안 작성" || q.title === "CATIA·도면 연습 1시간").map((q) => q.id);
   // The newest meeting is flagged `aiHidden` and the second carries one progress entry, so the demo shows both v25 fields.
@@ -228,6 +268,8 @@ const demoState = () => {
   // two open of three. Its id is a const so both sides of the link can name it.
   const mtgUpkeepId = uid();
   const fuA = { id: uid(), text: "긴급 대응 기준 초안 공유", mine: true, due: shiftDay(today, 2), done: false };
+  const mtgJobId = uid();
+  const fuJob = { id: uid(), text: "결측 컬럼 목록 정리", mine: true, due: shiftDay(today, 1), done: false };
   // An urgent memo (2026-09-17): no project, a pasted transcript, one progress entry, one follow-up owned by someone
   // else so the demo work list is unchanged.
   s.meetings = [
@@ -236,7 +278,7 @@ const demoState = () => {
       transcript: "네, 예약 페이지 개편 건으로 전화드렸어요. 지금 페이지가 모바일에서 예약 버튼이 잘 안 눌린다는 얘기가 계속 나와서요.\n일단 예약 폼이랑 결제 연결까지 한 번에 바꾸고 싶은데, 기간이 얼마나 걸릴지, 그리고 견적이 어느 정도 나올지 먼저 알고 싶어요. 다음 주 수요일까지 초안이라도 받을 수 있을까요?\n아, 그리고 기존 예약 데이터는 그대로 가져가야 해요. 사진 업로드 기능도 있으면 좋겠는데 그건 나중에 얘기해도 돼요. 네, 그럼 메일로 정리해서 보내 주세요.",
       createdAt: shiftDay(today, -1), taskIds: [],
       progress: [{ id: uid(), date: today, text: "개편 범위 정리 — 예약 폼·결제 연결·데이터 이관, 사진 업로드는 2차" }], aiHidden: false,
-      followUps: [{ id: uid(), text: "예약 페이지 개편 견적서 초안", mine: false, due: shiftDay(today, 3), done: false }] },
+      followUps: [{ id: uid(), text: "예약 페이지 개편 견적서 초안", mine: false, due: shiftDay(today, 3), done: false }], track: "biz" },
     { id: uid(), projectId: mp2.id, date: shiftDay(today, -1), title: "요구사항 1차 회의", attendees: "담당자 A, 담당자 B",
       summary: "검색 대상은 사내 PDF와 위키 문서.\n권한별로 보이는 문서가 달라야 함.\n응답에 원문 위치를 함께 표시.",
       decisions: "1차 범위는 PDF만, 위키는 2차", actions: "샘플 문서 50건 전달받기", createdAt: shiftDay(today, -1), taskIds: [],
@@ -253,6 +295,9 @@ const demoState = () => {
     { id: uid(), projectId: mp1.id, date: shiftDay(today, -9), title: "3개월차 결과 보고", attendees: "담당자 B",
       summary: "재고 불일치 건수 주 40건에서 6건으로 감소.\n입고 스캔 누락이 남은 원인.", actions: "입고 스캔 알림 추가 견적", createdAt: shiftDay(today, -9), taskIds: [],
       progress: [], aiHidden: false, followUps: [] },
+    { id: mtgJobId, projectId: mpJob.id, date: shiftDay(today, -2), title: "주간 품질 점검", attendees: "담당자 C",
+      summary: "프로파일링 결과 검토 — 결측 컬럼 12개 확인, 코드값 불일치 3개 테이블.", decisions: "결측 처리 기준은 다음 회의에서 확정",
+      createdAt: shiftDay(today, -2), taskIds: [], progress: [], aiHidden: false, followUps: [fuJob] },
   ];
   // One demo event names its meeting project (schema v26), so the prep card has a project-linked event tomorrow. It is
   // appended here, not in the schedule list above, because `mp1` is declared after that list. It carries two pre-meeting
@@ -260,29 +305,37 @@ const demoState = () => {
   s.events = [...s.events,
     { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2),
       checks: [{ id: uid(), text: "초과분 시간 단가표 회신 여부 확인", done: false, source: "manual" },
-        { id: uid(), text: "월 리포트 양식 확정본 지참 — 유지보수 범위 협의 결정 사항", done: false, source: "ai" }] }];
+        { id: uid(), text: "월 리포트 양식 확정본 지참 — 유지보수 범위 협의 결정 사항", done: false, source: "ai" }], track: "biz" },
+    // The day-job project's meeting today (v28): the prep card states it without the AI button.
+    { id: uid(), title: "품질 회의", kind: "appt", date: today, time: "15:00", place: "회의실", projectId: mpJob.id, createdAt: shiftDay(today, -2), track: "work" }];
   // Two document summaries (v27): one on the search project, one with no project — synthetic file names, no personal data.
   s.documents = [
-    { id: uid(), projectId: mp2.id, title: "요구사항 정의서 v1", source: "requirements-v1.pdf", addedAt: shiftDay(today, -1),
+    { id: uid(), projectId: mp2.id, title: "요구사항 정의서 v1", source: "requirements-v1.pdf", addedAt: shiftDay(today, -1), track: "biz",
       summary: "검색 대상: 사내 PDF 1,200건, 위키는 2차.\n권한: 부서별 열람 범위가 다름 — 관리자·일반 2단계.\n응답 형식: 답변 + 원문 위치(파일명·페이지).\n비기능: 응답 3초 이내, 동시 사용자 50명.\n미결: 스캔 PDF(OCR) 포함 여부, 검색 로그 보존 기간." },
-    { id: uid(), projectId: null, title: "◇◇스튜디오 예약 페이지 현황 메모", addedAt: today,
+    { id: uid(), projectId: null, title: "◇◇스튜디오 예약 페이지 현황 메모", addedAt: today, track: "biz",
       summary: "현재 예약 폼은 이름·연락처·날짜 3개 필드, 결제는 별도 링크.\n모바일에서 예약 버튼 터치 영역이 작음(약 32px).\n월 예약 건수 약 120건 — 기존 데이터 이관 필수." },
   ];
   // Three work items for today: one typed by hand and open, one proposed by the assistant and done (schema v25), and one
   // registered from the mine follow-up above, linked both ways (schema v26).
   // Records, never tasks — none pays, moves a goal or touches the streak.
   const workFromFollowUp = { id: uid(), date: today, title: fuA.text, done: false,
-    link: { kind: "meeting", id: mtgUpkeepId, followUpId: fuA.id }, source: "meeting", createdAt: today };
+    link: { kind: "meeting", id: mtgUpkeepId, followUpId: fuA.id }, source: "meeting", createdAt: today, track: "biz" };
   fuA.workId = workFromFollowUp.id;
+  const workFromJob = { id: uid(), date: today, title: fuJob.text, done: false,
+    link: { kind: "meeting", id: mtgJobId, followUpId: fuJob.id }, source: "meeting", createdAt: today, track: "work" };
+  fuJob.workId = workFromJob.id;
   s.work = [
     { id: uid(), date: today, title: "○○물산 유지보수 견적서 송부", note: "월 10시간 · 초과분 시간 단가", done: false,
-      link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today },
-    { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today },
+      link: { kind: "project", id: mp1.id }, source: "manual", createdAt: today, track: "biz" },
+    { id: uid(), date: today, title: "전기기사 필기 기출 1회분 채점", done: true, link: { kind: "goal", id: gHarness.id }, source: "ai", createdAt: today, track: "biz" },
     workFromFollowUp,
     // A done item dated yesterday with a result, so the reader's `오늘 업무` section states a `처리:` line; not in
     // today's view, so the demo counts line is unchanged.
     { id: uid(), date: shiftDay(today, -1), title: "○○물산 월 리포트 양식 회신", done: true, result: "양식 v2 확정본을 메일로 송부 — 다음 달부터 적용",
-      link: { kind: "project", id: mp1.id }, source: "manual", createdAt: shiftDay(today, -1) },
+      link: { kind: "project", id: mp1.id }, source: "manual", createdAt: shiftDay(today, -1), track: "biz" },
+    // The day-job project's two items for today (v28): the follow-up mirror and one typed by hand.
+    workFromJob,
+    { id: uid(), date: today, title: "프로파일링 리포트 초안", done: false, source: "manual", createdAt: today, track: "work" },
   ];
   s.journal = [{
     id: uid(), date: shiftDay(today, -1),
@@ -324,25 +377,26 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | < v25 → v25 | v25: daily work items — work[], dated records outside the goal ladder (typed by hand or proposed by the assistant and confirmed by the user) — and two meeting fields: progress[] (dated entries of the work that followed the meeting) and aiHidden (true = the work packet carries this meeting's date and title only). Records, never tasks: |
 | < v26 → v26 | v26: meeting follow-up items — meetings[].followUps, structured follow-ups next to the free-text `actions`, which is never rewritten (rule 12). A follow-up is a record on the meeting; a mine item is mirrored as a work item, a record outside the goal ladder (rules 1, 9, 18). Events gain an optional projectId that nothing backfills; work |
 | < v27 → v27 | v27: document summaries — documents[], records of what a file says, attached to a meeting project or to none (projectId null). A document is a record, never a task: no payout, trophy, goal or streak (rules 1, 18). Events gain an optional checks[] that nothing backfills (like projectId at v26). Every existing field passes through untouched. |
+| < v28 → v28 | v28: tracks, roadmap, time log, payment lines, role stages, pipeline, notices. Every project, document, event and work item gains `track: "work"` (the day job — the safe default: a `work` record never enters an AI packet) unless it already carries a valid track; every deal gains `track: "biz"` (a contract is business by nature); a |
 
 ## Storage keys (`liferpg-*`, frozen for data compatibility)
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 5207 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 5207 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 5207 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 6972 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 7205 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 8731 | App root |
-| `liferpg-img-${slot}` | 8771 | App root |
-| `liferpg-img-ev-${id}` | 8794 | App root |
-| `liferpg-img-ev-${q.id}` | 8979 | App root |
-| `liferpg-img-ev-${t.id}` | 9588 | App root |
-| `liferpg-img-study-${t.id}-1` | 9588 | App root |
-| `liferpg-img-study-${t.id}-2` | 9588 | App root |
-| `liferpg-img-folio-${f.id}` | 9594 | App root |
+| `liferpg-img-ev-${task.id}` | 5340 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 5340 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 5340 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 7117 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 7369 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 8938 | App root |
+| `liferpg-img-${slot}` | 8978 | App root |
+| `liferpg-img-ev-${id}` | 9001 | App root |
+| `liferpg-img-ev-${q.id}` | 9186 | App root |
+| `liferpg-img-ev-${t.id}` | 9804 | App root |
+| `liferpg-img-study-${t.id}-1` | 9804 | App root |
+| `liferpg-img-study-${t.id}-2` | 9804 | App root |
+| `liferpg-img-folio-${f.id}` | 9810 | App root |
 
 ## Demo data (`demoState`)
 

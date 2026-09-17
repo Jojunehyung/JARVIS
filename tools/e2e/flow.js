@@ -69,7 +69,7 @@ module.exports = async (h) => {
   await shot("home");
   await step("fresh state schema version and CV records", async () => {
     const st = await page.evaluate(() => { try { return JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { return null; } });
-    if (st?.v !== 27) throw new Error("fresh save schema v" + st?.v + " (expected 27)");
+    if (st?.v !== 28) throw new Error("fresh save schema v" + st?.v + " (expected 28)");
     const p = st.profile || {};
     if (p.name !== "E2E테스터" || p.nick !== "E2E닉" || p.birth !== "1998-05-14") throw new Error("personal facts not stored: " + JSON.stringify({ name: p.name, nick: p.nick, birth: p.birth }));
     const e0 = (p.edus || [])[0] || {};
@@ -372,10 +372,22 @@ module.exports = async (h) => {
       // The demo reproduces the two 2026-09-16 features: synthetic minutes, and an exact exam score on the CV —
       // and the 2026-09-17 work tab: one manual item open, one assistant-proposed item done, and (v26) one open item
       // registered from a meeting follow-up — and, 2026-09-17, one project-less memo with a transcript — and, 2026-09-17 v27,
-      // two document summaries (one on a project, one with no project).
-      if (tab === "업무") await expectText("남음 2건 · 이월 0건 · 완료 1건 · AI 제안 1건");
+      // two document summaries (one on a project, one with no project) — and, v28, one day-job project with a meeting, a
+      // mirrored follow-up item, a manual item and an event today, so the work list splits into `직장` and `사업` heads.
+      if (tab === "업무") {
+        await expectText("남음 4건 · 이월 0건 · 완료 1건 · AI 제안 1건");
+        // Five rows today: the day job's two open items, the business's two open items and its one done item.
+        await expectText("직장 2건");
+        await expectText("사업 3건");
+      }
       if (tab === "미팅") {
-        await expectText("프로젝트 2개 · 회의록 4건");
+        await expectText("프로젝트 3개 · 회의록 5건 · 문서 2건");
+        await expectText("데이터 프로파일링 — 데모기관");
+        const tag = await page.evaluate(() => {
+          const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("데이터 프로파일링 — 데모기관"));
+          return sec ? [...sec.querySelectorAll("span")].map((x) => (x.innerText || "").trim()).find((t) => t === "직장") || null : null;
+        });
+        if (tag !== "직장") throw new Error("the day-job project head carries no day-job tag");
         await expectText("프로젝트 없음 · 긴급 메모");
         await expectText("긴급 메모 — ◇◇스튜디오 전화");
         await expectText("문서 2건");

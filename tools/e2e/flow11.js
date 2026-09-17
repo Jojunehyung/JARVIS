@@ -71,7 +71,8 @@ module.exports = async (h) => {
     const date = await dstrIn(-1);
     await page.evaluate((k, pid, mid, pname, mtitle, d) => {
       const st = JSON.parse(localStorage.getItem(k));
-      st.meetingProjects = [{ id: pid, name: pname, createdAt: d }, ...(st.meetingProjects || []).filter((p) => p.id !== pid)];
+      // v28: on the business track, so the packet steps below still see this project's meetings.
+      st.meetingProjects = [{ id: pid, name: pname, createdAt: d, track: "biz" }, ...(st.meetingProjects || []).filter((p) => p.id !== pid)];
       st.meetings = [{ id: mid, projectId: pid, date: d, title: mtitle, summary: "진행사항 확인용 회의", createdAt: d, taskIds: [], progress: [], aiHidden: false },
         ...(st.meetings || []).filter((m) => m.id !== mid)];
       localStorage.setItem(k, JSON.stringify(st));
@@ -177,16 +178,18 @@ module.exports = async (h) => {
     await typeInto("메모 (선택)", "○○물산");
     const picked = await pickLink("project:" + PROJECT_ID);
     if (picked !== "프로젝트 · " + PROJECT) throw new Error("the link picker did not offer the planted project: " + picked);
+    // v28: the business track, so the work packet step below carries this item.
+    await clickInModalExact("사업");
     await clickInModalExact("등록");
     await sleep(500);
     const rows = await workRows();
     const row = rows.find((r) => r.title === WORK_TITLE);
-    if (!row || row.lead !== "수기" || row.marker !== "프로젝트" || row.done) throw new Error("the work row: " + JSON.stringify(rows));
+    if (!row || row.lead !== "수기" || row.marker !== "사업 · 프로젝트" || row.done) throw new Error("the work row: " + JSON.stringify(rows));
     const line = await countsLine();
     if (!line.startsWith("남음 1건 · 이월 0건 · 완료 0건 · AI 제안 0건")) throw new Error("counts after the add: " + line);
     const after = await readState();
     const w = (after.work || []).find((x) => x.title === WORK_TITLE);
-    if (!w || w.date !== today || w.done !== false || w.source !== "manual" || w.note !== "○○물산" || w.createdAt !== today) throw new Error("stored work item: " + JSON.stringify(w));
+    if (!w || w.date !== today || w.done !== false || w.source !== "manual" || w.note !== "○○물산" || w.createdAt !== today || w.track !== "biz") throw new Error("stored work item: " + JSON.stringify(w));
     if (!w.link || w.link.kind !== "project" || w.link.id !== PROJECT_ID) throw new Error("stored link: " + JSON.stringify(w.link));
     const bad = ["pts", "diff", "goalId", "areaId", "status", "doneDates"].filter((k) => k in w);
     if (bad.length) throw new Error(`the work item stores task fields: ${bad.join(", ")}`);
@@ -254,7 +257,7 @@ module.exports = async (h) => {
     const past = await dstrIn(-3);
     await page.evaluate((k, id, title, d) => {
       const st = JSON.parse(localStorage.getItem(k));
-      st.work.push({ id, date: d, title, done: false, source: "manual", createdAt: d });
+      st.work.push({ id, date: d, title, done: false, source: "manual", createdAt: d, track: "biz" }); // v28: carried into the work packet
       localStorage.setItem(k, JSON.stringify(st));
     }, KEY, PAST_ID, PAST_TITLE, past);
     await h.reload();
@@ -441,11 +444,12 @@ module.exports = async (h) => {
     if (!card || !card.first) throw new Error("the prep card is not the first section of the work tab: " + JSON.stringify(card));
     const lines = card.text.split("\n").map((l) => l.trim()).filter(Boolean);
     if (lines[1] !== "2건") throw new Error("the prep card count: " + JSON.stringify(lines.slice(0, 2)));
-    for (const t of [P.name, `오늘 10:00 · ${E1.title}`, `내일 시간 미정 · ${M.title}`, `마지막 회의 ${M.date} · ${M.title}`, "결정: 월 10시간",
+    // v28: line 2 of a block ends with the event's track; the planted events carry none, so both read `직장`.
+    for (const t of [P.name, `오늘 10:00 · ${E1.title} · 직장`, `내일 시간 미정 · ${M.title} · 직장`, `마지막 회의 ${M.date} · ${M.title}`, "결정: 월 10시간",
       `내 담당 · ${FU_TEXT} · 기한 없음 · 업무 없음`, `${M.date} 견적 초안 작성`]) {
       if (!lines.includes(t)) throw new Error(`the prep card lacks "${t}": ` + lines.join(" | "));
     }
-    if (lines.indexOf(`오늘 10:00 · ${E1.title}`) > lines.indexOf(`내일 시간 미정 · ${M.title}`)) throw new Error("today's block is not listed before tomorrow's");
+    if (lines.indexOf(`오늘 10:00 · ${E1.title} · 직장`) > lines.indexOf(`내일 시간 미정 · ${M.title} · 직장`)) throw new Error("today's block is not listed before tomorrow's");
     // The block is a div since v27 (its checklist has controls of its own); the first `회의록 열기 ›` is today's block.
     await clickMain("회의록 열기 ›");
     await sleep(500);
@@ -455,7 +459,7 @@ module.exports = async (h) => {
     await clickTab("할 일");
     await clickMain("브리핑 열기 ›");
     await sleep(400);
-    await expectText("오늘 회의 준비 1건 · 내일 1건");
+    await expectText("오늘 회의 준비 1건 · 직장 1 · 사업 0 · 개인 0 · 내일 1건");
     if ((await overlayText()).includes("후속 기한 지남")) throw new Error("the briefing states an overdue follow-up before any due date is set");
     await closeModal();
     await page.evaluate((k, d) => {
@@ -495,7 +499,7 @@ module.exports = async (h) => {
     const dl = await captureDownload(() => h.clickInModal("백업 내보내기"));
     if (!dl || !dl.text) throw new Error("no backup blob was produced");
     const data = JSON.parse(dl.text);
-    if (data.state?.v !== 27) throw new Error("backup schema version " + data.state?.v + " (expected 27)");
+    if (data.state?.v !== 28) throw new Error("backup schema version " + data.state?.v + " (expected 28)");
     if (JSON.stringify(data.state?.work) !== JSON.stringify(st.work)) throw new Error("backup work items differ: " + JSON.stringify(data.state?.work));
     const m = (data.state?.meetings || []).find((x) => x.id === MEETING_ID);
     if (!m || (m.progress || []).length !== 1 || m.aiHidden !== false) throw new Error("the backup lacks the meeting's progress entry or flag: " + JSON.stringify(m));
@@ -667,7 +671,7 @@ module.exports = async (h) => {
     await page.evaluate((k, id, title, d, sentinel) => {
       const s = JSON.parse(localStorage.getItem(k));
       s.meetings = [{ id, projectId: null, date: d, title, summary: "패킷 확인", transcript: "패킷 확인용 녹취 " + sentinel + "\n둘째 줄",
-        createdAt: d, taskIds: [], progress: [], aiHidden: false, followUps: [] }, ...(s.meetings || []).filter((m) => m.id !== id)];
+        createdAt: d, taskIds: [], progress: [], aiHidden: false, followUps: [], track: "biz" }, ...(s.meetings || []).filter((m) => m.id !== id)];
       localStorage.setItem(k, JSON.stringify(s));
     }, KEY, MEMO_ID, MEMO_TITLE, today, SENTINEL);
     await h.reload();
@@ -776,7 +780,8 @@ module.exports = async (h) => {
     const hiddenCreated = await dstrIn(-4);
     await page.evaluate((k, pp, pm, pe1, doc, docSentinel, hidden, hiddenSentinel, trSentinel, t, hc) => {
       const st = JSON.parse(localStorage.getItem(k));
-      st.meetingProjects = [...(st.meetingProjects || []).filter((p) => p.id !== pp.id), { id: pp.id, name: pp.name, createdAt: pm.date }];
+      // v28: the project, its document and its event are on the business track, so the prep packet may carry them.
+      st.meetingProjects = [...(st.meetingProjects || []).filter((p) => p.id !== pp.id), { id: pp.id, name: pp.name, createdAt: pm.date, track: "biz" }];
       st.meetings = [...(st.meetings || []).filter((m) => ![pm.id, hidden.id].includes(m.id)),
         { id: pm.id, projectId: pp.id, date: pm.date, title: pm.title, summary: "준비 카드 확인용 회의", decisions: "월 10시간", transcript: trSentinel,
           createdAt: pm.date, taskIds: [], aiHidden: false, progress: [], followUps: [{ id: "e2e-prep-fu", text: "E2E 준비 자료 송부", mine: false, done: false }] },
@@ -784,9 +789,9 @@ module.exports = async (h) => {
         { id: hidden.id, projectId: pp.id, date: pm.date, title: hidden.title, summary: "숨김 요약 " + hiddenSentinel, decisions: hiddenSentinel,
           createdAt: hc, taskIds: [], aiHidden: true, progress: [], followUps: [] }];
       st.documents = [...(st.documents || []).filter((d) => d.id !== doc.id),
-        { id: doc.id, projectId: pp.id, title: doc.title, summary: "요구사항 요약 " + docSentinel, addedAt: t }];
+        { id: doc.id, projectId: pp.id, title: doc.title, summary: "요구사항 요약 " + docSentinel, addedAt: t, track: "biz" }];
       st.events = [...(st.events || []).filter((e) => e.id !== pe1.id),
-        { id: pe1.id, title: pe1.title, kind: "appt", date: t, time: "10:00", projectId: pp.id, createdAt: t }];
+        { id: pe1.id, title: pe1.title, kind: "appt", date: t, time: "10:00", projectId: pp.id, createdAt: t, track: "biz" }];
       localStorage.setItem(k, JSON.stringify(st));
     }, KEY, PP, PM, PE1, DOC_P, DOC_SENTINEL, HIDDEN, HIDDEN_SENTINEL, TRANSCRIPT_SENTINEL, today, hiddenCreated);
     await h.reload();
@@ -1090,6 +1095,205 @@ module.exports = async (h) => {
       st.events = (st.events || []).filter((e) => e.id !== ids.event);
       localStorage.setItem(k, JSON.stringify(st));
     }, KEY, { project: PP.id, meeting: PM.id, hidden: HIDDEN.id, checkMeeting: CHECK_MEETING, doc: DOC_P.id, event: PE1.id });
+    await h.reload();
+  });
+
+  /* ── Tracks (schema v28, Phase 1, 2026-09-17): the day's work grouped by track, the day-job track kept out of every
+     packet, and the reader and the briefing stating each track in order. Written under the standing instruction; not run. */
+  const TRACK_ITEMS = [
+    { id: "e2e-track-personal", title: "E2E 개인 업무", track: "personal" },
+    { id: "e2e-track-biz", title: "E2E 사업 업무", track: "biz" },
+    { id: "e2e-track-work", title: "E2E 직장 업무", track: "work" },
+  ];
+  // Whether the chip of that exact label in the open sheet is on (`bg-cyan-400`), or null when absent.
+  const chipOn = (label) => page.evaluate((l) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
+    return b ? /bg-cyan-400/.test(b.className || "") : null;
+  }, label);
+  // The work list section's text (the one holding the `선택` button or the empty line), whitespace-normalised.
+  const workListText = () => page.evaluate(() => {
+    const secs = [...document.querySelectorAll("main section")];
+    const sec = secs.find((s) => [...s.querySelectorAll("button")].some((b) => (b.innerText || "").trim() === "선택"));
+    return sec ? sec.innerText.replace(/\s+/g, " ").trim() : "";
+  });
+  const inOrder = (text, parts) => { let at = -1; return parts.every((p) => { const i = text.indexOf(p, at + 1); if (i < 0) return false; at = i; return true; }); };
+
+  await step("the work tab groups the day by track in reading order", async () => {
+    const today = await dstrIn(0);
+    // Planted in reverse reading order, so the grouping — not the insertion order — decides the screen order.
+    await page.evaluate((k, items, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      const ids = new Set(items.map((w) => w.id));
+      st.work = [...(st.work || []).filter((w) => !ids.has(w.id)),
+        ...items.map((w) => ({ id: w.id, date: d, title: w.title, done: false, source: "manual", createdAt: d, track: w.track }))];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, TRACK_ITEMS, today);
+    await h.reload();
+    await clickTab("업무");
+    const titles = (await workRows()).map((r) => r.title).filter((t) => TRACK_ITEMS.some((w) => w.title === t));
+    if (JSON.stringify(titles) !== JSON.stringify(["E2E 직장 업무", "E2E 사업 업무", "E2E 개인 업무"])) throw new Error("the rows are not in track order: " + JSON.stringify(titles));
+    const list = await workListText();
+    if (!inOrder(list, ["직장 1건", "E2E 직장 업무", "사업 1건", "E2E 사업 업무", "개인 1건", "E2E 개인 업무"])) throw new Error("the track heads: " + list.slice(0, 300));
+    const markers = (await workRows()).filter((r) => TRACK_ITEMS.some((w) => w.title === r.title)).map((r) => r.marker);
+    if (JSON.stringify(markers) !== JSON.stringify(["직장", "사업", "개인"])) throw new Error("the row markers: " + JSON.stringify(markers));
+    // The sheet's chips round-trip the field.
+    const trackOfItem = async (id) => ((await readState()).work || []).find((w) => w.id === id)?.track;
+    await openTodo("E2E 직장 업무");
+    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    if ((await chipOn("직장")) !== true) throw new Error("the sheet does not open on the item's track");
+    await clickInModalExact("개인");
+    await clickInModalExact("저장");
+    await sleep(500);
+    if ((await trackOfItem("e2e-track-work")) !== "personal") throw new Error("the sheet did not store the chosen track");
+    await openTodo("E2E 직장 업무");
+    if ((await chipOn("개인")) !== true) throw new Error("the sheet does not reopen on the stored track");
+    await clickInModalExact("직장");
+    await clickInModalExact("저장");
+    await sleep(500);
+    if ((await trackOfItem("e2e-track-work")) !== "work") throw new Error("the sheet did not store the track back");
+  });
+
+  await step("the reader and the briefing state each track in order", async () => {
+    const today = await dstrIn(0);
+    // A project event today on each track, so the briefing's prep line counts one per track.
+    await page.evaluate((k, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      const tracks = ["work", "biz", "personal"];
+      st.meetingProjects = [...(st.meetingProjects || []).filter((p) => !p.id.startsWith("e2e-track-proj-")),
+        ...tracks.map((t) => ({ id: "e2e-track-proj-" + t, name: "E2E 트랙 프로젝트 " + t, createdAt: d, track: t }))];
+      st.events = [...(st.events || []).filter((e) => !e.id.startsWith("e2e-track-ev-")),
+        ...tracks.map((t) => ({ id: "e2e-track-ev-" + t, title: "E2E 트랙 회의 " + t, kind: "appt", date: d, time: "16:00", projectId: "e2e-track-proj-" + t, createdAt: d, track: t }))];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, today);
+    await h.reload();
+    await clickTab("프로필");
+    await clickMain("오늘 읽을 것 ›");
+    await sleep(500);
+    const work = (await readerSections()).find((s) => s.startsWith("오늘 업무"));
+    if (!work || !inOrder(work, ["직장 1건", "E2E 직장 업무", "사업 1건", "E2E 사업 업무", "개인 1건", "E2E 개인 업무"])) throw new Error("the reader's work section: " + String(work).slice(0, 300));
+    const prep = (await readerSections()).find((s) => s.startsWith("오늘·내일 회의 준비"));
+    if (!prep || !inOrder(prep, ["직장 1건", "E2E 트랙 회의 work", "사업 1건", "E2E 트랙 회의 biz", "개인 1건", "E2E 트랙 회의 personal"])) throw new Error("the reader's prep section: " + String(prep).slice(0, 300));
+    await closeModal();
+    await clickTab("할 일");
+    await clickMain("브리핑 열기 ›");
+    await sleep(400);
+    const line = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").replace(/\s+/g, " ").trim().startsWith("오늘 회의 준비"));
+      return b ? b.innerText.replace(/\s+/g, " ").trim() : "";
+    });
+    if (!line.startsWith("오늘 회의 준비 3건 · 직장 1 · 사업 1 · 개인 1")) throw new Error("the briefing's prep line: " + JSON.stringify(line));
+    if (!inOrder(line, ["직장", "사업", "개인"])) throw new Error("the briefing's prep line is not in track order: " + line);
+    const brief = await overlayText();
+    if (!inOrder(brief, ["직장 · E2E 트랙 회의 work", "사업 · E2E 트랙 회의 biz", "개인 · E2E 트랙 회의 personal"])) throw new Error("the briefing's schedule lines: " + brief.slice(0, 400));
+    await closeModal();
+    // Leave the save as the next step expects it: no track plants.
+    await page.evaluate((k) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.work = (st.work || []).filter((w) => !w.id.startsWith("e2e-track-"));
+      st.events = (st.events || []).filter((e) => !e.id.startsWith("e2e-track-ev-"));
+      st.meetingProjects = (st.meetingProjects || []).filter((p) => !p.id.startsWith("e2e-track-proj-"));
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY);
+    await h.reload();
+  });
+
+  await step("no day-job record enters the work packet, the daily packet or a prep packet", async () => {
+    const WORK_SENTINEL = "E2E-WORK-TRACK-SENTINEL-51aa";
+    const JOB = { project: "e2e-job-proj", meeting: "e2e-job-mtg", work: "e2e-job-work", event: "e2e-job-ev", deal: "e2e-job-deal", mixed: "e2e-job-ev-biz" };
+    const MIXED_TITLE = "E2E 사업 혼합 일정";
+    const JOB_PROJECT = "E2E 직장 프로젝트";
+    const today = await dstrIn(0);
+    await page.evaluate((k, ids, name, s, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetingProjects = [...(st.meetingProjects || []).filter((p) => p.id !== ids.project), { id: ids.project, name, createdAt: d, track: "work" }];
+      st.meetings = [...(st.meetings || []).filter((m) => m.id !== ids.meeting), { id: ids.meeting, projectId: ids.project, date: d, title: "E2E 직장 회의",
+        summary: "직장 요약 " + s + "-meeting", createdAt: d, taskIds: [], progress: [], aiHidden: false, followUps: [] }];
+      st.work = [...(st.work || []).filter((w) => w.id !== ids.work), { id: ids.work, date: d, title: "E2E 직장 " + s + "-item", done: false, source: "manual", createdAt: d, track: "work" }];
+      // The second event is on the business track but linked to the day-job project: its packet must not name the project.
+      st.events = [...(st.events || []).filter((e) => e.id !== ids.event && e.id !== ids.mixed), { id: ids.event, title: "E2E 직장 일정 " + s + "-event", kind: "appt", date: d, time: "17:00",
+        projectId: ids.project, createdAt: d, track: "work" },
+        { id: ids.mixed, title: "E2E 사업 혼합 일정", kind: "appt", date: d, time: "18:00", projectId: ids.project, createdAt: d, track: "biz" }];
+      st.deals = [...(st.deals || []).filter((x) => x.id !== ids.deal), { id: ids.deal, client: "E2E 직장고객", title: "E2E 직장 계약 " + s + "-deal", status: "won",
+        monthly: 1000000, months: 2, startMonth: d.slice(0, 7), paidMonths: [], createdAt: d, track: "work" }];
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, JOB, JOB_PROJECT, WORK_SENTINEL, today);
+    await h.reload();
+    // The meetings the work packet may carry: every meeting whose track (a memo's own, else its project's) is a packet track.
+    const packetMeetings = (st) => (st.meetings || []).filter((m) => {
+      const t = m.projectId == null ? m.track : (st.meetingProjects || []).find((p) => p.id === m.projectId)?.track;
+      return ["biz", "personal"].includes(t);
+    }).length;
+    await openWorkBridge();
+    await expectText("직장 트랙 기록은 실리지 않아요.");
+    let txt = await packetText();
+    await closeModal();
+    if (txt.includes(WORK_SENTINEL) || txt.includes(JOB_PROJECT)) throw new Error("a day-job record reached the work packet: " + txt.slice(0, 400));
+    const n = Math.min(10, packetMeetings(await readState()));
+    if (!txt.includes(`## 최근 회의록 (${n}건)`)) throw new Error(`the meetings heading does not count ${n}: ` + (txt.match(/## 최근 회의록 \(\d+건\)/) || [""])[0]);
+    await clickTab("할 일");
+    await clickMain("브리핑 열기 ›");
+    await sleep(400);
+    await h.clickInModal("AI에게 보내기");
+    await sleep(500);
+    await expectText("직장 트랙 기록은 실리지 않아요.");
+    const daily = await packetText();
+    await closeModal();
+    if (!daily || daily.includes(WORK_SENTINEL) || daily.includes(JOB_PROJECT)) throw new Error("a day-job record reached the daily packet: " + daily.slice(0, 400));
+    await clickTab("업무");
+    const block = await page.evaluate((title) => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+      const div = sec && [...sec.querySelectorAll(".bg-zinc-950.rounded-xl")].find((b) => (b.innerText || "").includes(title));
+      return div ? { text: div.innerText.replace(/\s+/g, " ").trim(), ask: [...div.querySelectorAll("button")].some((b) => (b.innerText || "").trim() === "AI에게 회의 준비 묻기") } : null;
+    }, WORK_SENTINEL + "-event");
+    if (!block || !block.text.endsWith("직장 트랙 — AI 패킷에 실리지 않아요") || block.ask) throw new Error("the day-job prep block: " + JSON.stringify(block));
+    // A business event linked to the day-job project: its prep packet is the event line alone — no project name, no
+    // minutes, documents, tasks or contracts derived from that project.
+    const asked = await page.evaluate((title) => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+      const div = sec && [...sec.querySelectorAll(".bg-zinc-950.rounded-xl")].find((b) => (b.innerText || "").includes(title));
+      const b = div && [...div.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "AI에게 회의 준비 묻기");
+      if (!b) return false;
+      b.click(); return true;
+    }, MIXED_TITLE);
+    if (!asked) throw new Error("the business event linked to the day-job project offers no ask button");
+    await sleep(400);
+    const mixed = await packetText();
+    await closeModal();
+    if (mixed.includes(JOB_PROJECT) || mixed.includes(WORK_SENTINEL)) throw new Error("the day-job project reached a prep packet: " + mixed.slice(0, 400));
+    const heads = mixed.split("\n").filter((l) => l.startsWith("## "));
+    if (JSON.stringify(heads) !== JSON.stringify(["## 회의"]) || !mixed.includes(`- ${today} 18:00 · ${MIXED_TITLE}`)) throw new Error("the mixed prep packet: " + mixed.slice(-300));
+    // Flip the project to the business track through its form: the meeting inherits, the work item and the deal keep their own track.
+    await clickTab("미팅");
+    const opened = await page.evaluate((name) => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.querySelector(".font-bold.truncate")?.innerText || "").trim() === name);
+      const b = sec && [...sec.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "프로젝트 수정");
+      if (!b) return false;
+      b.click(); return true;
+    }, JOB_PROJECT);
+    if (!opened) throw new Error("no edit button in the day-job project's section");
+    await sleep(400);
+    await clickInModalExact("사업");
+    await clickInModalExact("저장");
+    await sleep(500);
+    await h.reload();
+    if (((await readState()).meetingProjects || []).find((p) => p.id === JOB.project)?.track !== "biz") throw new Error("the project form did not store the business track");
+    await openWorkBridge();
+    txt = await packetText();
+    await closeModal();
+    if (!txt.includes(WORK_SENTINEL + "-meeting")) throw new Error("the flipped project's meeting is not in the work packet");
+    if (txt.includes(WORK_SENTINEL + "-item") || txt.includes(WORK_SENTINEL + "-deal") || txt.includes(WORK_SENTINEL + "-event")) throw new Error("a record still on the day-job track reached the work packet");
+    // Leave the save as flow4 expects it: every plant gone.
+    await page.evaluate((k, ids) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetingProjects = (st.meetingProjects || []).filter((p) => p.id !== ids.project);
+      st.meetings = (st.meetings || []).filter((m) => m.id !== ids.meeting);
+      st.work = (st.work || []).filter((w) => w.id !== ids.work);
+      st.events = (st.events || []).filter((e) => e.id !== ids.event && e.id !== ids.mixed);
+      st.deals = (st.deals || []).filter((x) => x.id !== ids.deal);
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, JOB);
     await h.reload();
   });
 };

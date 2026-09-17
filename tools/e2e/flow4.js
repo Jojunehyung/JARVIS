@@ -2,10 +2,16 @@
 module.exports = async (h) => {
   const { step, shot, clickText, clickTab, clickExact, clickInModal, clickInModalExact, assertDone, completeQuest, hasText, expectText, typeInto, typeExact, closeModal, sleep, page, errors } = h;
   // The schema version every migrated fixture must end at — bumped with each new `migrate` block (rule 12).
-  const SCHEMA_V = 27;
+  const SCHEMA_V = 28;
   // Order-independent deep equality for plain JSON records read back from the save.
   const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.keys(v).sort().map((k) => [k, canon(v[k])]) : v);
   const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+  // The v28 block runs on every older fixture's load: it stamps `track` on projects, documents, events, work items, deals
+  // and project-less memos, and adds five keys. Older steps compare what their own block wrote with those removed.
+  const V28_KEYS = ["leads", "milestones", "notices", "settings", "timeLog"];
+  const strip = (list) => (list || []).map(({ track, ...rest }) => rest);
+  const untracked = (st) => ({ ...st, ...Object.fromEntries(["meetingProjects", "documents", "events", "work", "deals", "meetings"]
+    .filter((k) => Array.isArray(st[k])).map((k) => [k, strip(st[k])])) });
 
   // Plant a legacy save, reload, and read back the migrated state.
   const migrateFixture = async (save) => {
@@ -433,13 +439,13 @@ module.exports = async (h) => {
       exams: { best: { toeic: { label: "800", d: 60, p: 720, ver: "1.0", date: "2026-01-02", score: "835" } }, dim: { toeic: 1 }, spec: {}, policy: "1.0" },
       certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
     };
-    const st = await migrateFixture(s22);
+    const st = untracked(await migrateFixture(s22));
     if (!same(st.meetingProjects, []) || !same(st.meetings, [])) throw new Error("v23 meeting arrays: " + JSON.stringify({ meetingProjects: st.meetingProjects, meetings: st.meetings }));
     for (const k of Object.keys(s22)) {
       if (k === "v" || k === "lastTick") continue;
       if (!same(st[k], s22[k])) throw new Error(`v23 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s22) && k !== "meetingProjects" && k !== "meetings" && k !== "work" && k !== "documents"); // work: v25, documents: v27 on the same load
+    const extra = Object.keys(st).filter((k) => !(k in s22) && k !== "meetingProjects" && k !== "meetings" && k !== "work" && k !== "documents" && !V28_KEYS.includes(k)); // work: v25, documents: v27, V28_KEYS: v28 on the same load
     if (extra.length) throw new Error("v23 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("프로젝트가 없어요 — 프로젝트를 먼저 만들어요.");
@@ -468,7 +474,7 @@ module.exports = async (h) => {
       exams: { best: {}, dim: {}, spec: {}, policy: "1.0" },
       certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-02", dModel: "1.3",
     };
-    const st = await migrateFixture(s23);
+    const st = untracked(await migrateFixture(s23));
     if ((st.meetings || []).length !== 1) throw new Error("v24 meetings: " + JSON.stringify(st.meetings));
     // Later blocks run on the same load: v25 adds progress/aiHidden and v26 adds followUps (fixed 2026-09-17, not run).
     if (!same(st.meetings[0], { ...meeting, taskIds: [], progress: [], aiHidden: false, followUps: [] })) throw new Error("v24 meeting record: " + JSON.stringify(st.meetings[0]));
@@ -476,7 +482,7 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s23[k])) throw new Error(`v24 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s23) && k !== "work" && k !== "documents"); // work: v25, documents: v27 on the same load
+    const extra = Object.keys(st).filter((k) => !(k in s23) && k !== "work" && k !== "documents" && !V28_KEYS.includes(k)); // work: v25, documents: v27, V28_KEYS: v28 on the same load
     if (extra.length) throw new Error("v24 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("레거시 회의록");
@@ -504,7 +510,7 @@ module.exports = async (h) => {
       act: { streak: 3, lastActive: "2026-01-06", shieldMonth: now.slice(0, 7), shieldsLeft: 1, briefingSeen: now, lastReview: "2026-01-05" },
       exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-06", dModel: "1.3",
     };
-    const st = await migrateFixture(s24);
+    const st = untracked(await migrateFixture(s24));
     if (!same(st.work, [])) throw new Error("v25 work: " + JSON.stringify(st.work));
     if ((st.meetings || []).length !== 1) throw new Error("v25 meetings: " + JSON.stringify(st.meetings));
     // The v26 block runs on the same load and adds followUps: [] (2026-09-17, not run).
@@ -513,7 +519,7 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s24[k])) throw new Error(`v25 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s24) && k !== "work" && k !== "documents"); // documents: v27 on the same load
+    const extra = Object.keys(st).filter((k) => !(k in s24) && k !== "work" && k !== "documents" && !V28_KEYS.includes(k)); // documents: v27, V28_KEYS: v28 on the same load
     if (extra.length) throw new Error("v25 added keys it does not own: " + extra.join(", "));
     await clickTab("업무");
     await expectText("오늘 업무가 없어요.");
@@ -543,7 +549,7 @@ module.exports = async (h) => {
       act: { streak: 2, lastActive: "2026-01-07", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
       exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-07", dModel: "1.3",
     };
-    const st = await migrateFixture(s25);
+    const st = untracked(await migrateFixture(s25));
     if ((st.meetings || []).length !== 1) throw new Error("v26 meetings: " + JSON.stringify(st.meetings));
     if (!same(st.meetings[0], { ...meeting, followUps: [] })) throw new Error("v26 meeting record: " + JSON.stringify(st.meetings[0]));
     if (st.meetings[0].actions !== "레거시 후속") throw new Error("v26 rewrote the free-text follow-ups: " + JSON.stringify(st.meetings[0].actions));
@@ -553,7 +559,7 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick" || k === "meetings") continue;
       if (!same(st[k], s25[k])) throw new Error(`v26 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s25) && k !== "documents"); // documents: v27 on the same load
+    const extra = Object.keys(st).filter((k) => !(k in s25) && k !== "documents" && !V28_KEYS.includes(k)); // documents: v27, V28_KEYS: v28 on the same load
     if (extra.length) throw new Error("v26 added keys it does not own: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("레거시 프로젝트");
@@ -583,8 +589,8 @@ module.exports = async (h) => {
       act: { streak: 2, lastActive: "2026-01-08", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
       exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] }, role: null, lastTick: "2026-01-08", dModel: "1.3",
     };
-    const st = await migrateFixture(s26);
-    if (st.v !== 27) throw new Error("v27 schema version " + st.v);
+    const st = untracked(await migrateFixture(s26));
+    if (st.v !== SCHEMA_V) throw new Error("v27 schema version " + st.v);
     if (!same(st.documents, [])) throw new Error("v27 documents: " + JSON.stringify(st.documents));
     if (!same(st.meetings, s26.meetings)) throw new Error("v27 meetings: " + JSON.stringify(st.meetings));
     if (!same(st.events, s26.events) || st.events.some((e) => "checks" in e)) throw new Error("v27 events: " + JSON.stringify(st.events));
@@ -592,11 +598,71 @@ module.exports = async (h) => {
       if (k === "v" || k === "lastTick") continue;
       if (!same(st[k], s26[k])) throw new Error(`v27 changed ${k}: ` + JSON.stringify(st[k]));
     }
-    const extra = Object.keys(st).filter((k) => !(k in s26));
+    const extra = Object.keys(st).filter((k) => !(k in s26) && !V28_KEYS.includes(k)); // V28_KEYS: v28 on the same load
     if (!same(extra, ["documents"])) throw new Error("v27 added keys: " + extra.join(", "));
     await clickTab("미팅");
     await expectText("레거시 프로젝트");
     await expectText("문서 0건");
+  });
+  await step("v27 save → v28 tracks and roadmap", async () => {
+    // A v27 save carries no `track` anywhere and no settings, milestones, timeLog, leads or notices. After the migration
+    // every project, document, event and work item has `track: "work"`, the deal `track: "biz"`, the memo
+    // `track: "work"`, the project meeting no `track` key; the five keys are added empty (settings at 20 hours); nothing
+    // optional is backfilled and every other field comes back as planted. (Written 2026-09-17 under the standing
+    // instruction; not run.)
+    const now = await localToday();
+    const month = now.slice(0, 7);
+    const s27 = {
+      v: 27,
+      profile: legacyProfile("v27", "et1"),
+      areas: [{ id: "at", name: "커리어", grade: 2, achievements: [] }],
+      tasks: [{ id: "tt", title: "레거시 실행", areaId: "at", diff: "D", type: "daily", status: "todo", doneDates: [] }],
+      goals: [{ id: "gt", title: "레거시 목표", areaId: "at", status: "active", createdAt: "2026-01-01", krs: [] }],
+      events: [{ id: "et", title: "레거시 트랙 회의", kind: "appt", date: "2026-01-09", time: "10:00", projectId: "pt", createdAt: "2026-01-02" }],
+      folio: [], rates: [],
+      deals: [{ id: "dt", client: "레거시 고객", title: "레거시 계약", status: "won", monthly: 1000000, months: 3, startMonth: month, paidMonths: [], createdAt: "2026-01-03" }],
+      meetingProjects: [{ id: "pt", name: "레거시 트랙 프로젝트", createdAt: "2026-01-02" }],
+      meetings: [
+        { id: "mt", projectId: "pt", title: "레거시 트랙 회의록", date: "2026-01-09", taskIds: [], summary: "레거시 요약", createdAt: "2026-01-09",
+          progress: [], aiHidden: false, followUps: [] },
+        { id: "mn", projectId: null, title: "레거시 메모", date: "2026-01-09", taskIds: [], summary: "레거시 메모 요약", createdAt: "2026-01-09",
+          progress: [], aiHidden: false, followUps: [] },
+      ],
+      work: [{ id: "wt", date: now, title: "레거시 트랙 업무", done: false, source: "manual", createdAt: now }],
+      documents: [{ id: "dct", projectId: "pt", title: "레거시 문서", summary: "레거시 문서 요약", addedAt: "2026-01-09" }],
+      journal: [{ id: "jt", date: "2026-01-02", text: "레거시 기록" }],
+      reviews: [],
+      ui: { bizView: "deals" },
+      act: { streak: 2, lastActive: "2026-01-09", shieldMonth: now.slice(0, 7), shieldsLeft: 2, briefingSeen: now, lastReview: null },
+      exams: { best: {}, dim: {}, spec: {}, policy: "1.0" }, certBest: {}, room: { trophies: [] },
+      role: { name: "레거시 롤모델", targets: { at: 4 } }, lastTick: "2026-01-09", dModel: "1.3",
+    };
+    const st = await migrateFixture(s27);
+    if (st.v !== 28) throw new Error("v28 schema version " + st.v);
+    for (const k of ["meetingProjects", "documents", "events", "work"]) {
+      if (!(st[k] || []).length || st[k].some((r) => r.track !== "work")) throw new Error(`v28 ${k} track: ` + JSON.stringify(st[k]));
+    }
+    if (st.deals?.length !== 1 || st.deals[0].track !== "biz") throw new Error("v28 deal track: " + JSON.stringify(st.deals));
+    const memo = (st.meetings || []).find((m) => m.id === "mn");
+    const projectMeeting = (st.meetings || []).find((m) => m.id === "mt");
+    if (memo?.track !== "work") throw new Error("v28 memo track: " + JSON.stringify(memo));
+    if (!projectMeeting || "track" in projectMeeting) throw new Error("v28 stored a track on a project meeting: " + JSON.stringify(projectMeeting));
+    for (const k of ["milestones", "timeLog", "leads", "notices"]) {
+      if (!same(st[k], [])) throw new Error(`v28 ${k}: ` + JSON.stringify(st[k]));
+    }
+    if (!same(st.settings, { bizHoursPerWeek: 20 })) throw new Error("v28 settings: " + JSON.stringify(st.settings));
+    if (st.deals.some((d) => "payments" in d)) throw new Error("v28 backfilled payments: " + JSON.stringify(st.deals));
+    if (st.work.some((w) => "minutes" in w)) throw new Error("v28 backfilled minutes: " + JSON.stringify(st.work));
+    if (!same(st.role, s27.role)) throw new Error("v28 changed the role: " + JSON.stringify(st.role));
+    const bare = untracked(st);
+    for (const k of Object.keys(s27)) {
+      if (k === "v" || k === "lastTick") continue;
+      if (!same(bare[k], s27[k])) throw new Error(`v28 changed ${k}: ` + JSON.stringify(bare[k]));
+    }
+    const added = Object.keys(st).filter((k) => !(k in s27)).sort();
+    if (!same(added, V28_KEYS)) throw new Error("v28 added keys: " + added.join(", "));
+    await clickTab("업무");
+    await expectText("직장 1건");
   });
   await shot("migrated");
 };
