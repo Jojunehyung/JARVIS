@@ -2746,7 +2746,7 @@ const PACKET_HEAD = [
 // whole packet 4,000) cut the minutes before the assistant could read them. A work packet is pasted into Claude or
 // ChatGPT, which take far more than the daily packet's 4,000; ChatGPT may attach a long paste as a file and still reads it.
 const WORK_PACKET_MAX = 20000;     // the work packet's own cap; the daily packet keeps PACKET_MAX
-const WORK_PROPOSAL_MAX = 8;       // proposals read from a work reply
+const WORK_PROPOSAL_MAX = 20;      // proposals read from a work reply — the per-day cap `WORK_LIMITS.perDay` (8 until 2026-09-17)
 const WORK_PACKET_MEETINGS = 10;   // newest meetings by `meetingOrder` (6 until 2026-09-17)
 const WORK_PACKET_PROGRESS = 5;    // newest progress entries per meeting
 const WORK_PACKET_SUMMARY = 5000;  // chars of a meeting's summary — the whole summary (MEETING_LIMITS.summary)
@@ -2760,7 +2760,7 @@ const WORK_PACKET_HEAD = [
   "역할: 이 사용자의 목표·회의록·진행사항·기록을 근거로 오늘 처리할 업무를 제안하는 비서예요. 아래 데이터만 근거로 답해요.",
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
   "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
-  "3) 제안은 오늘 처리할 업무 항목만이에요 — 최대 8건, 제목 60자·메모 200자 이내. 실행·일정·계약·회의록을 만들거나 바꾸지 않아요. '업무 기록'에 이미 있는 항목은 다시 제안하지 않아요.",
+  "3) 제안은 오늘 처리할 업무 항목만이에요 — 최대 20건, 제목 60자·메모 200자 이내. 실행·일정·계약·회의록을 만들거나 바꾸지 않아요. '업무 기록'에 이미 있는 항목은 다시 제안하지 않아요.",
   "4) 각 항목의 근거가 된 목표·회의록·프로젝트 이름을 link.title에 아래 데이터의 표기 그대로 적어요. 근거가 없으면 link를 생략해요.",
   "5) 답변 형식: ① 회의록·진행사항·목표를 근거로 한 분석 5줄 이내 ② 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"work\": []).",
   "```json",

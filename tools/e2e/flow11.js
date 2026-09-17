@@ -427,11 +427,14 @@ module.exports = async (h) => {
   });
 
   // A chat's code-block copy button copies only the JSON, so a reply without the fence must still read.
-  await step("a work reply pasted as bare JSON after analysis lines still lists its proposal", async () => {
+  await step("a work reply pasted as bare JSON after analysis lines lists all twelve of its proposals", async () => {
     await openWorkBridge();
-    await pasteWorkReply('분석 한 줄이에요.\n{\n  "work": [\n    { "title": "펜스 없는 답변 확인", "note": "코드블록 복사" }\n  ],\n  "note": "한 줄"\n}');
-    await expectText("제안 업무 확인 — 1건");
+    // Twelve proposals: more than the old limit of 8, all listed (the limit is the per-day cap of 20).
+    const many = Array.from({ length: 12 }, (_, n) => ({ title: n ? `펜스 없는 답변 ${n + 1}` : "펜스 없는 답변 확인", note: "코드블록 복사" }));
+    await pasteWorkReply(`분석 한 줄이에요.\n${JSON.stringify({ work: many, note: "한 줄" }, null, 2)}`);
+    await expectText("제안 업무 확인 — 12건");
     await expectText("펜스 없는 답변 확인");
+    await expectText("펜스 없는 답변 12");
     await closeModal();
   });
 
