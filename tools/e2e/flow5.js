@@ -92,7 +92,7 @@ module.exports = async (h) => {
 
   // Since v27 the first load of a day opens the daily reader, not the briefing; the briefing is one tap away from it.
   const READER_SECTIONS = (since) => ["오늘·내일 회의 준비", "오늘 업무", "기한 지난 후속 · 내 담당 미완료 후속", "최근 7일 결정 사항",
-    `${since} 이후 새로 들어온 것`, "계약·입금 미확인", "뒤처진 목표 페이스", "브리핑 ›"];
+    `${since} 이후 새로 들어온 것`, "계약·입금 미확인", "뒤처진 목표 페이스", "롤모델 판정", "브리핑 ›"];
 
   await step("a new day opens the reader on load with every section, and closing it stamps the day", async () => {
     const yesterday = await dstrIn(-1), today = await dstrIn(0);

@@ -444,6 +444,114 @@ module.exports = async (h) => {
     }
   });
 
+  // ── Stage progress and the completion overlay (2026-09-18, Phase 2): the headline percentage is derived from the records
+  // and the proximity beneath it never moves with them (rule 14); the overlay fires once per stage, stamped on
+  // `role.seenStageK`, and not again on reload. The reply step restores its plant in `finally`, so the one stage it saved
+  // (`deals_won 'E2E판정고객' ≥ 2` + `cert_held 정보보안기사`) is replanted here with that save's verdict and stamp.
+  const readHeadline = () => page.evaluate(() => {
+    const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
+    if (!b) return null;
+    const row = b.querySelector("div.flex");
+    const cap = [...b.querySelectorAll("div")].find((d) => /AI 추정 확률|확률 미제시/.test(d.innerText || ""));
+    const prox = [...document.querySelectorAll("main button")].find((x) => (x.innerText || "").includes("롤모델 근접도"));
+    return {
+      row: row ? row.innerText.replace(/\s+/g, " ").replace(/\s*›\s*$/, "").trim() : "",
+      caption: cap ? cap.innerText.trim() : "",
+      precedes: !!prox && !!(b.compareDocumentPosition(prox) & Node.DOCUMENT_POSITION_FOLLOWING),
+    };
+  });
+  // Overlays are `z-50`; modals are `z-40`, so a reader opened by the same reload is not mistaken for the card.
+  const stageOverlay = () => page.evaluate(() => { const o = document.querySelector(".fixed.inset-0.z-50"); return o ? o.innerText.replace(/\s+/g, " ").trim() : ""; });
+  let progressStash = null;
+  await step("the headline states stage progress with the proximity beneath, records move the progress while the proximity stays, and the completion overlay shows once", async () => {
+    const st = await readState();
+    progressStash = { role: st.role, certs: st.profile.certs };
+    const today = await dstrIn(0);
+    const month = today.slice(0, 7);
+    const deal = (id) => ({ id, client: "E2E판정고객", title: "판정 확인", status: "won", monthly: 1000000, months: 1, startMonth: month, paidMonths: [], createdAt: `${month}-01`, track: "biz" });
+    if ((st.profile.certs || []).includes("정보보안기사")) throw new Error("the save already holds 정보보안기사, so the cert_held condition cannot start unmet");
+    await page.evaluate((p) => {
+      const k = "liferpg-state-v1";
+      const s = JSON.parse(localStorage.getItem(k));
+      s.role = { ...(s.role || { name: "롤모델", targets: {} }), story: "E2E 원하는 모습",
+        stages: [{ id: "e2e-stage-p2", name: "E2E 제안 단계", conds: [{ type: "deals_won", arg: "E2E판정고객", min: 2 }, { type: "cert_held", arg: "정보보안기사", min: 1 }] }],
+        verdicts: [{ id: "e2e-v1", date: p.today, probability: 35, summary: "E2E 판정 요약", basis: "", position: "", gaps: [], stageK: 1, stageN: 1, source: "ai" }],
+        seenStageK: 1 };
+      localStorage.setItem(k, JSON.stringify(s));
+    }, { today });
+    await h.reload(); await clickTab("프로필"); await sleep(300);
+    const p0 = await proximityFigure();
+    if (p0 == null) throw new Error("no proximity figure beneath the headline");
+    let hl = await readHeadline();
+    if (!hl || hl.row !== "단계 1/1 E2E 제안 단계 · 진행 0%") throw new Error("the headline reads: " + JSON.stringify(hl));
+    if (hl.caption !== `AI 추정 확률 35% · ${today}`) throw new Error("the verdict caption reads: " + JSON.stringify(hl.caption));
+    if (!hl.precedes) throw new Error("the headline does not precede the proximity line");
+    if (await stageOverlay()) throw new Error("an overlay shows on a stamped save: " + (await stageOverlay()));
+    // One of two contracts: the stage's mean ratio is (0.5 + 0) / 2
+    await patchSave({ deals: [deal("e2e-stage-p2-deal-1")] });
+    await h.reload(); await clickTab("프로필"); await sleep(300);
+    hl = await readHeadline();
+    if (!hl || hl.row !== "단계 1/1 E2E 제안 단계 · 진행 25%") throw new Error("after one won contract the headline reads: " + JSON.stringify(hl));
+    if ((await proximityFigure()) !== p0) throw new Error(`proximity moved from ${p0}% to ${await proximityFigure()}% with a contract`);
+    if (await stageOverlay()) throw new Error("an overlay shows at 25 %: " + (await stageOverlay()));
+    // The second contract and the held certificate complete the stage: the overlay shows once, within 800 ms of the reload
+    await patchSave({ deals: [deal("e2e-stage-p2-deal-2")] });
+    await page.evaluate(() => { const k = "liferpg-state-v1"; const s = JSON.parse(localStorage.getItem(k)); s.profile = { ...s.profile, certs: ["정보보안기사"] }; localStorage.setItem(k, JSON.stringify(s)); });
+    await h.reload({}, { keepModal: true });
+    await sleep(500);
+    const ov = await stageOverlay();
+    for (const t of ["STAGE", "단계 완료", "E2E 제안 단계", "모든 단계 충족"]) if (!ov.includes(t)) throw new Error(`the completion overlay lacks "${t}": ` + ov);
+    const stamped = (await readState()).role.seenStageK;
+    if (stamped !== 2) throw new Error("seenStageK is not stamped 2 after the completion: " + JSON.stringify(stamped));
+    await sleep(2600);
+    await h.reload({}, { keepModal: true });
+    await sleep(500);
+    if (await stageOverlay()) throw new Error("the overlay showed again on reload: " + (await stageOverlay()));
+    try { await closeModal(); } catch {}
+    await clickTab("프로필"); await sleep(300);
+    hl = await readHeadline();
+    if (!hl || hl.row !== "단계 1/1 모든 단계 충족 · 진행 100%") throw new Error("with every condition met the headline reads: " + JSON.stringify(hl));
+    if ((await proximityFigure()) !== p0) throw new Error(`proximity moved from ${p0}% to ${await proximityFigure()}% when the stage completed`);
+  });
+
+  await step("the reader states the re-assessment line for an old verdict and the absence line without one", async () => {
+    try {
+      const old = await dstrIn(-31);
+      // The verdict is re-dated 31 days back with the completed stage's raw index, so the line is the age alone
+      await page.evaluate((d) => {
+        const k = "liferpg-state-v1"; const s = JSON.parse(localStorage.getItem(k));
+        s.role.verdicts[0] = { ...s.role.verdicts[0], date: d, stageK: 2 };
+        localStorage.setItem(k, JSON.stringify(s));
+      }, old);
+      await h.reload(); await clickTab("프로필");
+      await clickText("오늘 읽을 것"); await sleep(400);
+      let txt = await h.overlayText();
+      const i = txt.indexOf("롤모델 판정"), j = txt.indexOf("뒤처진 목표 페이스"), b = txt.indexOf("브리핑 ›");
+      if (!(j >= 0 && i > j && b > i)) throw new Error("the role verdict section is not between the goals section and the briefing button: " + txt.slice(0, 300));
+      if (!txt.includes(`롤모델 재판정 — 마지막 ${old} · 31일 지남`)) throw new Error("the reader does not ask for a re-assessment: " + txt.slice(i, b));
+      await closeModal();
+      await page.evaluate(() => { const k = "liferpg-state-v1"; const s = JSON.parse(localStorage.getItem(k)); s.role.verdicts = []; localStorage.setItem(k, JSON.stringify(s)); });
+      await h.reload(); await clickTab("프로필");
+      await clickText("오늘 읽을 것"); await sleep(400);
+      txt = await h.overlayText();
+      if (!txt.includes("롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요")) throw new Error("the reader does not state the absence line: " + txt.slice(0, 300));
+      await page.evaluate(() => document.querySelector(".fixed.inset-0 button[aria-label='롤모델 판정 열기']").click());
+      await sleep(500);
+      if (!(await h.overlayText()).startsWith("방향 제안 —")) throw new Error("the section's › did not open direction advice: " + (await h.overlayText()).slice(0, 60));
+      await closeModal();
+    } finally {
+      // Restores the role, the certificates and the contracts the two steps above planted
+      await page.evaluate((st) => {
+        const k = "liferpg-state-v1"; const s = JSON.parse(localStorage.getItem(k));
+        if (st) { s.role = st.role; s.profile = { ...s.profile }; if (st.certs) s.profile.certs = st.certs; else delete s.profile.certs; }
+        s.deals = (s.deals || []).filter((d) => !String(d.id).startsWith("e2e-stage-"));
+        localStorage.setItem(k, JSON.stringify(s));
+      }, progressStash);
+      progressStash = null;
+      await h.reload();
+    }
+  });
+
   // ── Task deletion / goal removal
   await step("delete task", async () => {
     await clickTab("할 일");

@@ -349,6 +349,8 @@ module.exports = async (h) => {
     await clickText("데모 데이터로 둘러보기");
     await sleep(700);
     await expectText("영역 등급");
+    // 2026-09-18: the demo's `seenStageK` matches its current stage, so entering it raises no stage overlay (`z-50`).
+    if (await page.evaluate(() => !!document.querySelector(".fixed.inset-0.z-50"))) throw new Error("entering the demo raised an overlay");
   });
   // A stagnant-area line lands on home, where the area's grade row and its gate live. The demo's `건강` area has no
   // achievement at all, so its line exists whatever the date.
@@ -418,17 +420,27 @@ module.exports = async (h) => {
       if (tab === "프로필") {
         await expectText("TOEIC L&R 735");
         // v28 role stages: the demo seeds the nine stages. Three of 14 conditions are met — the upcoming contract,
-        // two won contracts and the AI portfolio entry — and the unpaid deposit keeps stage 1 current.
-        const stageLine = await page.evaluate(() => {
+        // two won contracts and the AI portfolio entry — and the unpaid deposit keeps stage 1 current. Since 2026-09-18
+        // the button is the stage headline (stage 1: `deals_active 1/1` met, `payment_paid 'deposit' 0/1` unmet → 50 %)
+        // with the newest verdict's caption; the condition count and the quit text live on its `title`.
+        const demoToday = await page.evaluate(() => { const t = new Date(); const p = (n) => String(n).padStart(2, "0"); return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`; });
+        const headline = await page.evaluate(() => {
           const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
-          return b ? b.innerText.replace(/\s+/g, " ").trim() : null;
+          return b ? { text: b.innerText.replace(/\s+/g, " ").trim(), title: b.getAttribute("title") || "" } : null;
         });
-        if (stageLine !== "단계 1/9 · 조건 3/14 · 전환 조건 미충족 (0/1) ›") throw new Error("the demo stage line reads: " + stageLine);
+        if (!headline || !headline.text.startsWith("단계 1/9 계약 기반 개발자") || !headline.text.includes("· 진행 50%")) throw new Error("the demo stage headline reads: " + JSON.stringify(headline));
+        if (headline.title !== "롤모델 1/9단계 · 조건 3/14 · 전환 조건 미충족 (0/1)") throw new Error("the demo stage title reads: " + headline.title);
+        if (!headline.text.includes(`AI 추정 확률 30% · ${demoToday}`)) throw new Error("the demo verdict caption is missing: " + headline.text);
+        // The advice sheet states the delta between the demo's two verdicts (29 days apart) and the journey figure once.
+        await page.evaluate(() => [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim())).click());
+        await sleep(500);
+        for (const t of ["확률 20% → 30%", "단계 1 → 1", "진행 50% · 전체 6%"]) await expectText(t);
+        await closeModal();
         // v27: entering the demo opens nothing, so the daily reader is opened from the CV card's own button.
+        // 2026-09-18: the reader's tenth section states the newest verdict's age, probability and stage.
         await clickText("오늘 읽을 것");
         await sleep(400);
-        await expectText("오늘 읽을 것 —");
-        await expectText("어제 완료 · ○○물산 월 리포트 양식 회신");
+        for (const t of ["오늘 읽을 것 —", "어제 완료 · ○○물산 월 리포트 양식 회신", `롤모델 판정 · 마지막 ${demoToday} · 0일 지남 · AI 추정 확률 30% · 단계 1/9`]) await expectText(t);
         await closeModal();
       }
     }

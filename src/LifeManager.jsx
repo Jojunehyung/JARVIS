@@ -3216,6 +3216,16 @@ const buildReader = (state, today) => {
     (state.notices || []).filter((n) => noticeSoon(n, today)).slice().sort(noticeOrder).map((n) => ({ text: noticeLine(n), sub: noteSub(n) })),
   ), { type: "biz" });
   add("goals", "뒤처진 목표 페이스", briefItems("goals").filter((it) => it.severity === 3).map((it) => ({ text: it.text })), { type: "goals" });
+  /* The role verdict (2026-09-18) — the monthly re-assessment line lives in the reader, not the briefing: the briefing
+     feeds the daily packet, and an AI-stated probability must not travel back into a packet. One derived item. */
+  const d = roleVerdictDue(state, today);
+  const sp = stageProgressOf(state, today);
+  const lastStage = d.last ? Math.min(d.last.stageK, d.last.stageN) : 0;
+  const roleLine = !state.role ? "롤모델 미설정 — 설정에서 롤모델을 정해요"
+    : !d.last ? "롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요"
+    : d.due ? `롤모델 재판정 — 마지막 ${d.last.date} · ${d.days}일 지남${d.stageRose && sp ? ` · 단계 ${lastStage} → ${sp.k}` : ""}`
+    : `롤모델 판정 · 마지막 ${d.last.date} · ${d.days}일 지남 · ${probText(d.last.probability)} · 단계 ${lastStage}/${d.last.stageN}`;
+  add("role", "롤모델 판정", [{ text: roleLine }], state.role ? { type: "roleAdvice" } : { type: "role" });
 
   return { since, sections };
 };
@@ -5315,7 +5325,8 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
   const trophies = (state.room?.trophies || []).length;
   const achTotal = (state.areas || []).reduce((n, p) => n + (p.achievements || []).length, 0);
   const rg = roleGap(state);
-  const rs = roleStageOf(state, today);
+  const sp = stageProgressOf(state, today);
+  const last = lastVerdictOf(state);
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
@@ -5370,8 +5381,24 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
         </div>
       </section>
 
-      {/* Proximity is computed from the verified grades above (rule 14). Without a role model it is an inert fact:
-          the role model is set in settings, and direction advice has nothing to explain. */}
+      {/* The stage headline (2026-09-18): the current stage, its progress and the last AI verdict's caption. The stage
+          percentage is a second figure under its own label — it never enters, scales or is averaged with the proximity
+          below (rule 14); `pct` is derived at render (rule 9). The condition count and the quit text stay on `title`. */}
+      {sp && (
+        <button onClick={onRoleAdvice} title={stageLine(sp.rs)} className="w-full text-left px-1 active:opacity-70">
+          <div className="flex items-center gap-1.5 text-sm">
+            <span className="text-zinc-500 shrink-0">단계</span>
+            <span className="font-mono font-bold text-cyan-300 shrink-0">{sp.k}/{sp.n}</span>
+            <span className="text-zinc-200 truncate">{sp.name}</span>
+            <span className="font-mono text-cyan-300 shrink-0 ml-auto">· 진행 {sp.pct}%</span>
+            <span className="text-zinc-600 shrink-0">›</span>
+          </div>
+          <div className="mt-1"><Bar ratio={sp.pct / 100} color="bg-cyan-400" h="h-1.5" /></div>
+          {last && <div className="text-xs font-mono text-zinc-500 mt-1">{probText(last.probability)} · {last.date}</div>}
+        </button>
+      )}
+      {/* Proximity is computed from the verified grades above (rule 14) — the smaller line beneath the headline. Without
+          a role model it is an inert fact: the role model is set in settings, and direction advice has nothing to explain. */}
       {rg ? (
         <button onClick={onRoleAdvice} className="w-full text-left flex items-center gap-1.5 px-1 text-xs active:opacity-70">
           <span className="text-zinc-500 shrink-0">롤모델 근접도</span>
@@ -5381,15 +5408,6 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
         </button>
       ) : (
         <p className="px-1 text-xs text-zinc-500">롤모델 미설정 — 근접도 계산 대상 없음</p>
-      )}
-      {/* The stage count is a second, separate figure (rule 14): it never enters the percentage above */}
-      {rs && (
-        <button onClick={onRoleAdvice} title={stageLine(rs)} className="w-full text-left flex items-center gap-1.5 px-1 text-xs active:opacity-70">
-          <span className="text-zinc-500 shrink-0">단계</span>
-          <span className="font-mono font-bold text-cyan-300 shrink-0">{Math.min(rs.k, rs.n)}/{rs.n}</span>
-          <span className="text-zinc-500 truncate">· 조건 <span className="font-mono">{rs.condsMet}/{rs.condsTotal}</span> · {quitText(rs)}</span>
-          <span className="text-zinc-600 shrink-0">›</span>
-        </button>
       )}
     </>
   );
@@ -6207,9 +6225,12 @@ function CatalogModal({ state, initialCat, onClose }) {
 }
 
 /* ── Role-model direction advice ── */
-/* The current stage, its conditions and the next milestone — the advice sheet's stage block and the business area's
-   gap block print the same lines. Every line is derived at render (rule 9); unmet conditions are rose, met emerald. */
-function RoleStageLines({ state, rs, today }) {
+/* The current stage, its conditions with a bar each, the progress and journey figures, and the next milestone — the
+   advice sheet's stage block and the business area's gap block print the same lines. Every line is derived at render
+   (rule 9); unmet conditions are rose, met emerald. `sp` is `stageProgressOf`, whose `conds` carry each ratio; the
+   journey figure is printed here and nowhere else. */
+function RoleStageLines({ state, sp, today }) {
+  const rs = sp.rs;
   const next = (state.milestones || []).filter((m) => m.status !== "done").sort(milestoneOrder)[0];
   return (
     <div className="space-y-1">
@@ -6218,9 +6239,14 @@ function RoleStageLines({ state, rs, today }) {
           ? <><span className="font-mono">{rs.k}/{rs.n}</span>단계 · {rs.current.s.name}</>
           : <>전환 조건 충족 — <span className="font-mono">{rs.n}/{rs.n}</span>단계</>}
       </div>
-      {(rs.current?.results || []).map((r, j) => (
-        <div key={j} className={`text-xs font-mono ${r.met ? "text-emerald-400" : "text-rose-400"}`}>- {r.text}</div>
+      {sp.conds.map((r, j) => (
+        <div key={j}>
+          <div className={`text-xs font-mono ${r.met ? "text-emerald-400" : "text-rose-400"}`}>- {r.text}</div>
+          <Bar ratio={r.ratio} color={r.met ? "bg-emerald-400" : "bg-rose-400"} h="h-1" />
+        </div>
       ))}
+      <div className="text-xs font-mono text-zinc-400">진행 {sp.pct}% · 전체 {sp.journey}%</div>
+      <div className="text-xs font-mono text-zinc-500">{stageLine(rs)}</div>
       <div className="text-xs text-zinc-500">
         {next ? <>다음 마일스톤: {milestoneLine(state, next, today)}</> : "다음 마일스톤 없음 — 로드맵에서 추가해요"}
       </div>
@@ -6230,19 +6256,41 @@ function RoleStageLines({ state, rs, today }) {
 
 function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpenRoadmap, onAskVerdict }) {
   const { rg, gaps } = roleRecommendations(state);
-  const rs = roleStageOf(state, today);
-  const last = lastVerdictOf(state);
-  // The entry to the fifth packet (2026-09-18): the story is the one text sent verbatim, so without it the button is off.
+  const sp = stageProgressOf(state, today);
+  const verdicts = (state.role?.verdicts || []).slice(0, ROLE_VERDICTS_MAX);
+  // Verdict history (2026-09-18): the entry to the fifth packet — the story is the one text sent verbatim, so without
+  // it the button is off — then the delta between the two newest verdicts and the dated list, newest first. Every line
+  // is the AI's own statement, labelled as unverified; the app adds nothing to it.
+  const stageText = (v) => `단계 ${Math.min(v.stageK, v.stageN)}/${v.stageN}`;
+  const pctText = (p) => (Number.isFinite(p) ? `${p}%` : "확률 미제시");
+  const delta = verdicts.length >= 2 ? { a: verdicts[1], b: verdicts[0] } : null;
   const verdictBlock = (
     <div className="bg-zinc-950 rounded-xl p-3 mb-3">
-      <SectionLabel>AI 판정</SectionLabel>
+      <SectionLabel>AI 판정 기록</SectionLabel>
       <button onClick={onAskVerdict} disabled={!state.role?.story}
         className="px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70 disabled:opacity-30">AI에게 판정 묻기 ›</button>
       {!state.role?.story && <p className="text-xs text-zinc-600 mt-1">먼저 롤모델 설정에서 원하는 모습을 적어요 — 적은 글이 패킷에 실려요.</p>}
-      {last ? (
-        <div className="mt-2">
-          <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {last.date}</div>
-          <div className="text-xs font-mono text-zinc-300">{probText(last.probability)} · 단계 {Math.min(last.stageK, last.stageN)}/{last.stageN}</div>
+      {delta && (
+        <div className="font-mono text-xs text-cyan-300 mt-2">
+          확률 {pctText(delta.a.probability)} → {pctText(delta.b.probability)} ({delta.a.date} → {delta.b.date}) · 단계 {Math.min(delta.a.stageK, delta.a.stageN)} → {Math.min(delta.b.stageK, delta.b.stageN)}
+        </div>
+      )}
+      {verdicts.length ? (
+        <div className="mt-2 space-y-2">
+          {verdicts.map((v, i) => (
+            <div key={v.id}>
+              <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {v.date}</div>
+              <div className="text-xs font-mono text-zinc-300">{probText(v.probability)} · {stageText(v)}</div>
+              <div className="text-xs text-zinc-300 break-words">{v.summary || "요약 없음"}</div>
+              {i === 0 && (
+                <>
+                  <div className="text-xs text-zinc-400 break-words">근거: {v.basis || "없음"}</div>
+                  <div className="text-xs text-zinc-400 break-words">현재 위치: {v.position || "없음"}</div>
+                  {(v.gaps || []).map((g, j) => <div key={j} className="text-xs text-zinc-400 break-words">- {g}</div>)}
+                </>
+              )}
+            </div>
+          ))}
         </div>
       ) : (
         <p className="text-xs text-zinc-500 mt-2">AI 판정 없음</p>
@@ -6277,10 +6325,10 @@ function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpe
         ))}
         {legend}
       </div>
-      {rs && (
+      {sp && (
         <div className="bg-zinc-950 rounded-xl p-3 mb-3">
           <SectionLabel>단계</SectionLabel>
-          <RoleStageLines state={state} rs={rs} today={today} />
+          <RoleStageLines state={state} sp={sp} today={today} />
           <button onClick={onOpenRoadmap}
             className="mt-2 px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70">로드맵 열기 ›</button>
         </div>
@@ -6295,7 +6343,7 @@ function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpe
           {gaps.map((i) => {
             const { h, recs, examRecs } = i;
             // With stages, the business area is advanced by records, not certifications: the stage lines replace them
-            const staged = rs && i.area.name === "사업";
+            const staged = sp && i.area.name === "사업";
             return (
               <div key={i.area.id} className="bg-zinc-950 rounded-xl p-3">
                 <div className="flex items-center justify-between gap-2 text-sm">
@@ -6303,7 +6351,7 @@ function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpe
                   <span className="font-mono text-xs text-rose-400 shrink-0">{RANKS[i.have].name} → {RANKS[i.need].name} · {i.gap}단계</span>
                 </div>
                 <div className="text-xs text-zinc-600 mt-1">다음 관문: {RANKS[i.have + 1].name} 승급 — 이 영역의 성취·증거가 필요합니다.</div>
-                {staged && <div className="mt-2"><RoleStageLines state={state} rs={rs} today={today} /></div>}
+                {staged && <div className="mt-2"><RoleStageLines state={state} sp={sp} today={today} /></div>}
                 <div className="flex flex-wrap gap-1 mt-2">
                   {JOB_FIELDS.map((d) => {
                     const on = normDirs(i.area).includes(d);
@@ -10440,6 +10488,17 @@ function Overlay({ data, onClose }) {
           <p className="text-xs text-zinc-500 mt-3">기록에 남았습니다.</p>
         </div>
       )}
+      {/* Stage completion (2026-09-18, user decision): no portrait, no trophy — the completed stage, the next one, and
+          the fact that records computed it. Raised once per stage by the root effect on `role.seenStageK`. */}
+      {data.type === "stage" && (
+        <div className="anim-bigpop text-center bg-zinc-900 border-2 border-cyan-500 rounded-3xl px-8 py-8 max-w-xs shadow-2xl shadow-cyan-500/25">
+          <div className="text-xs tracking-widest text-zinc-500 font-mono">STAGE</div>
+          <div className="text-sm text-zinc-400">단계 완료</div>
+          <div className="text-lg font-black text-cyan-300 mt-1 break-words">{data.name}</div>
+          <div className="text-xs font-mono text-zinc-400 mt-3">{data.next ? `다음: ${data.next}` : "모든 단계 충족"}</div>
+          <p className="text-xs text-zinc-500 mt-3">기록으로 계산된 완료입니다.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -10496,6 +10555,22 @@ export default function LifeManager() {
     dayRef.current = day;
     if (state && state.act?.briefingSeen !== day) setModal({ type: "reader" });
   }, [day, state]);
+
+  // A stage completion shows the overlay once: `role.seenStageK` is the seen-stamp (like act.briefingSeen), `k` is always
+  // derived. A missing stamp or a lower `k` (a deleted record) is stamped silently; every role write stamps the new `k`
+  // itself, so only a record write that raises `k` fires. The stamp write is idempotent under StrictMode's double run,
+  // and this effect is the single place the stage overlay is raised.
+  useEffect(() => {
+    if (!readyRef.current || !state?.role?.stages?.length) return;
+    const rs = roleStageOf(state, today);
+    const seen = Number.isFinite(state.role.seenStageK) ? state.role.seenStageK : null;
+    if (seen === rs.k) return;
+    if (seen != null && rs.k > seen) {
+      const done = rs.stages[rs.k - 2]?.s.name || "";
+      setOverlay({ type: "stage", name: done, next: rs.current ? rs.current.s.name : null });
+    }
+    setState((prev) => (prev.role?.seenStageK === rs.k ? prev : { ...prev, role: { ...prev.role, seenStageK: rs.k } }));
+  }, [state, today]);
 
   useEffect(() => {
     if (!readyRef.current || !state) return;
