@@ -119,7 +119,7 @@ no per-record "send to AI anyway" override ([TD-73](../exec-plans/tech-debt-trac
   [daily-work.md](daily-work.md), [daily-reader.md](daily-reader.md), [daily-briefing.md](daily-briefing.md).
 
 ## Caps and the storage arithmetic
-`MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200, transcript: 30000 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17; `progress` is new at schema v25, `followUp` at schema v26, `transcript` (2026-09-17, optional field, no migration) is `녹취록은` — placed last among the field caps, so the refusal order is title, attendees, summary, decisions, actions, then transcript, before the follow-up-row cap),
+`MEETING_LIMITS = { title: 40, attendees: 80, summary: 10000, decisions: 1000, actions: 1000, tasks: 10, progress: 300, followUp: 200, transcript: 30000 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17, and to 10000 / 1000 / 1000 on 2026-09-18; `progress` is new at schema v25, `followUp` at schema v26, `transcript` (2026-09-17, optional field, no migration) is `녹취록은` — placed last among the field caps, so the refusal order is title, attendees, summary, decisions, actions, then transcript, before the follow-up-row cap),
 `PROJECT_LIMITS = { name: 40, note: 200 }`. 5,000 Hangul characters is about three pages of key points — still short of a transcript, which runs about 21,000 characters for a 45-minute meeting.
 `MEETING_TASK_ROWS = 30` shapes the task-link picker (below); `MEETING_PROGRESS_MAX = 30` caps the progress
 entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per meeting, refusing with
@@ -129,17 +129,17 @@ entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per m
   chars, shared with the rest of the save and every thumbnail. `JSON.stringify` keeps Hangul as one char; a
   newline costs two (`\n`).
 - Overhead of an empty record (ten-char `uid`s, both dates, all keys, the comma), measured, is about 190 chars.
-- Largest record: 40 + 80 + 5,000 + 600 + 600 + 190 = **6,510 chars**, plus one per newline. Completely full records at three a working day (750 a year) use 4.88 M chars a year and cross the budget in about nine months; typical minutes (~850 chars) are unaffected, since a higher cap does not make minutes longer.
+- Largest record: 40 + 80 + 10,000 + 1,000 + 1,000 + 190 = **12,310 chars**, plus one per newline. Completely full records at three a working day (750 a year) use 9.23 M chars a year and cross the budget in about four to five months; typical minutes (~850 chars) are unaffected, since a higher cap does not make minutes longer.
 - Task links (v24): `,"taskIds":[]` adds 13 chars to every record and each linked id 12 more (a ten-char `uid`,
   two quotes, a comma, less one comma for the first), so ten links add 13 + 120 − 1 = **132 chars**: a full record
-  with ten links is about 6,642 chars. `recordFits` (renamed from `meetingFits`, 2026-09-17) stringifies the
+  with ten links is about 12,442 chars. `recordFits` (renamed from `meetingFits`, 2026-09-17) stringifies the
   whole record, `taskIds` included, so the same guard refuses a save that would cross the budget; no new check
   was needed.
 - Progress entries and the AI flag (v25): `,"progress":[]` (14) + `,"aiHidden":false` (17) = **31 chars** added
   to every record. One entry, `{"id":"…","date":"YYYY-MM-DD","text":""}`, is about 45 chars plus its text (+ 1
   comma): a typical 80-char entry ≈ 125, a full 300-char entry ≈ 345; thirty full entries ≈ 10,380 chars — so a
   completely full meeting with ten task links and thirty full progress entries reaches about
-  6,642 + 31 + 10,380 ≈ **17,050 chars**. Typical minutes (~850) with three typical entries (~125 each) reach
+  12,442 + 31 + 10,380 ≈ **22,850 chars**. Typical minutes (~850) with three typical entries (~125 each) reach
   about 850 + 31 + 375 ≈ **1,260 chars**; three a working day ≈ 0.95 M chars a year (26 % of the budget a year,
   about 3 years 10 months before the guard applies). `recordFits` measures the whole record, `progress` included.
 - Follow-up items (v26): `,"followUps":[]` adds **15 chars** to every record. One item,
@@ -147,7 +147,7 @@ entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per m
   adds 19 and `,"workId":"…"` adds 22, so a fully-keyed item is ≈ 92 chars + text — a typical 40-char item ≈ 90
   without a due date, ≈ 132 with a due date and a work link; a full 200-char item with both ≈ 292, and thirty of
   them ≈ 8,760 chars. A completely full meeting (ten task links, thirty full progress entries, thirty full
-  follow-ups) reaches about 17,050 + 15 + 8,760 ≈ **25,825 chars**. Typical minutes with three typical progress
+  follow-ups) reaches about 22,850 + 15 + 8,760 ≈ **31,625 chars**. Typical minutes with three typical progress
   entries and four typical follow-ups (~4 × 130 = 520) reach about 850 + 375 + 31 + 15 + 520 ≈ **1,810 chars**;
   three a working day ≈ 1.36 M chars a year (37 % of the budget a year, about 2 years 8 months before
   `recordFits` refuses). Each `mine` follow-up also creates a work item — see [daily-work.md](daily-work.md)'s

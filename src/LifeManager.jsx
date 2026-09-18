@@ -3284,9 +3284,9 @@ const PACKET_HEAD = [
 const WORK_PACKET_MAX = 20000;     // the work packet's own cap; the daily packet keeps PACKET_MAX
 const WORK_PACKET_MEETINGS = 10;   // newest meetings by `meetingOrder` (6 until 2026-09-17)
 const WORK_PACKET_PROGRESS = 5;    // newest progress entries per meeting
-const WORK_PACKET_SUMMARY = 5000;  // chars of a meeting's summary — the whole summary (MEETING_LIMITS.summary)
+const WORK_PACKET_SUMMARY = 10000; // chars of a meeting's summary — the whole summary (MEETING_LIMITS.summary)
 const WORK_PACKET_SUMMARY_TRIM = 1500; // the summary clip once the packet runs over WORK_PACKET_MAX
-const WORK_PACKET_CLIP = 600;      // chars of decisions, follow-ups and a progress entry — their whole text
+const WORK_PACKET_CLIP = 1000;     // chars of decisions, follow-ups and a progress entry — their whole text
 const WORK_PACKET_RESULT = 300;    // chars of a done item's result (`처리:`) in the records section
 const WORK_PACKET_NOTE = 200;      // chars of a work item's note — its whole text (WORK_LIMITS.note)
 const WORK_PACKET_TASKS = 10;      // open task rows
@@ -3474,7 +3474,7 @@ const meetingPacketLines = (state, list, today, { summary, progress: progressN, 
    flagged `aiHidden` contributes its date and title only. No photo, no evidence text, no journal entry.
    Summaries, decisions, follow-ups, progress entries and notes go whole (widened 2026-09-17). When the text exceeds
    WORK_PACKET_MAX the reductions below run one step at a time, rebuilding after each, until it fits: the summary clip
-   5,000 → 1,500, then meetings 10 → 2 (oldest first), then follow-up items 30 → 5 per meeting (open ones kept first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
+   10,000 → 1,500, then meetings 10 → 2 (oldest first), then follow-up items 30 → 5 per meeting (open ones kept first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
    then the business lines to the first, then the open tasks, then the work records (the parser dedupes by title on its
    own), and last meetings 2 → 0. The header, the CV line and the goals are never dropped — about 800 chars of header
    and 40 per goal line, far under the cap — so the packet always fits. */
@@ -3593,7 +3593,7 @@ const PREP_PACKET_HEAD = [
    the open tasks the non-hidden meetings link, and the contracts of the project's client (`dealsOfProject`) with their
    unpaid months. No `## 이력` line and no profile identifier: meeting preparation needs no CV (SECURITY.md). When the text
    exceeds PREP_PACKET_MAX the reductions run one step at a time, rebuilding after each: the document clip 1,500 → 500,
-   meetings 5 → 2 (oldest first), follow-ups 30 → 5 per meeting, the summary clip 5,000 → 1,500, the summary → 500 and
+   meetings 5 → 2 (oldest first), follow-ups 30 → 5 per meeting, the summary clip 10,000 → 1,500, the summary → 500 and
    progress 5 → 1, documents 10 → 3, tasks → 0, contracts → 0, documents 3 → 0, meetings 2 → 0. The header, the event
    line and the existing checks are never dropped. Derived on demand, never stored (rule 9). */
 const buildPrepPacket = (state, ev, today, date = ev.date) => {
@@ -9034,27 +9034,27 @@ function NoticeModal({ state, notice, onClose, onAdd, onUpdate, onRemove }) {
    no summary, split or judgement is made from it, and nothing but the form and the view reads it (rule 7, SECURITY.md).
    Storage arithmetic (the budget is counted in string length, like `storageUsedBytes`: 3.5 × 1,048,576 = 3,672,064
    chars shared with the rest of the save and every thumbnail). An empty record costs about 190 chars (ids, both
-   dates, keys, the comma); a record with every field full costs 40 + 80 + 5,000 + 600 + 600 + 190 = 6,510 chars plus one
-   per newline (caps widened at the user's request on 2026-09-16 and twice on 2026-09-17, from 800 / 200 / 200); a typical one (25 / 30 / 400 / 100 /
+   dates, keys, the comma); a record with every field full costs 40 + 80 + 10,000 + 1,000 + 1,000 + 190 = 12,310 chars plus one
+   per newline (caps widened at the user's request on 2026-09-16, twice on 2026-09-17 and again on 2026-09-18, from 800 / 200 / 200); a typical one (25 / 30 / 400 / 100 /
    100) stays about 850, since a higher cap does not make minutes longer. At three a working day (750 a year) typical
    minutes use 0.64 M chars a year — 52 % of the budget after three years, 87 % after five; completely full records use
-   4.88 M a year and cross the budget in about nine months.
+   9.23 M a year and cross the budget in about four to five months.
    So the caps alone promise nothing, and two facts guard the rest: the tab always states the storage in use, and a
    save that would cross the budget is refused with the form kept open (`recordFits` in the root).
    Task links (v24) add `,"taskIds":[]` = 13 chars to every record and 12 per linked id (a 10-char uid, two quotes,
-   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 6,642. `recordFits` measures the
+   a comma), so ten links cost 13 + 120 − 1 = 132 chars: a full record reaches about 12,442. `recordFits` measures the
    serialised record, `taskIds` included, so the same guard covers it.
    Progress entries and the AI flag (v25) add `,"progress":[]` (14) + `,"aiHidden":false` (17) = 31 chars to every
    record. One entry is `{"id":"…","date":"YYYY-MM-DD","text":""}` ≈ 45 chars + its text (+ 1 comma): a typical
    80-char entry ≈ 125, a full 300-char entry ≈ 345, and thirty full entries ≈ 10,380 — so a completely full meeting
-   with ten links and thirty full entries ≈ 6,642 + 31 + 10,380 ≈ 17,050 chars. Typical minutes with three typical
+   with ten links and thirty full entries ≈ 12,442 + 31 + 10,380 ≈ 22,850 chars. Typical minutes with three typical
    entries ≈ 850 + 31 + 375 ≈ 1,260 chars; three a working day ≈ 0.95 M chars a year (26 % of the budget a year,
    about 3 years 10 months before the guard applies). `recordFits` measures the whole record, `progress` included.
    Follow-up items (v26) add `,"followUps":[]` = 15 chars to every record. One item is
    `{"id":"…","text":"","mine":false,"done":false}` ≈ 50 chars + its text (+ 1 comma); `,"due":"YYYY-MM-DD"` adds 19 and
    `,"workId":"…"` adds 22, so a fully-keyed item is ≈ 92 chars + text: a typical 40-char item ≈ 90 without a due date,
    ≈ 132 with a due date and a work link; a full 200-char item with both ≈ 292, and thirty of them ≈ 8,760. A completely
-   full meeting with thirty full follow-ups ≈ 17,050 + 15 + 8,760 ≈ 25,825 chars. Typical minutes with three typical
+   full meeting with thirty full follow-ups ≈ 22,850 + 15 + 8,760 ≈ 31,625 chars. Typical minutes with three typical
    progress entries and four typical follow-ups ≈ 850 + 375 + 31 + 15 + 520 ≈ 1,810 chars; three a working day ≈ 1.36 M
    chars a year (37 % of the budget a year, about 2 years 8 months before `recordFits` refuses). Each mine follow-up
    also creates a work item — the v25 overhead (~100) + title (≤ 60) + a meeting link with `followUpId` (≈ 66) ≈ 210
@@ -9080,7 +9080,7 @@ function NoticeModal({ state, notice, onClose, onAdd, onUpdate, onRemove }) {
    and `,"checks":[]` adds 12 the first time; a typical 40-char check ≈ 100, thirty full 200-char checks ≈ 30 × 260 + 29 ≈
    7,829 chars on one event, ten such events ≈ 78 k (2 %). `recordFits` measures a document record whole, and a check
    write measures the event as it will be written against the stored one, so ticking or deleting never trips the guard. */
-const MEETING_LIMITS = { title: 40, attendees: 80, summary: 5000, decisions: 600, actions: 600, tasks: 10, progress: 300, followUp: 200, transcript: 30000 };
+const MEETING_LIMITS = { title: 40, attendees: 80, summary: 10000, decisions: 1000, actions: 1000, tasks: 10, progress: 300, followUp: 200, transcript: 30000 };
 const MEETING_PROGRESS_MAX = 30;   // progress entries per meeting before `진행사항은 30건까지예요.`
 const MEETING_FOLLOWUPS_MAX = 30;  // follow-up items per meeting before `후속 항목은 30건까지예요.`
 const MEETING_TASK_ROWS = 30;      // candidate rows rendered before `할 일 {n}건 더 있음 — 검색어로 좁혀요`
