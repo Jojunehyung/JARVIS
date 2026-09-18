@@ -2606,6 +2606,48 @@ const roleStageOf = (state, today) => {
 const quitText = (rs) => (rs.quit ? "전환 조건 충족 (1/1)" : "전환 조건 미충족 (0/1)");
 const stageLine = (rs) => `롤모델 ${Math.min(rs.k, rs.n)}/${rs.n}단계 · 조건 ${rs.condsMet}/${rs.condsTotal} · ${quitText(rs)}`;
 
+/* ── Role story, verdicts and stage progress (2026-09-18) ── */
+/* The user's own `원하는 모습` (`role.story`), the dated AI verdicts pasted back through the fifth packet (`role.verdicts`,
+   newest first, clipped text and a probability the app never turns into a grade, payout or proximity) and the stage
+   progress figures derived from the stages above. Storage: the story ≤ 2.0 k once; a verdict ≈ 130 chars of overhead,
+   ≈ 600 typical, ≈ 2.2 k full, ≈ 53 k at the 24-record cap (1.4 % of STORAGE_BUDGET); the seen-stamp 15 chars. */
+const ROLE_STORY_MAX = 2000;        // chars of `role.story` — the one free text the user writes to be sent verbatim
+const ROLE_VERDICTS_MAX = 24;       // verdict records kept, newest first; the oldest is dropped past this
+const ROLE_VERDICT_DAYS = 30;       // days after which the reader asks for a re-assessment
+const ROLE_VERDICT_SUMMARY = 300;   // chars of a verdict's summary
+const ROLE_VERDICT_BASIS = 500;     // chars of its basis
+const ROLE_VERDICT_POSITION = 300;  // chars of its position line
+const ROLE_VERDICT_GAPS = 8;        // gap lines kept, each clipped to ROLE_VERDICT_GAP
+const ROLE_VERDICT_GAP = 120;
+const ROLE_STAGE_WHY = 200;         // chars of a proposed stage's `why`, shown on the confirm sheet only — never stored
+const lastVerdictOf = (state) => (state?.role?.verdicts || [])[0] || null;
+const probText = (p) => (Number.isFinite(p) ? `AI 추정 확률 ${p}%` : "확률 미제시");
+// One condition's share of its threshold: a threshold of 0 is met by definition, anything past the threshold is 1.
+const condRatio = (r) => ((Number(r.c.min) || 0) <= 0 ? 1 : Math.min(1, r.value / Number(r.c.min)));
+/* The current stage's progress: derived at render, never stored (rule 9); a second number beside `roleGap`, never
+   merged into it (rule 14). A stage's fraction is the mean of its conditions' ratios (a stage without conditions is 1);
+   `pct` is floored so `100` prints only for a met stage; `journey` counts the met stages plus the current fraction
+   over the stage count, and is printed once, in the advice sheet. `k` is capped at `n` for display. */
+const stageProgressOf = (state, today) => {
+  const rs = roleStageOf(state, today);
+  if (!rs) return null;
+  const fractionOf = (st) => (st.results.length ? st.results.reduce((sum, r) => sum + condRatio(r), 0) / st.results.length : 1);
+  const fraction = rs.current ? fractionOf(rs.current) : 1;
+  const k = Math.min(rs.k, rs.n);
+  const pct = rs.current ? Math.floor(fraction * 100) : 100;
+  const journey = Math.round(((rs.k - 1) + (rs.current ? fraction : 0)) / rs.n * 100);
+  const conds = (rs.current?.results || []).map((r) => ({ text: r.text, value: r.value, min: Number(r.c.min) || 0, ratio: condRatio(r), met: r.met }));
+  return { rs, k, n: rs.n, name: rs.current ? rs.current.s.name : "모든 단계 충족", pct, journey, conds };
+};
+// Whether the reader should ask for a re-assessment: no verdict yet, the last one older than ROLE_VERDICT_DAYS, or a
+// stage completed since it was given (`stageRose`). Derived at render from the dated records (rule 9).
+const roleVerdictDue = (state, today) => {
+  const last = lastVerdictOf(state);
+  const days = last ? daysBetween(last.date, today) : null;
+  const stageRose = !!last && Number.isFinite(last.stageK) && (roleStageOf(state, today)?.k || 0) > last.stageK;
+  return { last, days, stageRose, due: !last || days >= ROLE_VERDICT_DAYS || stageRose };
+};
+
 // Standard achievements that would close each role-model gap. Shared by RoleAdviceModal and the briefing;
 // the tiering and payout logic is unchanged (rules 14, 15).
 const roleRecommendations = (state) => {
@@ -3181,7 +3223,9 @@ const buildReader = (state, today) => {
 /* ── Assistant bridge — the app writes a text packet, the user talks to an external chat, the reply comes back as text.
    No key, no network (rule 7 amendment). Two packets share the cap and the section shape: the daily check-in
    (`buildAssistantPacket`, whose reply can only propose plain tasks) and the work request (`buildWorkPacket`, 2026-09-17
-   amendment, whose reply can only propose work items). Neither reply completes, promotes or scores. ── */
+   amendment, whose reply can only propose work items). Neither reply completes, promotes or scores. The prep packet
+   (`buildPrepPacket`), the review packet (`buildReviewPacket`) and, 2026-09-18, the role verdict packet
+   (`buildRoleVerdictPacket`) followed with their own caps — five packets, each with its own parser. ── */
 const PACKET_MAX = 4000;
 const PACKET_EVENT_DAYS = 14; // the schedule window the packet states — its heading and its rows read the same constant
 const PACKET_BIZ_LINES = 6;   // business lines the packet carries, so a long contract list cannot crowd out the journal
@@ -3704,6 +3748,156 @@ const buildReviewPacket = (state, today) => {
   return out;
 };
 
+/* ── Role verdict — the fifth packet (2026-09-18) ── */
+// What the role verdict packet carries and how much. Plain literals, so smoke-logic can lift them.
+const ROLE_PACKET_MAX = 12000;         // the role packet's own cap
+const ROLE_PACKET_STORY_TRIM = 1000;   // the story clip once the packet runs over ROLE_PACKET_MAX
+const ROLE_PACKET_STORY_TRIM2 = 500;   // the second story clip, after the condition lines are dropped
+const ROLE_PACKET_HEAD = [
+  "역할: 이 사용자가 적은 '원하는 모습'에 지금 얼마나 가까운지 비판적으로 판정하는 비서예요. 아래 데이터만 근거로 답해요.",
+  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "2) 회사·직무가 목표면 최근 3년 실제 채용 스펙(학력·경력 연수·자격·어학 점수)과 비교해요. 창업이 목표면 업종·규모별 실제 생존율·성공률과 비교해요. 확실하지 않은 수치는 '추정'이라고 표시해요.",
+  "3) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요. 등급 이름은 아래 '영역 등급'의 표기를 그대로 써요.",
+  "4) 단계는 앱이 기록으로 계산할 수 있는 조건만 제안해요 — 아래 '조건 종류'의 type과 값만 써요. 단계 12개 · 단계당 조건 5개 이내, 단계 이름 40자 이내. 자격은 공식 명칭 그대로, 영역 이름은 아래 '영역 등급'에 있는 것만, 요구 등급은 1–8로 써요.",
+  "5) 답변 형식: ① 판정 5줄 이내 (요약·확률·근거·현재 위치·부족한 것) ② 마지막에 아래 JSON 블록 1개 (단계 제안이 없으면 \"stages\": [], 등급 제안이 없으면 \"areas\": {}).",
+  "```json",
+  '{"verdict":{"summary":"...","probability":0-100 또는 null,"basis":"...","position":"...","gaps":["..."]},"stages":[{"name":"...","why":"...","conds":[{"type":"...","arg":"...","min":0}]}],"areas":{"<영역 이름>":1-8},"note":"한 줄"}',
+  "```",
+];
+// The condition vocabulary the head states, generated from COND_TYPES so the packet never drifts from the evaluator.
+const condTypeLines = () => ["조건 종류:", ...COND_TYPES.map(([type, label, hint]) => `- ${type}: ${label} — 값: ${hint || "없음"}`)];
+
+/* The role verdict packet (`AI에게 판정 묻기`): the user's own story verbatim, the CV line (`cvSummaryOf` — degree · major,
+   practice months · latest role title, as every packet states it; never the profile name, birth date, e-mail, phone,
+   a school or an employer), the area grades with their requirements, the held certifications and exam bests, record
+   counts (business and private tracks only for deals and milestones — `PACKET_TRACKS` — and counts only: no deal title,
+   client, lead name, notice title, milestone title, project or work item), the stages with their condition values and
+   the last verdict's line. Nothing of a day-job record, a transcript or a meeting enters. When the text exceeds
+   ROLE_PACKET_MAX the reductions run one step at a time, rebuilding after each: story 2,000 → 1,000, condition lines
+   dropped (stage names stay), story → 500, stage lines → 0. The header, the CV, the grades, the certificates, the
+   counts and the last verdict are never dropped. Derived on demand, never stored (rule 9); the AI's own probability
+   travels only here, as `## 지난 판정`, never into the daily packet or the briefing. */
+const buildRoleVerdictPacket = (state, today) => {
+  const role = state.role || {};
+  const cv = cvSummaryOf(state.profile, today);
+  const held = heldCertsOf(state);
+  const bests = Object.entries(state.exams?.best || {}).sort(([ia, a], [ib, b]) => (b?.d ?? -1) - (a?.d ?? -1) || ia.localeCompare(ib));
+  const gradeLines = (state.areas || []).map((p) => {
+    const need = role.targets?.[p.id] || 0;
+    return `- ${p.name}: ${RANKS[p.grade]?.name || RANKS[0].name} (${p.grade}/9)${need > 0 ? ` · 요구 ${RANKS[need].name}` : ""}`;
+  });
+  const certLines = [
+    held.length ? `- 자격: ${held.map((c) => c.n).join(" · ")}` : "- 자격 없음",
+    bests.length ? `- 시험: ${bests.map(([id, b]) => examBestText(id, b)).join(" · ")}` : "- 시험 없음",
+  ];
+  const copy = {
+    ...state,
+    deals: (state.deals || []).filter((d) => PACKET_TRACKS.includes(trackOf(d, "biz"))),
+    milestones: (state.milestones || []).filter((m) => PACKET_TRACKS.includes(milestoneTrack(state, m))),
+  };
+  const month = String(today).slice(0, 7);
+  const won = copy.deals.filter((d) => d.status === "won");
+  const active = won.filter((d) => ["active", "upcoming"].includes(dealPhase(d, month))).length;
+  const countLines = [
+    `- 계약 체결 ${won.length}건 · 진행·예정 ${active}건 · 이번 달 계약 매출 ${wonText(bizSummary(copy, today).thisMonth)}`,
+    `- 포트폴리오 ${(state.folio || []).length}건 · AI 항목 ${condValue(state, today, { type: "folio_match", arg: "AI" })}건`,
+    `- 마일스톤 완료 ${copy.milestones.filter((m) => m.status === "done").length}/${copy.milestones.length}건`,
+    `- 리드 ${LEAD_STAGES.map((st) => `${LEAD_STAGE_LABEL[st]} ${(state.leads || []).filter((l) => l.stage === st).length}`).join(" · ")}`,
+    `- 공고 ${Object.entries(NOTICE_STATUS_LABEL).map(([st, label]) => `${label} ${(state.notices || []).filter((n) => n.status === st).length}`).join(" · ")}`,
+  ];
+  const rs = roleStageOf(state, today);
+  const last = lastVerdictOf(state);
+  const verdictLines = last
+    ? [`- ${last.date} · ${probText(last.probability)} · 단계 ${Math.min(last.stageK, last.stageN)}/${last.stageN} · ${oneLineText(last.summary, ROLE_VERDICT_SUMMARY)}`]
+    : [];
+
+  const k = { story: ROLE_STORY_MAX, condLines: true, stages: rs ? rs.n : 0 };
+  const build = () => [
+    `[인생 관리 — 롤모델 판정 요청 ${today}]`, ...ROLE_PACKET_HEAD, ...condTypeLines(), "",
+    ...packetSection("원하는 모습", [role.story ? `- ${oneLineText(role.story, k.story)}` : "- 없음 — 롤모델 설정에서 원하는 모습을 적어요"]),
+    ...packetSection("이력", [`- 학력: ${cv.edu}`, `- 경력: ${cv.career}`]),
+    ...packetSection("영역 등급", gradeLines),
+    ...packetSection("보유 자격·시험", certLines),
+    ...packetSection("기록 요약", countLines),
+    ...packetSection("현재 단계", (rs ? rs.stages.slice(0, k.stages) : []).flatMap((st, i) => [
+      `- ${i + 1}단계 ${st.s.name}${st.met ? " · 충족" : ""}`,
+      ...(k.condLines ? st.results.map((r) => `  - ${r.text}`) : []),
+    ])),
+    ...packetSection("지난 판정", verdictLines),
+  ].join("\n");
+  const reductions = [
+    () => k.story > ROLE_PACKET_STORY_TRIM && (k.story = ROLE_PACKET_STORY_TRIM, true),
+    () => k.condLines && (k.condLines = false, true),
+    () => k.story > ROLE_PACKET_STORY_TRIM2 && (k.story = ROLE_PACKET_STORY_TRIM2, true),
+    () => k.stages > 0 && (k.stages = 0, true),
+  ];
+  let out = build();
+  for (const reduce of reductions) while (out.length > ROLE_PACKET_MAX && reduce()) out = build();
+  return out;
+};
+
+/* Reads the JSON block a verdict reply appends — `data.verdict`, `data.stages`, `data.areas` and `data.note` only;
+   `tasks`, `work`, `checks`, `deals`, `events` or any other key is ignored, not inspected. Validation only: a
+   proposal becomes a stage, a grade or a verdict only in `importRoleVerdict`, after the user's tick (rule 7 amendment
+   2026-09-18). A stage with one invalid condition is rejected whole, with the first reason found; a `cert_held`
+   argument is normalised to the official name through `certByTitle` (longest name first, rule 15) so `condValue`'s
+   exact match against `heldCertsOf` works. An area row appears only when the proposed grade differs from the current
+   requirement; a duplicated area name keeps the last entry. Nothing here writes state. */
+const parseRoleVerdictReply = (text, state, today) => {
+  const raw = String(text || "");
+  const data = replyJson(raw);
+  const clip = oneLineText;
+  let verdict = null;
+  if (data?.verdict && typeof data.verdict === "object" && !Array.isArray(data.verdict)) {
+    const v = data.verdict;
+    const p = typeof v.probability === "number" || (typeof v.probability === "string" && v.probability.trim()) ? Number(v.probability) : NaN;
+    verdict = {
+      summary: clip(v.summary, ROLE_VERDICT_SUMMARY),
+      probability: Number.isFinite(p) && p >= 0 && p <= 100 ? Math.round(p) : null,
+      basis: clip(v.basis, ROLE_VERDICT_BASIS),
+      position: clip(v.position, ROLE_VERDICT_POSITION),
+      gaps: (Array.isArray(v.gaps) ? v.gaps : []).map((g) => String(g ?? "").trim()).filter(Boolean).slice(0, ROLE_VERDICT_GAPS).map((g) => clip(g, ROLE_VERDICT_GAP)),
+    };
+  }
+  const hintOf = (type) => COND_TYPES.find((t) => t[0] === type)?.[2];
+  const stages = (Array.isArray(data?.stages) ? data.stages : []).slice(0, ROLE_STAGES_MAX).map((s, n) => {
+    const name = String(s?.name || "").trim().slice(0, ROLE_STAGE_NAME);
+    const why = clip(s?.why, ROLE_STAGE_WHY);
+    const rawConds = (Array.isArray(s?.conds) ? s.conds : []).slice(0, STAGE_CONDS_MAX);
+    const conds = [];
+    let reject = !name ? "단계 이름이 없어요" : !rawConds.length ? "조건이 없어요" : null;
+    for (const c of rawConds) {
+      if (reject) break;
+      const type = String(c?.type || "").trim();
+      const hint = hintOf(type);
+      const min = Number(c?.min);
+      let arg = c?.arg == null || !hint ? "" : String(c.arg).trim();
+      const cert = type === "cert_held" ? certByTitle(arg) : null;
+      if (hint == null) reject = `알 수 없는 조건 종류예요: ${type}`;
+      else if (c?.min == null || String(c.min).trim() === "" || !Number.isFinite(min) || min < 0) reject = "기준은 0 이상 숫자예요";
+      else if (type === "cert_held" && !cert) reject = `자격 표에 없는 이름이에요: ${arg}`;
+      if (reject) break;
+      if (cert) arg = cert.n;
+      const cond = { type, ...(arg ? { arg } : {}), min };
+      conds.push({ ...cond, text: condText(state, today, cond) });
+    }
+    return { key: `s${n}`, name, why, conds, reject };
+  });
+  const areas = [];
+  if (data?.areas && typeof data.areas === "object" && !Array.isArray(data.areas)) {
+    const byName = new Map(Object.entries(data.areas).map(([name, need]) => [String(name).trim(), need]));
+    for (const [name, rawNeed] of byName) {
+      const area = (state.areas || []).find((a) => a.name === name);
+      const need = Number(rawNeed);
+      const current = area ? state.role?.targets?.[area.id] || 0 : 0;
+      const reject = !area ? `없는 영역이에요: ${name}` : !Number.isInteger(need) || need < 1 || need > 8 ? "요구 등급은 1–8이에요" : null;
+      if (!reject && need === current) continue;
+      areas.push({ key: `a${areas.length}`, name, areaId: area?.id || null, need: Number.isInteger(need) ? need : null, current, reject });
+    }
+  }
+  return { raw, verdict, stages, areas, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "" };
+};
+
 /* ───────────────────────── Calendar export — the phone-calendar file (RFC 5545) ───────────────────────── */
 /* The app sends no notification: there is no push server, and no browser API schedules a local alarm. The phone's
    own calendar raises the alarms, from a file the user exports here and imports once. The file is a snapshot built
@@ -4057,9 +4251,16 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
  *   role: { name, targets{areaId: requiredGrade(1-8)},             // proximity is derived by roleGap
- *           stages?[{ id, name, conds[{ type, arg?, min }] }] } | null,   // role stages (v28, optional): fact conditions evaluated from the save
+ *           stages?[{ id, name, conds[{ type, arg?, min }] }],      // role stages (v28, optional): fact conditions evaluated from the save
  *                                                                 // (`roleStageOf`); the current stage is derived, never stored; proximity
  *                                                                 // (`roleGap`) is untouched
+ *           story?, verdicts?[{ id, date, probability?, summary, basis, position, gaps[], stageK, stageN, source("ai") }],
+ *                                                                 // story (2026-09-18, optional, ≤ 2,000 chars): the user's own `원하는 모습`,
+ *                                                                 // sent verbatim in the role verdict packet; verdicts (optional, newest first,
+ *                                                                 // ≤ 24): AI-stated, unverified — clipped text and a probability the app never
+ *                                                                 // turns into a grade, payout or proximity; the raw reply is never stored
+ *           seenStageK? } | null,                                 // seenStageK (optional): the stage index the completion overlay was last shown
+ *                                                                 // for — a seen-stamp like act.briefingSeen, never read as progress (rule 9)
  *   ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
  *                                               // (scheduleView was retired 2026-09-16 and dropped at v22)
  *   settings: { bizHoursPerWeek },   // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
@@ -4080,7 +4281,9 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  * reader (`buildReader`, `readerSince`), the track order of every list (`byTrack`, `meetingTrack`), the roadmap's D-day,
  * completion and pace (`milestoneWork`, `milestonePace`, `stageOrderNote`), the weekly time sums (`weekMinutes`), the
  * payment figures of `bizSummary`, the role stage and every condition value (`roleStageOf`, `condValue`), the review
- * facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds.
+ * facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds, the stage progress
+ * and journey figures (`stageProgressOf`), the re-assessment line (`roleVerdictDue`) and the role verdict packet
+ * (`buildRoleVerdictPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -4482,7 +4685,29 @@ const demoState = () => {
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
   // The seeded stages (v28): the upcoming contract, two won contracts and the AI portfolio entry meet 3 of 14 conditions,
   // and the unpaid deposit keeps stage 1 current.
-  s.role = { name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 }, stages: seedStages() };
+  // The story and two AI-stated verdicts a month apart (2026-09-18; synthetic, unverified by construction), so the
+  // advice sheet shows the delta line and the reader's line reads today's date; `seenStageK` matches the current stage so
+  // no overlay fires on demo entry. Stage 1 reads `deals_active 1/1` met and `payment_paid 'deposit' 0/1` unmet →
+  // stage progress 50 %, journey 6 %.
+  s.role = {
+    name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 }, stages: seedStages(),
+    story: "2029년까지 직원 20명 규모의 의료 AI 솔루션 회사 대표가 되고 싶어요. 지금은 연구원으로 일하면서 병원 데이터 ETL 계약을 병행하고 있어요.",
+    seenStageK: 1,
+    verdicts: [
+      { id: uid(), date: today, probability: 30,
+        summary: "현재 계약 1건·진행 예정 1건으로 반복 매출 근거가 없어요. 병원 세일즈 기록이 없어 5년 내 20명 규모 도달 확률은 낮아요.",
+        basis: "국내 SaaS·의료 IT 창업 5년 생존율 약 30% (추정) · 병원 대상 첫 계약까지 평균 9–12개월 (추정)",
+        position: "1단계 계약 기반 개발자 — 계약금 미입금",
+        gaps: ["병원 리드 5건 이상 접촉 기록 없음", "AI 포트폴리오 1건 — 납품 실적 없음", "국가사업 제출 이력 없음"],
+        stageK: 1, stageN: 9, source: "ai" },
+      { id: uid(), date: shiftDay(today, -29), probability: 20,
+        summary: "계약 1건, 포트폴리오 2건. 병원 세일즈와 반복 매출 근거가 없어요.",
+        basis: "동일 업종 5년 생존율 약 30% (추정)",
+        position: "1단계 계약 기반 개발자",
+        gaps: ["병원 리드 없음", "계약금 미입금"],
+        stageK: 1, stageN: 9, source: "ai" },
+    ],
+  };
   return s;
 };
 
@@ -6003,9 +6228,27 @@ function RoleStageLines({ state, rs, today }) {
   );
 }
 
-function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpenRoadmap }) {
+function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpenRoadmap, onAskVerdict }) {
   const { rg, gaps } = roleRecommendations(state);
   const rs = roleStageOf(state, today);
+  const last = lastVerdictOf(state);
+  // The entry to the fifth packet (2026-09-18): the story is the one text sent verbatim, so without it the button is off.
+  const verdictBlock = (
+    <div className="bg-zinc-950 rounded-xl p-3 mb-3">
+      <SectionLabel>AI 판정</SectionLabel>
+      <button onClick={onAskVerdict} disabled={!state.role?.story}
+        className="px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70 disabled:opacity-30">AI에게 판정 묻기 ›</button>
+      {!state.role?.story && <p className="text-xs text-zinc-600 mt-1">먼저 롤모델 설정에서 원하는 모습을 적어요 — 적은 글이 패킷에 실려요.</p>}
+      {last ? (
+        <div className="mt-2">
+          <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {last.date}</div>
+          <div className="text-xs font-mono text-zinc-300">{probText(last.probability)} · 단계 {Math.min(last.stageK, last.stageN)}/{last.stageN}</div>
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500 mt-2">AI 판정 없음</p>
+      )}
+    </div>
+  );
   // The one surface that draws and explains the proximity bars, one tap from the home line that states the number (rule 14).
   const legend = <p className="text-xs text-zinc-600">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.</p>;
   return (
@@ -6042,6 +6285,7 @@ function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpe
             className="mt-2 px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70">로드맵 열기 ›</button>
         </div>
       )}
+      {verdictBlock}
       {gaps.length === 0 ? (
         <div className="space-y-2">
           <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다. 근접도 {rg?.match}%.</p>
@@ -7026,6 +7270,7 @@ function RoleModelModal({ state, onClose, onSave }) {
   const [name, setName] = useState(state.role?.name || "");
   const [targets, setTargets] = useState(state.role?.targets || {});
   const [stages, setStages] = useState(() => (state.role?.stages || []).map(stageDraft));
+  const [story, setStory] = useState(state.role?.story || "");
   const [err, setErr] = useState("");
   const pickPreset = (r) => {
     setName(r);
@@ -7049,10 +7294,18 @@ function RoleModelModal({ state, onClose, onSave }) {
       }
       out.push({ id: st.id, name: st.name.trim(), conds });
     }
-    onSave({ name: name.trim() || "롤모델", targets, ...(out.length ? { stages: out } : {}) });
+    onSave({ name: name.trim() || "롤모델", targets, ...(out.length ? { stages: out } : {}), ...(story.trim() ? { story: story.trim() } : {}) });
   };
   return (
     <Modal title="롤모델 설정" onClose={onClose}>
+      {/* The story (2026-09-18): the one free text sent verbatim in the role verdict packet — the caption says so */}
+      <SectionLabel>원하는 모습</SectionLabel>
+      <textarea value={story} onChange={(e) => setStory(e.target.value)} rows={5} maxLength={ROLE_STORY_MAX} aria-label="원하는 모습"
+        placeholder="예: 2029년까지 직원 20명 규모 의료 AI 회사의 대표가 되고 싶어요. / 예: ○○전자 로봇 SW 직무로 2027년 상반기 입사하고 싶어요. — 회사·직무·규모·시기를 적어요"
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+      <div className="text-xs font-mono text-zinc-500 text-right">{story.length} / {ROLE_STORY_MAX}</div>
+      <p className="text-xs text-zinc-600 mb-4">여기 적은 글은 그대로 AI 패킷에 실려요 — 이름·연락처는 적지 않아요.</p>
+      <SectionLabel>세부 수정</SectionLabel>
       <div className="flex flex-wrap gap-1.5 mb-2">
         {ROLE_PRESETS.map((r) => (
           <Chip key={r} on={name === r} onClick={() => pickPreset(r)}>{r}</Chip>
@@ -10040,6 +10293,105 @@ function PrepBridgeModal({ state, today, eventId, date, onClose, onImport, onToa
   return <Modal title={step === "send" ? "AI에게 회의 준비 묻기" : "AI 답변 붙여넣기"} onClose={onClose}>{body}</Modal>;
 }
 
+/* The role verdict sheet (2026-09-18, the fifth packet): send · paste · confirm, sharing the panes above. The confirm
+   view shows the verdict verbatim under `AI 판단 · 검증되지 않음` — an AI-stated, unverified opinion, no encouragement
+   added (rule 13) — and lists the proposed stages and requirement grades as tickable rows; a rejected row states why
+   and cannot be ticked. Replacing existing stages is user data, so the save asks `window.confirm` first; nothing is
+   written without a tick or a verdict. Every proposal is a component draft until `onImport` writes `role` (rule 7). */
+function RoleVerdictModal({ state, today, onClose, onImport, onToast }) {
+  const packetRef = useRef(null);
+  const packet = useMemo(() => buildRoleVerdictPacket(state, today), [state, today]);
+  const [step, setStep] = useState("send");
+  const [reply, setReply] = useState("");
+  const [result, setResult] = useState(null);
+  const [ticked, setTicked] = useState({});
+  const [err, setErr] = useState("");
+  const read = () => {
+    const r = parseRoleVerdictReply(reply, state, today);
+    setResult(r);
+    setErr("");
+    setTicked(Object.fromEntries([...r.stages, ...r.areas].filter((x) => !x.reject).map((x) => [x.key, true])));
+  };
+  const tickedStages = result ? result.stages.filter((x) => ticked[x.key] && !x.reject) : [];
+  const tickedAreas = result ? result.areas.filter((x) => ticked[x.key] && !x.reject) : [];
+  const existing = state.role?.stages?.length || 0;
+  const save = () => {
+    if (tickedStages.length && existing && !window.confirm("단계를 AI 제안으로 바꿔요. 계속할까요?")) return;
+    setErr(onImport({ verdict: result.verdict, stages: tickedStages, areas: tickedAreas }) || "");
+  };
+  const tick = (key) => (e) => setTicked((cur) => ({ ...cur, [key]: e.target.checked }));
+  let body;
+  if (step === "send") {
+    body = (
+      <PacketSendPane packet={packet} taRef={packetRef} onCopy={() => copyPacket(packetRef, packet, onToast)} onPaste={() => setStep("paste")}
+        caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 원하는 모습에 적은 글은 그대로 실려요 — 이름·생년월일·연락처·학교·회사명·고객사 이름·직장 트랙 기록은 실리지 않아요. 답변은 AI 판단이고 검증되지 않아요." />
+    );
+  } else if (!result) {
+    body = <ReplyPastePane reply={reply} setReply={setReply} onCheck={read} />;
+  } else {
+    const v = result.verdict;
+    body = (
+      <div className="space-y-3">
+        <div className="bg-zinc-950 rounded-xl p-3 space-y-1">
+          {v ? (
+            <>
+              <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {today}</div>
+              <div className="font-mono text-cyan-300 text-sm">{probText(v.probability)}</div>
+              <div className="text-sm text-zinc-200 break-words">{v.summary || "요약 없음"}</div>
+              <div className="text-xs text-zinc-400 break-words">근거: {v.basis || "없음"}</div>
+              <div className="text-xs text-zinc-400 break-words">현재 위치: {v.position || "없음"}</div>
+              <div className="text-xs text-zinc-500">{v.gaps.length ? "부족한 것" : "부족한 것 없음"}</div>
+              {v.gaps.map((g, i) => <div key={i} className="text-xs text-zinc-400 break-words">- {g}</div>)}
+            </>
+          ) : (
+            <div className="text-sm text-zinc-400">판정 없음 — 답변에 verdict가 없어요</div>
+          )}
+        </div>
+        {result.note && <p className="text-xs text-zinc-400 break-words">{result.note}</p>}
+        <div>
+          <SectionLabel>제안 단계 — {result.stages.length}건</SectionLabel>
+          {result.stages.length === 0 && <p className="text-xs text-zinc-500">제안 단계 없음</p>}
+          <div className="space-y-2">
+            {result.stages.map((x, i) => (
+              <label key={x.key} className={`flex items-start gap-2 bg-zinc-950 rounded-xl p-3 ${x.reject ? "opacity-50" : ""}`}>
+                <input type="checkbox" className="mt-0.5" disabled={Boolean(x.reject)} checked={Boolean(ticked[x.key])} onChange={tick(x.key)} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-bold break-words">{i + 1}단계 {x.name || "이름 없음"}</span>
+                  <span className="block text-xs text-zinc-500 break-words">{x.why || "근거 없음"}</span>
+                  {x.conds.map((c, j) => <span key={j} className="block text-xs font-mono text-zinc-300 break-words">- {c.text}</span>)}
+                  {x.reject && <span className="block text-xs text-rose-400 mt-0.5">{x.reject}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div>
+          <SectionLabel>제안 요구 등급 — {result.areas.length}건</SectionLabel>
+          {result.areas.length === 0 && <p className="text-xs text-zinc-500">제안 등급 없음</p>}
+          <div className="space-y-2">
+            {result.areas.map((x) => (
+              <label key={x.key} className={`flex items-start gap-2 bg-zinc-950 rounded-xl p-3 ${x.reject ? "opacity-50" : ""}`}>
+                <input type="checkbox" className="mt-0.5" disabled={Boolean(x.reject)} checked={Boolean(ticked[x.key])} onChange={tick(x.key)} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm break-words">
+                    {x.name}{x.need ? <> 요구 {RANKS[x.need].name} (지금 {x.current ? RANKS[x.current].name : "제외"})</> : null}
+                  </span>
+                  {x.reject && <span className="block text-xs text-rose-400 mt-0.5">{x.reject}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+        {tickedStages.length > 0 && existing > 0 && <p className="text-xs text-zinc-400">저장하면 지금 단계 {existing}개가 선택한 단계로 바뀌어요.</p>}
+        <button onClick={save} disabled={!v && !tickedStages.length && !tickedAreas.length}
+          className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm disabled:opacity-30">선택한 항목 저장</button>
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+      </div>
+    );
+  }
+  return <Modal title={step === "send" ? "AI에게 판정 묻기" : result ? "AI 판정 확인" : "AI 답변 붙여넣기"} onClose={onClose}>{body}</Modal>;
+}
+
 /* ───────────────────────── Overlay effects ───────────────────────── */
 
 function Overlay({ data, onClose }) {
@@ -10510,6 +10862,50 @@ export default function LifeManager() {
     if (made.length) writeChecks(eventId, (cur) => [...cur, ...made]);
     setModal(null);
     showToast({ msg: `AI 제안 확인할 것 ${made.length}건 등록` });
+    return "";
+  };
+
+  /* Role model (2026-09-18): the editor and the verdict sheet both write `role` and nothing else. `verdicts` pass through
+     the editor untouched; every write stamps `seenStageK` with the stage index computed on the new state, so a stage set
+     the user just wrote never fires the completion overlay — only a record that raises `k` afterwards does. */
+  const saveRole = (rm) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const next = { ...(s.role || {}), name: rm.name, targets: rm.targets };
+      if (rm.stages) next.stages = rm.stages; else delete next.stages;
+      if (rm.story) next.story = rm.story; else delete next.story;
+      s.role = next;
+      const rs = roleStageOf(s, today);
+      if (rs) next.seenStageK = rs.k; else delete next.seenStageK;
+      return s;
+    });
+    setModal(null);
+    showToast({ msg: "롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다" });
+  };
+  // Saves what the user ticked on the verdict sheet: ticked stages replace `role.stages` (the sheet has confirmed), ticked
+  // grades update `role.targets` (a requirement, never `areas[].grade`), and the verdict is prepended to `role.verdicts`
+  // dated today — `stageK` read from the stages just saved, `why` never stored, the raw reply never stored, `upsertReply`
+  // never called (rule 7 amendment 2026-09-18). Returns a refusal string or "" like `importChecks`.
+  const importRoleVerdict = ({ verdict, stages, areas }) => {
+    const role = { ...(state.role || { name: "롤모델", targets: {} }) };
+    if (stages.length) {
+      role.stages = stages.map((p) => ({ id: uid(), name: p.name, conds: p.conds.map((c) => ({ type: c.type, ...(c.arg ? { arg: c.arg } : {}), min: c.min })) }));
+    }
+    for (const a of areas) role.targets = { ...role.targets, [a.areaId]: a.need };
+    const rs = roleStageOf({ ...state, role }, today);
+    if (verdict) {
+      role.verdicts = [{
+        id: uid(), date: today, ...(Number.isFinite(verdict.probability) ? { probability: verdict.probability } : {}),
+        summary: verdict.summary, basis: verdict.basis, position: verdict.position, gaps: verdict.gaps,
+        stageK: rs ? rs.k : null, stageN: rs ? rs.n : 0, source: "ai",
+      }, ...(role.verdicts || [])].slice(0, ROLE_VERDICTS_MAX);
+    }
+    if (rs) role.seenStageK = rs.k; else delete role.seenStageK;
+    const refused = recordFits(role, JSON.stringify(state.role || {}).length, "판정을");
+    if (refused) return refused;
+    setState((prev) => ({ ...prev, role }));
+    setModal(null);
+    showToast({ msg: `${verdict ? "AI 판정 저장" : "AI 제안 저장"} · 단계 ${stages.length}건 · 요구 등급 ${areas.length}건` });
     return "";
   };
 
@@ -11347,8 +11743,7 @@ export default function LifeManager() {
           onSubmit={(ev) => promoteArea(modal.area.id, ev)} />
       )}
       {modal?.type === "role" && (
-        <RoleModelModal state={state} onClose={() => setModal(null)}
-          onSave={(rm) => { setState((prev) => ({ ...prev, role: rm })); setModal(null); showToast({ msg: "롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다" }); }} />
+        <RoleModelModal state={state} onClose={() => setModal(null)} onSave={saveRole} />
       )}
       {modal?.type === "activity" && (
         <ActivityLogModal task={modal.task} onClose={() => setModal(null)}
@@ -11386,7 +11781,11 @@ export default function LifeManager() {
       {modal?.type === "roleAdvice" && (
         <RoleAdviceModal state={state} today={today} onClose={() => setModal(null)}
           onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir}
-          onOpenRoadmap={() => { setModal(null); setBizView("roadmap"); setTab("biz"); }} />
+          onOpenRoadmap={() => { setModal(null); setBizView("roadmap"); setTab("biz"); }}
+          onAskVerdict={() => setModal({ type: "roleVerdict" })} />
+      )}
+      {modal?.type === "roleVerdict" && (
+        <RoleVerdictModal state={state} today={today} onClose={() => setModal(null)} onImport={importRoleVerdict} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "event" && (
         <EventModal event={modal.event} initialDate={modal.date} projects={state.meetingProjects || []} onClose={() => setModal(null)}

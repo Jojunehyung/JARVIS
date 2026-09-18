@@ -113,9 +113,16 @@
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
   role: { name, targets{areaId: requiredGrade(1-8)},             // proximity is derived by roleGap
-          stages?[{ id, name, conds[{ type, arg?, min }] }] } | null,   // role stages (v28, optional): fact conditions evaluated from the save
+          stages?[{ id, name, conds[{ type, arg?, min }] }],      // role stages (v28, optional): fact conditions evaluated from the save
                                                                 // (`roleStageOf`); the current stage is derived, never stored; proximity
                                                                 // (`roleGap`) is untouched
+          story?, verdicts?[{ id, date, probability?, summary, basis, position, gaps[], stageK, stageN, source("ai") }],
+                                                                // story (2026-09-18, optional, ≤ 2,000 chars): the user's own `원하는 모습`,
+                                                                // sent verbatim in the role verdict packet; verdicts (optional, newest first,
+                                                                // ≤ 24): AI-stated, unverified — clipped text and a probability the app never
+                                                                // turns into a grade, payout or proximity; the raw reply is never stored
+          seenStageK? } | null,                                 // seenStageK (optional): the stage index the completion overlay was last shown
+                                                                // for — a seen-stamp like act.briefingSeen, never read as progress (rule 9)
   ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
                                               // (scheduleView was retired 2026-09-16 and dropped at v22)
   settings: { bizHoursPerWeek },   // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
@@ -136,7 +143,9 @@ the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitF
 reader (`buildReader`, `readerSince`), the track order of every list (`byTrack`, `meetingTrack`), the roadmap's D-day,
 completion and pace (`milestoneWork`, `milestonePace`, `stageOrderNote`), the weekly time sums (`weekMinutes`), the
 payment figures of `bizSummary`, the role stage and every condition value (`roleStageOf`, `condValue`), the review
-facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds.
+facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds, the stage progress
+and journey figures (`stageProgressOf`), the re-assessment line (`roleVerdictDue`) and the role verdict packet
+(`buildRoleVerdictPacket`).
 ```
 
 ## Fresh-state defaults (`freshState`)
@@ -385,7 +394,29 @@ const demoState = () => {
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
   // The seeded stages (v28): the upcoming contract, two won contracts and the AI portfolio entry meet 3 of 14 conditions,
   // and the unpaid deposit keeps stage 1 current.
-  s.role = { name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 }, stages: seedStages() };
+  // The story and two AI-stated verdicts a month apart (2026-09-18; synthetic, unverified by construction), so the
+  // advice sheet shows the delta line and the reader's line reads today's date; `seenStageK` matches the current stage so
+  // no overlay fires on demo entry. Stage 1 reads `deals_active 1/1` met and `payment_paid 'deposit' 0/1` unmet →
+  // stage progress 50 %, journey 6 %.
+  s.role = {
+    name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 }, stages: seedStages(),
+    story: "2029년까지 직원 20명 규모의 의료 AI 솔루션 회사 대표가 되고 싶어요. 지금은 연구원으로 일하면서 병원 데이터 ETL 계약을 병행하고 있어요.",
+    seenStageK: 1,
+    verdicts: [
+      { id: uid(), date: today, probability: 30,
+        summary: "현재 계약 1건·진행 예정 1건으로 반복 매출 근거가 없어요. 병원 세일즈 기록이 없어 5년 내 20명 규모 도달 확률은 낮아요.",
+        basis: "국내 SaaS·의료 IT 창업 5년 생존율 약 30% (추정) · 병원 대상 첫 계약까지 평균 9–12개월 (추정)",
+        position: "1단계 계약 기반 개발자 — 계약금 미입금",
+        gaps: ["병원 리드 5건 이상 접촉 기록 없음", "AI 포트폴리오 1건 — 납품 실적 없음", "국가사업 제출 이력 없음"],
+        stageK: 1, stageN: 9, source: "ai" },
+      { id: uid(), date: shiftDay(today, -29), probability: 20,
+        summary: "계약 1건, 포트폴리오 2건. 병원 세일즈와 반복 매출 근거가 없어요.",
+        basis: "동일 업종 5년 생존율 약 30% (추정)",
+        position: "1단계 계약 기반 개발자",
+        gaps: ["병원 리드 없음", "계약금 미입금"],
+        stageK: 1, stageN: 9, source: "ai" },
+    ],
+  };
   return s;
 ```
 
@@ -419,19 +450,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1331 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 5865 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 5865 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 5865 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 7800 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 8222 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 10126 | App root |
-| `liferpg-img-${slot}` | 10166 | App root |
-| `liferpg-img-ev-${id}` | 10189 | App root |
-| `liferpg-img-ev-${q.id}` | 10374 | App root |
-| `liferpg-img-ev-${t.id}` | 11165 | App root |
-| `liferpg-img-study-${t.id}-1` | 11165 | App root |
-| `liferpg-img-study-${t.id}-2` | 11165 | App root |
-| `liferpg-img-folio-${f.id}` | 11171 | App root |
+| `liferpg-img-ev-${task.id}` | 6090 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6090 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6090 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 8053 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 8475 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 10478 | App root |
+| `liferpg-img-${slot}` | 10518 | App root |
+| `liferpg-img-ev-${id}` | 10541 | App root |
+| `liferpg-img-ev-${q.id}` | 10726 | App root |
+| `liferpg-img-ev-${t.id}` | 11561 | App root |
+| `liferpg-img-study-${t.id}-1` | 11561 | App root |
+| `liferpg-img-study-${t.id}-2` | 11561 | App root |
+| `liferpg-img-folio-${f.id}` | 11567 | App root |
 
 ## Demo data (`demoState`)
 
