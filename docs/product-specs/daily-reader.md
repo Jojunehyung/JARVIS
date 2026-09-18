@@ -77,7 +77,7 @@ the same numbers by construction, never a different one ([decision log](../desig
 
 | Key | Title | States | `action` |
 |---|---|---|---|
-| `role` | `롤모델 판정` | one derived item, from `roleVerdictDue(state, today)` and `stageProgressOf(state, today)`: no role model → `롤모델 미설정 — 설정에서 롤모델을 정해요`; a role but no verdict → `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요`; due (no verdict in `ROLE_VERDICT_DAYS` (30) days, or a stage completed since the last one) → `롤모델 재판정 — 마지막 {last.date} · {days}일 지남`, plus ` · 단계 {last stage} → {current stage}` when a stage rose (both figures capped at the stage count for display — [TD-84](../exec-plans/tech-debt-tracker.md) notes the `n → n` case at the last stage); otherwise → `롤모델 판정 · 마지막 {last.date} · {days}일 지남 · {probText(last.probability)} · 단계 {last stage}/{stageN}` | `{ type: "roleAdvice" }`, or `{ type: "role" }` without a role model |
+| `role` | `롤모델 판정` | one derived item, from `roleVerdictDue(state, today)` and `stageProgressOf(state, today)`: no role model → `롤모델 미설정 — 설정에서 롤모델을 정해요`; a role but no verdict → `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요`; due (no verdict in `ROLE_VERDICT_DAYS` (30) days, or a stage completed since the last one) → `롤모델 재판정 — 마지막 {last.date} · {days}일 지남`, plus ` · 단계 {last stage} → {current stage}` when a stage rose (both figures capped at the stage count for display — [TD-84](../exec-plans/tech-debt-tracker.md) notes the `n → n` case at the last stage); otherwise → `롤모델 판정 · 마지막 {last.date} · {days}일 지남 · {probText(last.probability)} · 단계 {last stage}/{stageN}` | `{ type: "role" }` in every case (2026-09-18: renamed from `roleAdvice`, since `RoleAdviceModal` no longer exists — the `롤모델` screen opens the same whether or not a role model is set) |
 
 This section lives in the reader, never the briefing: `buildBriefing` feeds the daily packet, and the AI's own
 probability must not travel back into a packet through it — `buildBriefing` stays byte-identical
@@ -181,8 +181,10 @@ track planted; `flow8.js` asserts the `사업 로드맵` section states a plante
 planted lead's full line. **The tenth section (2026-09-18, written, not run):** `flow3.js` plants a re-dated
 verdict (`today − 31`) and asserts `롤모델 재판정 — 마지막 {date} · 31일 지남`, then an empty `role.verdicts`
 and asserts `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요`, and asserts the section's `›`
-(`aria-label="롤모델 판정 열기"`) opens `방향 제안 —`; `flow5.js`'s `READER_SECTIONS` gains `"롤모델 판정"`
-between `"뒤처진 목표 페이스"` and `"브리핑 ›"`. See [tools/e2e/README.md](../../tools/e2e/README.md).
+(`aria-label="롤모델 판정 열기"`) opens `방향 제안 —` (`RoleAdviceModal`, as it read that day) — rewritten
+2026-09-18 (second change of the day) to assert `startsWith("롤모델")`, the `롤모델` screen `RoleAdviceModal`
+was folded into. `flow5.js`'s `READER_SECTIONS` gains `"롤모델 판정"` between `"뒤처진 목표 페이스"` and
+`"브리핑 ›"`. See [tools/e2e/README.md](../../tools/e2e/README.md).
 
 ## What the daily reader never does
 

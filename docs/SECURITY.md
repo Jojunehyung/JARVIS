@@ -57,9 +57,11 @@ The assistant bridge carries **five** packets, all text, all copy/paste only, al
   `importWork` path, now generalised to take a date and a track. No new stored key, no network call — this
   needed no [Rule 7](design-docs/core-beliefs.md#rule-7) amendment.
 - **`AI에게 판정 묻기`** (`buildRoleVerdictPacket`, 2026-09-18): the **only packet that carries user-written free
-  text** — `role.story`, the `원하는 모습` the user types, sent verbatim. `RoleModelModal`'s caption warns this
-  explicitly (`여기 적은 글은 그대로 AI 패킷에 실려요 — 이름·연락처는 적지 않아요.`) and `RoleVerdictModal`'s send
-  caption repeats it; the app itself never appends an identifier to the story — the only fields it adds around
+  text** — `role.story`, the `원하는 모습` the user types, sent verbatim. The caption warning this explicitly
+  (`여기 적은 글은 그대로 AI 패킷에 실려요 — 이름·연락처는 적지 않아요.`) lived on `RoleModelModal` that day and now
+  lives on the `롤모델` screen's `원하는 모습` section (`RoleModal`, since the role-screen rewrite a few hours
+  later the same day) and `RoleVerdictModal`'s send caption repeats it; the app itself never appends an
+  identifier to the story — the only fields it adds around
   the story are the CV line, area grades and requirements, held certifications and exam bests, business/private
   record counts (deals and milestones filtered by `PACKET_TRACKS`; portfolio, leads and notices carry no track
   and are counted whole — counts only, never a name, [TD-78](exec-plans/tech-debt-tracker.md)), the current

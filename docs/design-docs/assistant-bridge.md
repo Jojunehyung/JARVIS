@@ -53,13 +53,15 @@ A tab-switch action is only ever taken when its `type` is in the module-level wh
 was removed — [home.md](../product-specs/home.md); `"work"` and `"meetings"` added 2026-09-17 for the carried-work
 line and the overdue-follow-up line, respectively), checked by `closeBriefing`. An action type outside this list is not a
 no-op: `closeBriefing` handles `task` separately, before the list, and opens every other type as the `modal.type`
-of the same name that the root renders directly — `bridge`, `journal`, `review`, `roleAdvice` and `role`.
+of the same name that the root renders directly — `bridge`, `journal`, `review` and `role` (`roleAdvice` retired
+2026-09-18, second change of the day — every action that used to name it now names `role`, opening the `롤모델`
+screen).
 
 Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CAP` 5, `QUOTE_STALE_DAYS` 7,
 `DEAL_END_SOON` 2 months.
 
 ## `roleRecommendations(state)`
-Extracted from `RoleAdviceModal` so the briefing and the direction-advice screen compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
+Originally extracted from `RoleAdviceModal`; shared, unchanged, by the briefing and `RoleGradeSection` (the `롤모델` screen's `영역 등급` section, since 2026-09-18) so the two compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
 The bridge carries **five** packets in total (2026-09-17/18): the daily check-in, `오늘 업무 만들기`,
 `AI에게 회의 준비 묻기`, the fourth, `주간 회고` (v28), and the fifth, `AI에게 판정 묻기` (2026-09-18), below.
@@ -309,7 +311,8 @@ Phase 1 default rule, appending ` · {date}` to the toast when `date` is not tod
 ## The fifth packet — `AI에게 판정 묻기` (`buildRoleVerdictPacket` / `parseRoleVerdictReply`, 2026-09-18, the
 [Rule 7](core-beliefs.md#rule-7) amendment dated 2026-09-18)
 
-Opened from `RoleAdviceModal`'s `AI에게 판정 묻기 ›` button (`RoleVerdictModal`, `modal.type: "roleVerdict"`),
+Opened from the `롤모델` screen's `AI에게 판정 묻기 ›` button (`RoleVerdictModal`, `modal.type: "roleVerdict"`;
+the button lived on `RoleAdviceModal` until that sheet was retired 2026-09-18, second change of the day),
 disabled until `role.story` is set. Built from the user's own `원하는 모습` story (`role.story`, the one free
 text sent verbatim), the CV line, the area grades and requirements, the held certifications and exam bests,
 business-and-private record counts, the current stages with their condition values, and the last verdict. A

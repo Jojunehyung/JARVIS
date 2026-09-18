@@ -1,7 +1,7 @@
 # Home tab — the CV
 <!-- src: SPEC-4-2 -->
 
-Home is one CV card plus one small proximity line under it — nothing else (2026-09-15, [decision log](../design-docs/decision-log.md)). The user asked, verbatim, for the `성장` tab gone and home stripped to "정량적 평가만" (quantitative evaluation only) plus one small percentage under it. `HomeTab` renders exactly two top-level children inside `<main>`: the CV `<section>` and the proximity line. Everything on it is derived from `state` at render — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onProfile (opens ProfileModal), onSettings (opens SettingsModal), onPromote (opens PromoteModal for an area), onRoleAdvice (opens RoleAdviceModal), onWall (opens AchievementWallModal)`.
+Home is one CV card plus one small proximity line under it — nothing else (2026-09-15, [decision log](../design-docs/decision-log.md)). The user asked, verbatim, for the `성장` tab gone and home stripped to "정량적 평가만" (quantitative evaluation only) plus one small percentage under it. `HomeTab` renders exactly two top-level children inside `<main>`: the CV `<section>` and the proximity line. Everything on it is derived from `state` at render — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onProfile (opens ProfileModal), onSettings (opens SettingsModal), onPromote (opens PromoteModal for an area), onRole (opens the 롤모델 screen, RoleModal — renamed from onRoleAdvice 2026-09-18), onWall (opens AchievementWallModal)`.
 
 Deliberately absent: goal progress and pace (the user's own decision — `목표별 진행률은 목표탭에서만 하고 롤모델 근접도만`, so progress with pace stays in `목표` only, [goals.md](goals.md)), and everything dated today — the briefing, today's schedule and business counts, today's tasks, today's completion count. None of it disappeared; [Where everything went](#where-everything-went-and-why) below is the map.
 
@@ -43,22 +43,25 @@ Two children of `<main>` after the CV card, in this order (2026-09-18, replacing
 **under** the proximity line and stated only `k/n · 조건 c/m`): the **stage headline** first, when stages exist
 (`sp = stageProgressOf(state, today)` non-null), then the **proximity line**, unchanged.
 
-The headline (`onClick={onRoleAdvice}`, `title={stageLine(sp.rs)}` — the condition count `c/m` and the quit
+The headline (`onClick={onRole}`, `title={stageLine(sp.rs)}` — the condition count `c/m` and the quit
 text moved here, off the visible row): a row `단계` (zinc) `{sp.k}/{sp.n}` (mono bold cyan) `{sp.name}`
 (truncating) `· 진행 {sp.pct}%` (mono cyan, right-aligned) `›`; a cyan `Bar` at `sp.pct / 100` underneath; the
 newest verdict's caption `{probText(last.probability)} · {last.date}` (mono zinc) on a third line when a
 verdict exists. `sp.pct` is `stageProgressOf`'s floored percentage — the number that moves with every record
 the user adds ([metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#stageprogressofstate-today-and-the-headline-decision));
-the journey figure (`sp.journey`, moving at most `1/n` per stage) is never printed here — it prints once, in the
-advice sheet's stage block. Without stages nothing new renders — the headline is absent, not disabled, on every
+the journey figure (`sp.journey`, moving at most `1/n` per stage) is never printed here — it prints on the
+`롤모델` screen only (the timeline's journey line, and once more inside a `사업` grade gap's `RoleStageLines`
+block), never on the CV. Without stages nothing new renders — the headline is absent, not disabled, on every
 save that predates the story/verdict change or that never opened the stages editor.
 
 The **proximity line**, unchanged in text, size and position relative to the card: with `rg = roleGap(state)`, a
 full-width button reading `롤모델 근접도` · `{rg.match}%` (`font-mono font-bold text-cyan-300`) · `· {rg.name}`
-(truncated) · `›` → `onRoleAdvice` opens `RoleAdviceModal`. Without a usable role (`rg === null` — no role
-model, no target above 0, or a role whose every target area is excluded, [TD-11](../exec-plans/tech-debt-tracker.md)):
-the inert fact `롤모델 미설정 — 근접도 계산 대상 없음`, not a button — the role model is set from `설정`, not
-from this line, and `RoleAdviceModal` has nothing to explain without one ([TD-29](../exec-plans/tech-debt-tracker.md)).
+(truncated) · `›` → `onRole` opens the `롤모델` screen (`RoleModal`, renamed from `onRoleAdvice`/`RoleAdviceModal`
+2026-09-18). Without a usable role (`rg === null` — no role model, no target above 0, or a role whose every
+target area is excluded, [TD-11](../exec-plans/tech-debt-tracker.md)): with `state.role` set but no usable
+grades, the inert `<p>` becomes a button `근접도 계산 대상 없음 — 세부 수정에서 요구 등급을 정해요 ›` opening
+`role` (2026-09-18); without any `role`, the inert fact `롤모델 미설정 — 근접도 계산 대상 없음` stays, not a
+button — the role model is set from `설정`, not from this line ([TD-29](../exec-plans/tech-debt-tracker.md)).
 Formula, demo numbers and the segmented-bar mechanics: [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md).
 
 `roleGap`'s `match` percentage is **never read, touched or recomputed** by the headline; `sp.pct`/`sp.k`/`sp.n`
@@ -67,7 +70,8 @@ merged or averaged into the proximity figure ([Rule 14](../design-docs/core-beli
 
 ## `SettingsModal` (`modal.type: "settings"`)
 Opened by the CV's corner button. Title `설정`, a bottom sheet like every other modal — chosen over a sixth tab for the same reason `ProfileModal` is a modal: opened rarely, one modal slot, the `Modal` shell already scrolls. Two sections, both moved verbatim from the former growth tab's collapsed panels:
-- `롤모델`: the button `{state.role ? "롤모델 수정" : "롤모델 설정"}` → `onRoleModel` (`setModal({ type: "role" })`, `RoleModelModal`) with its explanatory line underneath. `RoleModelModal` opens on a new first section, `원하는 모습` (2026-09-18) — a textarea for the user's own story, sent verbatim in the fifth bridge packet, with a caption saying so — above `세부 수정`, which holds the target-area rows and the stages editor. Mechanics: [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-story-the-verdict-and-stage-progress-2026-09-18) and
+- `롤모델`: the button `{state.role ? "롤모델 수정" : "롤모델 설정"}` → `onRoleModel` (`setModal({ type: "role" })`, opening the `롤모델` screen, `RoleModal`) with its explanatory line underneath. The screen opens on `원하는 모습` (a textarea for the user's own story, sent verbatim in the fifth bridge packet, with a caption saying so, plus three tap-to-fill templates since 2026-09-18) followed by the `스토리라인` timeline and the collapsed `영역 등급`; the target-area rows and the stages editor moved, also 2026-09-18, behind the screen's `세부 수정 ›` into the `roleEdit` sub-screen (`RoleModelModal`, title `롤모델 세부 수정`). Mechanics: [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-role-screen-2026-09-18-second-change-of-the-day),
+  [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-story-the-verdict-and-stage-progress-2026-09-18) and
   [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-stages-editor-v28).
 - `사업 시간 — 주간 예산` (v28, between `롤모델` and `데이터`): `SectionLabel`, a row with the label `주간 시간`, a
   number input (`aria-label="주간 사업 시간"`, `font-mono`, initial `bizHoursOf(state)`) and a border button
@@ -88,9 +92,9 @@ Opened by the CV's `성취` row. Title `성취의 벽`, read-only — the former
 | Today (before 2026-09-15) | After |
 |---|---|
 | `onPromote` → `PromoteModal`, growth area row | CV grade row (`AreaGradeRow`, on home) |
-| `onRoleModel` → `RoleModelModal`, growth headline button | `SettingsModal`'s `롤모델 설정` / `롤모델 수정`; also the briefing's no-role `다음 단계` line |
-| `onRoleAdvice` → `RoleAdviceModal`, growth `방향 제안` button | the home proximity line (when `rg` exists); the briefing's `다음 단계` line, unchanged |
-| per-area proximity lines and squared bars, growth headline | first block of `RoleAdviceModal` |
+| `onRoleModel` → `RoleModelModal`, growth headline button | `SettingsModal`'s `롤모델 설정` / `롤모델 수정`, opening the `롤모델` screen (2026-09-18); also the briefing's no-role `다음 단계` line |
+| `onRoleAdvice` → `RoleAdviceModal`, growth `방향 제안` button | the home proximity line (when `rg` exists) and the CV's third-state button (2026-09-18); the briefing's `다음 단계` line — all renamed `onRole` → the `롤모델` screen (`RoleModal`), `RoleAdviceModal` retired 2026-09-18 |
+| per-area proximity lines and squared bars, growth headline | `RoleGradeSection`, collapsed by default under the `롤모델` screen's `영역 등급` section (moved verbatim from `RoleAdviceModal`, 2026-09-18) |
 | `onExport` / `onImport`, growth data section | `SettingsModal` |
 | `onReset` → `resetAll`, growth data section | `SettingsModal`, with `setModal(null)` fired first |
 | trophy strip, specialisation lines, exam bests, per-area achievement lists, growth `성취의 벽` | `AchievementWallModal` from the CV's `성취` row; the CV states only the counts |

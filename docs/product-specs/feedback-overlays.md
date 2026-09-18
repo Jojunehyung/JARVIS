@@ -48,7 +48,10 @@ the overlay fires for the stage that just completed, naming the next one (or `�
 stamp is rewritten to the current `k` in the same effect. `saveRole` and `importRoleVerdict` both stamp the new
 `k` themselves when they write `role.stages`, so replacing the stages (the editor, or a confirmed AI verdict)
 never raises this overlay — only a record write that raises the derived `k` between two renders does. This is
-the **only** place the `stage` overlay is raised. Mechanics and the seen-stamp's Rule 9 justification:
+the **only** place the `stage` overlay is raised. **Unaffected by the 2026-09-18 role-screen rewrite**: the
+overlay has no follow-up action of its own — it auto-closes and a tap closes it, the same as `gradeup`/`achieve`
+— so the split of the two role-model sheets into one screen changed nothing here. Mechanics and the seen-stamp's
+Rule 9 justification:
 [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-stage-completion-overlay-and-seenstagek).
 
 ## Toast (`ToastHost`)
@@ -67,7 +70,9 @@ Messages, verbatim:
 | task added | `실행이 추가됐어요` |
 | certification already paid | `{title} — 이미 등록된 자격입니다. 자격 지급은 영역과 무관하게 1회입니다.` |
 | profile photo saved / unreadable | `📷 사진이 등록됐어요` / `이미지를 읽지 못했어요` |
-| role model saved | `롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다` |
+| role model saved (the `roleEdit` sub-screen's `저장`) | `롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다` |
+| the `롤모델` screen's story `저장` (2026-09-18) | `원하는 모습 저장 · {n}자`, or `원하는 모습 지움` when the trimmed text is empty |
+| `롤모델 초기화` confirmed (2026-09-18) | `롤모델 삭제 — 근접도·단계 계산 대상 없음` |
 | AI verdict imported, with a verdict | `AI 판정 저장 · 단계 {n}건 · 요구 등급 {m}건` |
 | AI verdict imported, grades/stages only | `AI 제안 저장 · 단계 {n}건 · 요구 등급 {m}건` |
 | journal saved | `일지를 저장했어요` |

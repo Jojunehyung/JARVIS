@@ -59,7 +59,7 @@ certBest[sg] ← { p: cp, name, d }                                    // when s
 ```
 The achievement text reads `{title} — D{d} · +{pay}P (단계 차액) · 직무 {tier} ×{mult} ({field} 기준·교집합)`, keeping only the parts that apply. A trophy is stored as `{ kind: "ach", label: title, tier: achGrade(certD) ?? legacyCertGrade(cp) }`. Every `cert` KR whose title contains the certification name is marked done, in every goal, regardless of `goalId`.
 
-The same weighted formula is used for display in `AddTaskModal` and `RoleAdviceModal` (`Math.round(certGainOf * (jw?.mult ?? 1) / 10) * 10`); `CatalogModal` shows the unweighted figure.
+The same weighted formula is used for display in `AddTaskModal` and `RoleGradeSection` (the `롤모델` screen's `영역 등급` section, `RoleAdviceModal`'s body until 2026-09-18) (`Math.round(certGainOf * (jw?.mult ?? 1) / 10) * 10`); `CatalogModal` shows the unweighted figure.
 
 Duplicate protection: adding a certification task is refused when a task with the same title already exists, completed or not. Payment happens once per qualification, independent of 영역 (area) — the toast says `{title} — 이미 등록된 자격입니다. 자격 지급은 영역과 무관하게 1회입니다.`
 
@@ -92,7 +92,7 @@ KR progress for an exam KR: `krProgress = min(1, best.p / (band.p || 1))`; the r
 ## Role stages (v28) — a stated no-op
 
 `role.stages`'s `cert_held` condition type reads `heldCertsOf(state)` (the same held-certification list the CV
-and `RoleAdviceModal` already read) to test whether a named certification is held; every other condition type
+and `RoleGradeSection` already read) to test whether a named certification is held; every other condition type
 reads `bizSummary`, `dealPhase`, `state.folio`, `state.milestones`, `state.leads` or `state.notices`. None of
 this touches `calcExamPayout`, `certGainOf`, `jobWeightForCert`, `computeGrades` or any D value, grade cut or
 payout — the stage model is a second, independent number beside `roleGap`, never merged into it
