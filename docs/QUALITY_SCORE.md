@@ -31,7 +31,7 @@ Verdicts against the current code, last refreshed 2026-09-08 against the Phase 4
 | 11 promotion by evidence | `PromoteModal`, `promoteArea` | verified (E2E) — a CV edit through `ProfileModal` is confirmed not to be an alternate path (E2E, mutation-tested) |
 | 12 migrations | `migrate` v11–v14, `v` normalisation | verified (E2E: v10, no-`v`, v13 fixtures → v14) |
 | 13 tone | copy review | by-review; `PromoteModal` line "스스로에게 정직하게…" is borderline (tech-debt) |
-| 14 squared proximity | `roleGap` | verified (formula) |
+| 14 no role-model percentage | `roleAreas`, `roleStageOf`, `core-beliefs.md` Rule 14 amendment (2026-09-18) | verified — the proximity percentage, its squared curve, the stage-progress/journey percentages and the verdict probability are all retired; `roleAreas` returns `{ area, need, have, gap }` facts only, read by review |
 | 15 job-fit weighting | `jobWeightForCert`, `WEIGHT_MATRIX`, `CERT_W_EXC` | verified (smoke: S/A/C cases, exception 사회복지사 1급) |
 | 16 evidence regulations | `EvidenceModal`, `StudyVerifyModal`, `STUDY_REQ`, image keys | verified (E2E: photo gate, study artifact, viewer, key cleanup) |
 | 17 activity kinds | `ActivityLogModal`, `detectKind`, `applyMeasures` | verified (E2E: reading, fitness) |

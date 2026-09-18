@@ -1,21 +1,15 @@
 # Feedback — overlays and toast
 <!-- src: SPEC-4-7 -->
 
-Two full-screen overlays (`Overlay`) and one toast (`ToastHost`) carry every confirmation the app gives. Both state facts only: what was paid, which goal moved, how far the 롤모델 (role model) is. Encouragement is not allowed, and a completion that contributed to no goal says so ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
+Two full-screen overlays (`Overlay`) and one toast (`ToastHost`) carry every confirmation the app gives. Both state facts only: what was paid, which goal moved, which area gained a rank. Encouragement is not allowed, and a completion that contributed to no goal says so ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
 
 ## `Overlay`
 `fixed inset-0 z-50` over `bg-black/75`; closes on click and after 2,400 ms. There is no queue — a second overlay replaces the first. Three branches: `gradeup`, `achieve`, and (2026-09-18) `stage`.
 
 ### `gradeup` — RANK UP
-Cyan-bordered card, `anim-bigpop`. Contents in order: the label `RANK UP`, `PortraitSprite` at size 64 (the parametric portrait, so an uploaded profile photo is not shown), the 영역 (area) name, the new rank in 2xl cyan, then the proximity line and the closing sentence `증거로 증명된 승급입니다.`
+Cyan-bordered card, `anim-bigpop`. Contents in order: the label `RANK UP`, `PortraitSprite` at size 64 (the parametric portrait, so an uploaded profile photo is not shown), the 영역 (area) name, the new rank in 2xl cyan, then the closing sentence `증거로 증명된 승급입니다.`
 
-Proximity line, only when `roleTo != null`:
-
-| Case | Text |
-|---|---|
-| `roleTo !== roleFrom` | `롤모델 근접도 {from}% → {to}%` |
-| unchanged, area is a role-model target | `롤모델 근접도 변화 없음 — 이미 요구를 충족한 영역` |
-| unchanged, area is not targeted | `롤모델 요구 외 영역 — 근접도 변화 없음` |
+**No proximity line since 2026-09-18** (the [Rule 14](../design-docs/core-beliefs.md#rule-14) amendment, third role-model change of the day): the overlay used to state a role-model proximity delta (`롤모델 근접도 {from}% → {to}%`, or one of two no-change lines) computed by `promoteArea` before and after the grade write; `promoteArea` no longer computes that delta at all — `rBefore`/`rAfter`/`roleTargeted` are gone, not merely unread — so the overlay carries no `롤모델` mention and no `%` of any kind.
 
 ### `achieve` — ACHIEVEMENT
 Amber-bordered card. Label `ACHIEVEMENT`, `TrophySvg` (`kind || "ach"`, tier colour, size 34), the name in amber, then:
@@ -70,9 +64,9 @@ Messages, verbatim:
 | task added | `실행이 추가됐어요` |
 | certification already paid | `{title} — 이미 등록된 자격입니다. 자격 지급은 영역과 무관하게 1회입니다.` |
 | profile photo saved / unreadable | `📷 사진이 등록됐어요` / `이미지를 읽지 못했어요` |
-| role model saved (the `roleEdit` sub-screen's `저장`) | `롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다` |
+| role model saved (the `roleEdit` sub-screen's `저장`) | `롤모델 기준 저장 · 단계 {m}건 · 요구 등급 {n}건` (2026-09-18, third change of the day — the old `근접도는 검증된 등급으로만 계산됩니다` wording named a figure that no longer exists) |
 | the `롤모델` screen's story `저장` (2026-09-18) | `원하는 모습 저장 · {n}자`, or `원하는 모습 지움` when the trimmed text is empty |
-| `롤모델 초기화` confirmed (2026-09-18) | `롤모델 삭제 — 근접도·단계 계산 대상 없음` |
+| `롤모델 초기화` confirmed (2026-09-18) | `롤모델 삭제 — 단계 계산 대상 없음` (2026-09-18, third change of the day — dropped `근접도·`, which named a retired figure) |
 | AI verdict imported, with a verdict | `AI 판정 저장 · 단계 {n}건 · 요구 등급 {m}건` |
 | AI verdict imported, grades/stages only | `AI 제안 저장 · 단계 {n}건 · 요구 등급 {m}건` |
 | journal saved | `일지를 저장했어요` |

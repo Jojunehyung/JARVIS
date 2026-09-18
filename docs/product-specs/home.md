@@ -1,17 +1,17 @@
 # Home tab — the CV
 <!-- src: SPEC-4-2 -->
 
-Home is one CV card plus one small proximity line under it — nothing else (2026-09-15, [decision log](../design-docs/decision-log.md)). The user asked, verbatim, for the `성장` tab gone and home stripped to "정량적 평가만" (quantitative evaluation only) plus one small percentage under it. `HomeTab` renders exactly two top-level children inside `<main>`: the CV `<section>` and the proximity line. Everything on it is derived from `state` at render — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onProfile (opens ProfileModal), onSettings (opens SettingsModal), onPromote (opens PromoteModal for an area), onRole (opens the 롤모델 screen, RoleModal — renamed from onRoleAdvice 2026-09-18), onWall (opens AchievementWallModal)`.
+Home is one CV card plus one small row under it — nothing else (2026-09-15, [decision log](../design-docs/decision-log.md)). The user asked, verbatim, for the `성장` tab gone and home stripped to "정량적 평가만" (quantitative evaluation only) plus one small percentage under it; that one percentage — the role-model proximity line — was itself retired on 2026-09-18 (third role-model change of the day, [Rule 14](../design-docs/core-beliefs.md#rule-14) amendment) at the user's later request, along with every other percentage the role model showed. `HomeTab` renders exactly two top-level children inside `<main>`: the CV `<section>` and the row below it. Everything on it is derived from `state` at render — nothing is stored ([Rule 9](../design-docs/core-beliefs.md#rule-9)). Props: `state, today, imgs, onProfile (opens ProfileModal), onSettings (opens SettingsModal), onPromote (opens PromoteModal for an area), onRole (opens the 롤모델 screen, RoleModal — renamed from onRoleAdvice 2026-09-18), onWall (opens AchievementWallModal)`.
 
 Deliberately absent: goal progress and pace (the user's own decision — `목표별 진행률은 목표탭에서만 하고 롤모델 근접도만`, so progress with pace stays in `목표` only, [goals.md](goals.md)), and everything dated today — the briefing, today's schedule and business counts, today's tasks, today's completion count. None of it disappeared; [Where everything went](#where-everything-went-and-why) below is the map.
 
 ## Admission rule
-A row is admitted only when its value is a number, a grade, or an ordinal credential level — age, a degree level with status, months of practice, an area grade `n/9`, a certification or exam D, a count (held certifications, exam bests, portfolio pieces, trophies, verified achievements), role-model proximity `%`, or (v28) a role stage's ordinal position `k/n` with a derived progress percentage (2026-09-18, replacing the condition count `c/m`, which stays on the button's `title`) — an ordinal stage position and its progress percentage are quantitative values by the same rule as the grade `n/9` line, never a nominal label. A nominal field appears only as the label that qualifies such a value: the major of the degree, the most recent role behind the practice months, the name of the certification or exam whose D is shown, the stage name beside `k/n`. Portrait and display name stay, as the CV's identity.
+A row is admitted only when its value is a number, a grade, or an ordinal credential level — age, a degree level with status, months of practice, an area grade `n/9`, a certification or exam D, a count (held certifications, exam bests, portfolio pieces, trophies, verified achievements), or (v28) a role stage's ordinal position `k/n` and its condition count `c/m` (both counts, never a percentage since the [Rule 14](../design-docs/core-beliefs.md#rule-14) amendment of 2026-09-18) — an ordinal stage position and a condition count are quantitative values by the same rule as the grade `n/9` line, never a nominal label. A nominal field appears only as the label that qualifies such a value: the major of the degree, the most recent role behind the practice months, the name of the certification or exam whose D is shown, the stage name beside `k/n`. Portrait and display name stay, as the CV's identity.
 
 Excluded on the same rule: school and employer names, e-mail, phone, gender, `현재 신분` (the header already states it on every tab), knowledge and job directions, anything dated today, goal progress and pace, money (a record, not an evaluation), and free-text achievement entries (one tap away behind the `성취` row, in full, inside `AchievementWallModal`).
 
 ## The CV card
-One `<section>`, three blocks top to bottom — identity, records, grades — so the grade rows sit last, next to the proximity line computed from them.
+One `<section>`, three blocks top to bottom — identity, records, grades — so the grade rows sit last, next to the stage/role row computed from them.
 
 ### Identity row
 `Portrait` at size 64 in the existing frame; `{displayName(state.profile)}`; `{ageText(state.profile, today)}`; the `프로필 편집` button (renamed 2026-09-16 from `프로필` — a bare `프로필` button inside a tab now named `프로필` was ambiguous, and it would collide with an E2E `clickText("프로필")` against the nav; opens `ProfileModal`) and, on the same line since schema v27 ([daily-reader.md](daily-reader.md)), a `오늘 읽을 것 ›` button (`onReader` → `setModal({ type: "reader" })`, opening the daily reader) — the two buttons are the only controls on the CV besides the corner settings icon, since `ProfileModal` owns the photo, the personal facts and the records. Last, in the top-right corner of the card, an icon-only settings button (`aria-label`/`title` `설정`, lucide `Settings`) → `onSettings`. It sits on the card, not the shared header, because the header is common to all six tabs and its right edge already carries the streak/shield pill.
@@ -37,36 +37,33 @@ A truncated row is never the only place a name lives: every held certification a
 ### Grades
 `SectionLabel` `영역 등급`, then one `AreaGradeRow({ area, onPromote })` per `state.areas` entry — the growth tab's former row, moved verbatim: grade box, `{name}`, `등급 {cur.name} · 다음 관문 {next.name}` (or `정점 도달` at grade 9), `{grade}/9`. With a next rank the **row is the button** (`Lock`, `›`) → `onPromote(area)` opens `PromoteModal`; at grade 9 the row is a plain `div` with `Trophy` and no press state (`PromoteModal` returns `null` there). This is the only control on home that promotes — nothing else does ([Rule 11](../design-docs/core-beliefs.md#rule-11)). `PromoteModal`, `promoteArea`, `EvidencePicker` and `composeEvidence` are unchanged; mechanics: [evidence-and-promotion.md](../design-docs/evidence-and-promotion.md).
 
-## The stage headline and the proximity line
+## The stage/role row (2026-09-18, no percentage)
 
-Two children of `<main>` after the CV card, in this order (2026-09-18, replacing the v28 stage line, which sat
-**under** the proximity line and stated only `k/n · 조건 c/m`): the **stage headline** first, when stages exist
-(`sp = stageProgressOf(state, today)` non-null), then the **proximity line**, unchanged.
+One child of `<main>` after the CV card: a single row stating the role model's stage facts, with no bar, no
+caption and no `%` of any kind since the [Rule 14](../design-docs/core-beliefs.md#rule-14) amendment. This
+replaces the two-line pair this section used to describe — a stage-progress headline (`단계 k/n {name} · 진행
+{pct}%` with a cyan bar and a verdict-probability caption) stacked above an unchanged proximity line
+(`롤모델 근접도 {match}% · {name} ›`) — both retired the same day the story/verdict change and the one-screen
+rewrite shipped (earlier that day) added them. `HomeTab` computes `const rs = roleStageOf(state, today);` in
+their place; `roleGap`/`stageProgressOf`/`probText` no longer exist.
 
-The headline (`onClick={onRole}`, `title={stageLine(sp.rs)}` — the condition count `c/m` and the quit
-text moved here, off the visible row): a row `단계` (zinc) `{sp.k}/{sp.n}` (mono bold cyan) `{sp.name}`
-(truncating) `· 진행 {sp.pct}%` (mono cyan, right-aligned) `›`; a cyan `Bar` at `sp.pct / 100` underneath; the
-newest verdict's caption `{probText(last.probability)} · {last.date}` (mono zinc) on a third line when a
-verdict exists. `sp.pct` is `stageProgressOf`'s floored percentage — the number that moves with every record
-the user adds ([metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#stageprogressofstate-today-and-the-headline-decision));
-the journey figure (`sp.journey`, moving at most `1/n` per stage) is never printed here — it prints on the
-`롤모델` screen only (the timeline's journey line, and once more inside a `사업` grade gap's `RoleStageLines`
-block), never on the CV. Without stages nothing new renders — the headline is absent, not disabled, on every
-save that predates the story/verdict change or that never opened the stages editor.
+Three states, in order of precedence:
 
-The **proximity line**, unchanged in text, size and position relative to the card: with `rg = roleGap(state)`, a
-full-width button reading `롤모델 근접도` · `{rg.match}%` (`font-mono font-bold text-cyan-300`) · `· {rg.name}`
-(truncated) · `›` → `onRole` opens the `롤모델` screen (`RoleModal`, renamed from `onRoleAdvice`/`RoleAdviceModal`
-2026-09-18). Without a usable role (`rg === null` — no role model, no target above 0, or a role whose every
-target area is excluded, [TD-11](../exec-plans/tech-debt-tracker.md)): with `state.role` set but no usable
-grades, the inert `<p>` becomes a button `근접도 계산 대상 없음 — 세부 수정에서 요구 등급을 정해요 ›` opening
-`role` (2026-09-18); without any `role`, the inert fact `롤모델 미설정 — 근접도 계산 대상 없음` stays, not a
-button — the role model is set from `설정`, not from this line ([TD-29](../exec-plans/tech-debt-tracker.md)).
-Formula, demo numbers and the segmented-bar mechanics: [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md).
+1. **With stages** (`rs` non-null) — a button `onClick={onRole}` `title={stageLine(rs)}` (the quit text stays
+   on the title, unchanged): `단계` (zinc) `{Math.min(rs.k, rs.n)}/{rs.n}` (mono bold cyan) `{stageName(rs)}`
+   (truncating; `stageName` reads the current stage's name, or `모든 단계 충족`) `· 조건 {rs.condsMet}/{rs.condsTotal}`
+   (mono cyan, right-aligned) `›`. One line, no second line, no bar.
+2. **A role with no stages** — a button reading `{role.name} · 단계 없음 — AI 판정에서 받거나 세부 수정에서 적어요 ›`.
+3. **No role model** — an inert `<p>` reading `롤모델 미설정 — 설정에서 롤모델을 정해요` — not a button; the role
+   model is set from `설정`, not from this line.
 
-`roleGap`'s `match` percentage is **never read, touched or recomputed** by the headline; `sp.pct`/`sp.k`/`sp.n`
-are a second, independent figure the app derives from its own records (`role.stages`' fact conditions), never
-merged or averaged into the proximity figure ([Rule 14](../design-docs/core-beliefs.md#rule-14)).
+Mechanics (`roleStageOf`, `stageName`, `stageLine`, the twelve-stage model): [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md).
+
+**What replaces the two retired percentages is not designed here.** The user's instruction was to remove every
+percentage the role model showed or computed and defer what replaces them to a later plan; this row states only
+the fact lines that already existed (`k/n`, `c/m`) — no bar, ring, dot scale or other progress drawing was
+added in their place ([TD-93](../exec-plans/tech-debt-tracker.md): once stages exist, this row no longer states
+the role model's own name — the stage name fills that slot instead).
 
 ## `SettingsModal` (`modal.type: "settings"`)
 Opened by the CV's corner button. Title `설정`, a bottom sheet like every other modal — chosen over a sixth tab for the same reason `ProfileModal` is a modal: opened rarely, one modal slot, the `Modal` shell already scrolls. Two sections, both moved verbatim from the former growth tab's collapsed panels:
@@ -93,8 +90,8 @@ Opened by the CV's `성취` row. Title `성취의 벽`, read-only — the former
 |---|---|
 | `onPromote` → `PromoteModal`, growth area row | CV grade row (`AreaGradeRow`, on home) |
 | `onRoleModel` → `RoleModelModal`, growth headline button | `SettingsModal`'s `롤모델 설정` / `롤모델 수정`, opening the `롤모델` screen (2026-09-18); also the briefing's no-role `다음 단계` line |
-| `onRoleAdvice` → `RoleAdviceModal`, growth `방향 제안` button | the home proximity line (when `rg` exists) and the CV's third-state button (2026-09-18); the briefing's `다음 단계` line — all renamed `onRole` → the `롤모델` screen (`RoleModal`), `RoleAdviceModal` retired 2026-09-18 |
-| per-area proximity lines and squared bars, growth headline | `RoleGradeSection`, collapsed by default under the `롤모델` screen's `영역 등급` section (moved verbatim from `RoleAdviceModal`, 2026-09-18) |
+| `onRoleAdvice` → `RoleAdviceModal`, growth `방향 제안` button | the home stage/role row and the briefing's `다음 단계` line — all renamed `onRole` → the `롤모델` screen (`RoleModal`), `RoleAdviceModal` retired 2026-09-18; the row's own proximity percentage and the CV's third-state `근접도 계산 대상 없음` button were themselves retired later the same day (third role-model change, [Rule 14](../design-docs/core-beliefs.md#rule-14) amendment) |
+| per-area proximity lines and squared bars, growth headline | `RoleGradeSection`, collapsed by default under the `롤모델` screen's `영역 등급` section (moved verbatim from `RoleAdviceModal`, 2026-09-18); the bars and their legend paragraph were retired the same day, third role-model change — only the per-area requirement lines remain |
 | `onExport` / `onImport`, growth data section | `SettingsModal` |
 | `onReset` → `resetAll`, growth data section | `SettingsModal`, with `setModal(null)` fired first |
 | trophy strip, specialisation lines, exam bests, per-area achievement lists, growth `성취의 벽` | `AchievementWallModal` from the CV's `성취` row; the CV states only the counts |

@@ -10,7 +10,7 @@ Single React 18 file (`src/LifeManager.jsx`), Vite 5, Tailwind v3 **core utiliti
   setState((prev) => { const s = structuredClone(prev); /* mutate s */ return s; });
   ```
   Small updates may spread (`{ ...prev, goals: … }`), but never mutate `prev`.
-- Derived values (goal progress, pace, role-model proximity, job fit) are computed in render or memoised — never stored ([Rule 9](design-docs/core-beliefs.md#rule-9)).
+- Derived values (goal progress, pace, role-model requirement-gap facts, job fit) are computed in render or memoised — never stored ([Rule 9](design-docs/core-beliefs.md#rule-9)).
 - Effects and toasts are chained with `queueMicrotask` (+ `setTimeout` when a delay is needed). Only two full-screen overlays exist (`gradeup`, `achieve`); adding a third is a design decision. Scheduling happens inside the `setState` updater, which React 18 StrictMode runs twice in development — keep what is scheduled idempotent, not a convenience.
 - Schema change = new `if (s.v < N)` block in `migrate`, `v` bump in `freshState`, `@schema` JSDoc block update, and an E2E fixture step in `tools/e2e/flow4.js` ([Rule 12](design-docs/core-beliefs.md#rule-12)).
 

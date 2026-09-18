@@ -458,7 +458,7 @@ cover the reader's and the review's business lines; `flow9.js` covers the calend
   `liferpg-img-ev-*` / `liferpg-img-study-*-{n}` keys, and a missing or failed image never blocks the record from
   saving.
 - (v28) A milestone, a lead, a notice and a payment line pay nothing, complete nothing and move no goal, grade or
-  role-model proximity ([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 14](../design-docs/core-beliefs.md#rule-14),
+  role-model requirement fact ([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 14](../design-docs/core-beliefs.md#rule-14),
   [Rule 18](../design-docs/core-beliefs.md#rule-18)); none has a `todoOf` row (TD-72).
 - (v28) A lead never becomes a deal by itself — `계약 만들기 ›` only opens a prefilled, empty contract form; the
   lead's `dealId` is set only once that form is registered, by `addBiz`, never by any read of the lead alone.

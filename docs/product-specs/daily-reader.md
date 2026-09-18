@@ -77,10 +77,10 @@ the same numbers by construction, never a different one ([decision log](../desig
 
 | Key | Title | States | `action` |
 |---|---|---|---|
-| `role` | `롤모델 판정` | one derived item, from `roleVerdictDue(state, today)` and `stageProgressOf(state, today)`: no role model → `롤모델 미설정 — 설정에서 롤모델을 정해요`; a role but no verdict → `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요`; due (no verdict in `ROLE_VERDICT_DAYS` (30) days, or a stage completed since the last one) → `롤모델 재판정 — 마지막 {last.date} · {days}일 지남`, plus ` · 단계 {last stage} → {current stage}` when a stage rose (both figures capped at the stage count for display — [TD-84](../exec-plans/tech-debt-tracker.md) notes the `n → n` case at the last stage); otherwise → `롤모델 판정 · 마지막 {last.date} · {days}일 지남 · {probText(last.probability)} · 단계 {last stage}/{stageN}` | `{ type: "role" }` in every case (2026-09-18: renamed from `roleAdvice`, since `RoleAdviceModal` no longer exists — the `롤모델` screen opens the same whether or not a role model is set) |
+| `role` | `롤모델 판정` | one derived item, from `roleVerdictDue(state, today)` and `roleStageOf(state, today)`: no role model → `롤모델 미설정 — 설정에서 롤모델을 정해요`; a role but no verdict → `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요`; due (no verdict in `ROLE_VERDICT_DAYS` (30) days, or a stage completed since the last one) → `롤모델 재판정 — 마지막 {last.date} · {days}일 지남`, plus ` · 단계 {last stage} → {current stage}` when a stage rose (both figures capped at the stage count for display — [TD-84](../exec-plans/tech-debt-tracker.md) notes the `n → n` case at the last stage, now a plain stage count with no percentage); otherwise → `롤모델 판정 · 마지막 {last.date} · {days}일 지남 · 단계 {last stage}/{stageN}` — no probability caption since the [Rule 14](../design-docs/core-beliefs.md#rule-14) amendment of 2026-09-18 (third role-model change of the day) | `{ type: "role" }` in every case (2026-09-18: renamed from `roleAdvice`, since `RoleAdviceModal` no longer exists — the `롤모델` screen opens the same whether or not a role model is set) |
 
-This section lives in the reader, never the briefing: `buildBriefing` feeds the daily packet, and the AI's own
-probability must not travel back into a packet through it — `buildBriefing` stays byte-identical
+This section lives in the reader, never the briefing: `buildBriefing` feeds the daily packet, and the verdict's
+AI-stated text must not travel back into a packet through it — `buildBriefing` stays byte-identical
 ([metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-re-assessment-line--roleverdictduestate-today)).
 
 Neither the `roadmap`/`pipeline` sections nor this tenth section is a packet (unlike the daily and work packets, [assistant-bridge.md](../design-docs/assistant-bridge.md)):
@@ -162,8 +162,9 @@ pace. (v28) `오늘 업무` and `오늘·내일 회의 준비` now show the `직
 records are counted; `사업 로드맵` opens with the time line, then the eight open demo milestones with their
 conditions (the ninth, seeded `done`, is excluded); `사업 파이프라인 · 공고` lists the two demo leads (one
 overdue) and the one demo notice. (2026-09-18) The tenth section, `롤모델 판정`, reads `롤모델 판정 · 마지막
-{today} · 0일 지남 · AI 추정 확률 30% · 단계 1/9` — the demo's newest verdict is dated today, so the section is
-not due. See [demo-data.md](../design-docs/demo-data.md).
+{today} · 0일 지남 · 단계 1/9` (no probability caption since the same-day Rule 14 amendment, third role-model
+change) — the demo's newest verdict is dated today, so the section is not due. See
+[demo-data.md](../design-docs/demo-data.md).
 
 ## E2E coverage (written, not run — standing user instruction)
 

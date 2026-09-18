@@ -44,7 +44,7 @@ Returns `{ sections }` (2026-09-15; the `counts` field it used to return — `{ 
 | `goals` | every active goal, nearest deadline first: `{title} — {D-day} · 진행 {n}% · {pace}`. Severity 3 when `paceOf.gap <= −5`, when the deadline is within 7 days and progress is below 100 %, or when it has passed; those cases append the unmet KRs via `krRemainText` (at most two) | 3 / 1 |
 | `biz` | records, never tasks, in order: at most `BIZ_ALERT_MAX` (3) unpaid billed months (`{client} {title} — {month} 입금 미확인 {won}`) — the same constant and the same months the `실행` tab's to-do list names ([../product-specs/tasks.md](../product-specs/tasks.md)); up to `PAYMENT_ALERT_MAX` (3, v28) unpaid lump-sum lines (`{client} {title} — {kind} 입금 예정 {due} · 미확인`, carrying the deal's track); a `won` deal ending within `DEAL_END_SOON` months (`{client} {title} — {month} 종료 · 남은 계약 {won}`); a `quote` older than `QUOTE_STALE_DAYS` days (`{client} {title} — 견적 {n}일 경과 · {won}`); `다음 액션 기한 지난 리드 {n}건` (v28, `n > 0` only, carries `track: "biz"` and `packet: false` — below); up to `NOTICE_ALERT_MAX` (2, v28) open-notice lines (`공고 {title} — 마감 {D-day}`, `packet: false`); up to `ROADMAP_ALERT_MAX` (2, v28) not-done milestone lines (`마일스톤 {title} — {D-day}`, carrying `milestoneTrack`); then always the closing line `이번 달 계약 매출 {won} · 입금 확인 {won} · 남은 계약 {won}`. The closing line is the reason the section exists, so it is built last from at most `CAP − 1` alerts rather than a plain sixth item — a full slate of business alerts (an unpaid month, a payment line, an overdue lead and two near notices) can fill that budget and push an ending contract, a stale quote or a milestone line out of the briefing itself (TD-72's crowding note); the revenue line is never cut. Every line carries `action: { type: "biz" }`, which `closeBriefing` routes to the 사업 tab ([business.md](../product-specs/business.md)) | 3 / 2 / 2 / 1 |
 | `areas` | 영역 (areas) with no achievement in 30 days (role-model targets first, at most 3), `action: { type: "home" }` — the area's grade row and its promotion gate live on the CV; goals whose activity kind has no completion in 7 days (at most 3), `action: { type: "goals" }` | 2 |
-| `next` | no role model → say so; no gaps → `모든 요구 영역 충족 · 근접도 {n}%`; otherwise the first gap and its top recommendation from `roleRecommendations` — or, when the gap's area is `사업` and `role.stages` exist (v28), the stage tail instead: see [metrics-and-role-model.md](metrics-and-role-model.md#the-briefings-next-step-tail) | 2 / 1 / 2 |
+| `next` | no role model → `롤모델 미설정 — 설정에서 롤모델을 정해요`; a role with no requirement grades → `요구 등급 없음 — 세부 수정에서 정해요`; no gaps → `모든 요구 영역 충족`; otherwise the first gap and its top recommendation from `roleRecommendations` — or, when the gap's area is `사업` and `role.stages` exist (v28), the stage tail instead: see [metrics-and-role-model.md](metrics-and-role-model.md#the-briefings-next-step-tail) — no percentage anywhere in this line since the [Rule 14](core-beliefs.md#rule-14) amendment of 2026-09-18 | 2 / 2 / 1 / 2 |
 | `review` | no review whose `weekOf` is this Monday → `이번 주 리뷰 없음 (마지막 {date})` | 2 / 1 |
 | `journal` | today's entry length, and the date of a stored assistant reply | 1 |
 
@@ -61,7 +61,7 @@ Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CA
 `DEAL_END_SOON` 2 months.
 
 ## `roleRecommendations(state)`
-Originally extracted from `RoleAdviceModal`; shared, unchanged, by the briefing and `RoleGradeSection` (the `롤모델` screen's `영역 등급` section, since 2026-09-18) so the two compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
+Originally extracted from `RoleAdviceModal`; shared, unchanged in its own filtering and payout logic, by the briefing and `RoleGradeSection` (the `롤모델` screen's `영역 등급` section, since 2026-09-18) so the two compute the same thing. Returns `{ areas, gaps }` (renamed from `{ rg, gaps }` 2026-09-18, third role-model change of the day, alongside `roleGap` → `roleAreas` below) where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
 The bridge carries **five** packets in total (2026-09-17/18): the daily check-in, `오늘 업무 만들기`,
 `AI에게 회의 준비 묻기`, the fourth, `주간 회고` (v28), and the fifth, `AI에게 판정 묻기` (2026-09-18), below.
@@ -98,7 +98,7 @@ A text packet the user copies into an external chat. It opens with the role and 
 | `## 사업 (계약·매출)` | the summary line `- 이번 달 계약 {won} · 입금 확인 {won} · 남은 계약 {won} · 견적 대기 {won}`, then (v28) `- 입금 예정 {kind} {due} {client} {title} {won}` per payment line of an allowed deal (` · 입금 확인 {paidAt}` when paid), then `- 미수 {month} {client} {title} {won}` per unpaid billed month, then `- {진행 중\|예정} {client} {title} · {startMonth} ~ {endMonth} · 월 {won}` for `active`/`upcoming` deals — `bizPacketLines(state, today)` (2026-09-17, lifted to module level so the work packet below reuses it), built from the same `bizSummary` the tab and the briefing read, filtered to `PACKET_TRACKS` deals (v28), before the journal-trim loop below so its cap and behaviour are unaffected. A milestone, a lead and a notice **never** appear here — only the fourth packet (`주간 회고`, below) carries the roadmap, the pipeline and open notices | `PACKET_BIZ_LINES` = 6 |
 | `## 최근 일지 (7일)` | journal entries clipped to 200 characters | 7 |
 | `## 최근 주간 리뷰` | the newest review | 1 |
-| `## 연속·롤모델` | streak, shields, role-model proximity | 2 lines |
+| `## 연속·롤모델` | streak, shields, the role-model stage line (`- 롤모델 {name} · 단계 k/n · 조건 c/m`, `- 롤모델 {name} · 단계 없음`, or `- 롤모델 미설정` — no percentage since the [Rule 14](core-beliefs.md#rule-14) amendment of 2026-09-18) | 2 lines |
 
 The whole packet is capped at 4,000 characters; journal entries are dropped oldest-first until it fits — the schedule lines are built before that loop, so the cap behaves exactly as before. Photos are never included.
 
@@ -317,7 +317,8 @@ disabled until `role.story` is set. Built from the user's own `원하는 모습`
 text sent verbatim), the CV line, the area grades and requirements, the held certifications and exam bests,
 business-and-private record counts, the current stages with their condition values, and the last verdict. A
 reply may *propose* a role model — stages with conditions the app can evaluate, area requirement grades — and
-*state* a verdict (summary, probability, basis, position, gaps); nothing is saved without the user's tick, and
+*state* a verdict (summary, basis, position, gaps — **no probability**, retired 2026-09-18, third role-model
+change of the day, [Rule 14](core-beliefs.md#rule-14) amendment); nothing is saved without the user's tick, and
 stage conditions are evaluated by the app from its own records (`condValue`), never by the reply. Full mechanics
 of the confirm sheet, the headline decision, the stage-completion overlay and the verdict history live in
 [metrics-and-role-model.md](metrics-and-role-model.md#the-story-the-verdict-and-stage-progress-2026-09-18); this
@@ -334,18 +335,21 @@ section documents the packet and the parser only.
 | `## 보유 자격·시험` | held certifications (`heldCertsOf`) and exam bests (`examBestText`), or `- 자격 없음` / `- 시험 없음` |
 | `## 기록 요약` | counts only, computed over `deals`/`milestones` filtered by `PACKET_TRACKS` (won/active/upcoming contract counts, this month's revenue, portfolio and AI-portfolio counts, milestone completion, per-stage lead counts, per-status notice counts) — never a deal title, client, lead name, notice title, milestone title, project or work item; a day-job record's existence is not counted |
 | `## 현재 단계` | per stage, its name and (unless trimmed) one line per condition value, or `- 없음` without stages |
-| `## 지난 판정` | the newest verdict's date, `probText`, capped stage figure and clipped summary, or `- 없음` |
+| `## 지난 판정` | `- {date} · 단계 {k}/{n} · {clipped summary}` for the newest verdict, or `- 없음` — no probability figure since 2026-09-18 (third role-model change of the day) |
 
-`ROLE_PACKET_HEAD` (verbatim, five numbered rules): facts and numbers only, `해요체`; a company/role target is
-judged against the real hiring specs of the last three years, a founding target against real survival/success
-rates, uncertain figures marked `추정`; scores/grades/payouts/difficulty are never evaluated or changed, grade
-names quoted exactly as `## 영역 등급` states them; stages propose only conditions the app can evaluate — the
-`type` and value vocabulary of `## 조건 종류` (generated from `COND_TYPES`, so the head can never drift from the
-evaluator) — at most 12 stages of 5 conditions each, stage names ≤ 40 chars, certification names official,
-area names from `## 영역 등급` only, requirement grades 1–8; the reply closes with a ≤ 5-line verdict (summary,
-probability, basis, position, gaps) then one JSON block
-(`{"verdict":{...},"stages":[...],"areas":{...},"note":"..."}`, `"stages": []` / `"areas": {}` when there is
-nothing to propose).
+`ROLE_PACKET_HEAD` (verbatim, five numbered rules): facts and numbers only, `해요체`, **and, since 2026-09-18
+(third role-model change of the day, [Rule 14](core-beliefs.md#rule-14) amendment), an explicit instruction not
+to state a likelihood figure**: `달성 가능성을 숫자로 쓰지 않아요.` (the app cannot strip a number the AI writes
+into its own free text anyway — [tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md) TD-92); a company/role
+target is judged against the real hiring specs of the last three years, a founding target against real
+survival/success rates, uncertain figures marked `추정`; scores/grades/payouts/difficulty are never evaluated or
+changed, grade names quoted exactly as `## 영역 등급` states them; stages propose only conditions the app can
+evaluate — the `type` and value vocabulary of `## 조건 종류` (generated from `COND_TYPES`, so the head can never
+drift from the evaluator) — at most 12 stages of 5 conditions each, stage names ≤ 40 chars, certification names
+official, area names from `## 영역 등급` only, requirement grades 1–8; the reply closes with a ≤ 4-line verdict
+(요약·근거·현재 위치·부족한 것 — summary, basis, position, gaps; **no probability line**, dropped 2026-09-18) then
+one JSON block (`{"verdict":{...},"stages":[...],"areas":{...},"note":"..."}`, `"stages": []` / `"areas": {}`
+when there is nothing to propose — the JSON template itself carries no `"probability"` key any more).
 
 **Trim order**, rebuilding and re-measuring after each step: (0) the story clips 2,000 → `ROLE_PACKET_STORY_TRIM`
 (1,000); (1) the condition lines drop from `## 현재 단계` (stage names stay); (2) the story clips again, →
@@ -356,10 +360,11 @@ values: [metrics-and-role-model.md](metrics-and-role-model.md#storage-arithmetic
 ### The reply — `parseRoleVerdictReply(text, state, today)`
 
 Reads the reply through the same `replyJson`; only `data.verdict`, `data.stages`, `data.areas` and `data.note`
-— `tasks`, `work`, `checks`, `deals`, `events` or any other key is ignored, not inspected. `verdict` is `null`
-unless `data.verdict` is an object, else `{ summary, probability (0–100, rounded, else null), basis, position,
-gaps[] (≤ 8, each ≤ 120 chars) }` — an object with an empty summary is still a verdict (the sheet prints `요약
-없음`). Each proposed stage is validated and, on the first invalid condition, **rejected whole** (a half-stage is
+— `tasks`, `work`, `checks`, `deals`, `events` or any other key is ignored, not inspected. A `probability` key
+inside `data.verdict` is likewise ignored the way `tasks` is (2026-09-18, third role-model change of the day) —
+not read, not copied, not stripped from an older verdict record that still carries one. `verdict` is `null`
+unless `data.verdict` is an object, else `{ summary, basis, position, gaps[] (≤ 8, each ≤ 120 chars) }` — an
+object with an empty summary is still a verdict (the sheet prints `요약 없음`). Each proposed stage is validated and, on the first invalid condition, **rejected whole** (a half-stage is
 never saved silently): empty name → `단계 이름이 없어요`; no conditions → `조건이 없어요`; an unknown `type` (not
 in `COND_TYPES`) → `알 수 없는 조건 종류예요: {type}`; a non-finite or negative `min` → `기준은 0 이상 숫자예요`;
 a `cert_held` whose `certByTitle(arg)` is `null` → `자격 표에 없는 이름이에요: {arg}` — matched, its `arg` is
@@ -372,13 +377,14 @@ last entry.
 
 Returns `{ raw, verdict, stages, areas, note }` — nothing here writes state; a proposal becomes a stage, a grade
 or a verdict only in `importRoleVerdict`, after the user's tick. The raw reply is never stored — not on the
-journal (`upsertReply` is not called), not on the verdict record, which holds only the clipped text and the
-probability.
+journal (`upsertReply` is not called), not on the verdict record, which holds only the clipped
+summary/basis/position/gaps text (no probability, 2026-09-18).
 
 ### What the role verdict packet never carries
 
 Never `profile.name`, `birth`, `email`, `phone`, a school name, an employer name, a client or lead name, a
-day-job record, or a transcript, and makes no network call. The AI's own probability reaches no packet other
-than `## 지난 판정` of this packet itself — the daily packet and the briefing stay byte-identical, since the
-re-assessment line lives in the reader, not the briefing (`buildBriefing` is unchanged;
-[../product-specs/daily-reader.md](../product-specs/daily-reader.md#the-role-verdict-section)).
+day-job record, or a transcript, and makes no network call. The daily packet and the briefing stay
+byte-identical, since the re-assessment line lives in the reader, not the briefing (`buildBriefing` is
+unchanged; [../product-specs/daily-reader.md](../product-specs/daily-reader.md#the-role-verdict-section)) — and,
+since 2026-09-18 (third role-model change of the day, [Rule 14](core-beliefs.md#rule-14) amendment), no packet
+of any kind asks for or states a probability figure any more.

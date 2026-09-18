@@ -95,6 +95,6 @@ KR progress for an exam KR: `krProgress = min(1, best.p / (band.p || 1))`; the r
 and `RoleGradeSection` already read) to test whether a named certification is held; every other condition type
 reads `bizSummary`, `dealPhase`, `state.folio`, `state.milestones`, `state.leads` or `state.notices`. None of
 this touches `calcExamPayout`, `certGainOf`, `jobWeightForCert`, `computeGrades` or any D value, grade cut or
-payout — the stage model is a second, independent number beside `roleGap`, never merged into it
-([Rule 14](core-beliefs.md#rule-14)), and is fully specified in
+payout — the stage facts (`roleStageOf`) are independent of the area-grade requirement facts (`roleAreas`), never
+merged into them ([Rule 14](core-beliefs.md#rule-14) amendment, 2026-09-18), and are fully specified in
 [metrics-and-role-model.md](metrics-and-role-model.md#role-stages-v28).
