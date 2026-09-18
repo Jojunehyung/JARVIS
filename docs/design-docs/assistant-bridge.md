@@ -61,8 +61,8 @@ Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CA
 ## `roleRecommendations(state)`
 Extracted from `RoleAdviceModal` so the briefing and the direction-advice screen compute the same thing. Returns `{ rg, gaps }` where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
-The bridge carries **four** packets in total (2026-09-17/18): the daily check-in, `오늘 업무 만들기`,
-`AI에게 회의 준비 묻기`, and the fourth, `주간 회고` (v28), below.
+The bridge carries **five** packets in total (2026-09-17/18): the daily check-in, `오늘 업무 만들기`,
+`AI에게 회의 준비 묻기`, the fourth, `주간 회고` (v28), and the fifth, `AI에게 판정 묻기` (2026-09-18), below.
 
 ## Tracks (v28) — what leaves the device
 
@@ -78,6 +78,7 @@ packet, never leaked), and there is no per-record override ([TD-73](../exec-plan
 | `오늘 업무 만들기` (`buildWorkPacket`) | `meetings` filtered by `PACKET_TRACKS.includes(meetingTrack(state, m))` before the slice; `eventLines` and the work-record section filtered by track; `taskLines` unchanged (a task has no track) |
 | `AI에게 회의 준비 묻기` (`buildPrepPacket`) | `docs` filtered by `trackOf(d)`; `dealsOfProject`'s result filtered by `trackOf(d, "biz")`; when the event's own track is outside `PACKET_TRACKS`, the function returns just the header plus `## 회의` with the single line `- 직장 트랙 일정 — AI 패킷에 실리지 않아요` |
 | `주간 회고` (`buildReviewPacket`, v28) | business track only by construction — see below |
+| `AI에게 판정 묻기` (`buildRoleVerdictPacket`, 2026-09-18) | record counts computed over `deals`/`milestones` filtered by `PACKET_TRACKS`; portfolio, leads and notices carry no track ([TD-78](../exec-plans/tech-debt-tracker.md)) and are counted whole — counts only, never a name — see below |
 
 Captions state the exclusion in the send pane itself: `BridgeModal`'s and `WorkBridgeModal`'s captions each gain
 the sentence `직장 트랙 기록은 실리지 않아요.`; `PrepBridgeModal`'s gains `직장 트랙 문서·계약은 실리지 않아요.`
@@ -304,3 +305,77 @@ duplicate landing on that future date.
 `workBridge` and `reviewBridge` with one confirm view — see [../product-specs/daily-work.md](../product-specs/daily-work.md#오늘-업무-만들기-and-주간-회고--workbridgemodal-generalised-v28).
 `importWork(list, date = today, track = null)` dates the registered items `date` and applies `track` or the
 Phase 1 default rule, appending ` · {date}` to the toast when `date` is not today.
+
+## The fifth packet — `AI에게 판정 묻기` (`buildRoleVerdictPacket` / `parseRoleVerdictReply`, 2026-09-18, the
+[Rule 7](core-beliefs.md#rule-7) amendment dated 2026-09-18)
+
+Opened from `RoleAdviceModal`'s `AI에게 판정 묻기 ›` button (`RoleVerdictModal`, `modal.type: "roleVerdict"`),
+disabled until `role.story` is set. Built from the user's own `원하는 모습` story (`role.story`, the one free
+text sent verbatim), the CV line, the area grades and requirements, the held certifications and exam bests,
+business-and-private record counts, the current stages with their condition values, and the last verdict. A
+reply may *propose* a role model — stages with conditions the app can evaluate, area requirement grades — and
+*state* a verdict (summary, probability, basis, position, gaps); nothing is saved without the user's tick, and
+stage conditions are evaluated by the app from its own records (`condValue`), never by the reply. Full mechanics
+of the confirm sheet, the headline decision, the stage-completion overlay and the verdict history live in
+[metrics-and-role-model.md](metrics-and-role-model.md#the-story-the-verdict-and-stage-progress-2026-09-18); this
+section documents the packet and the parser only.
+
+`buildRoleVerdictPacket(state, today)`, through the same `packetSection` helper, own cap `ROLE_PACKET_MAX` =
+12,000:
+
+| Section | Content |
+|---|---|
+| `## 원하는 모습` | the story as one line, or `- 없음 — 롤모델 설정에서 원하는 모습을 적어요` |
+| `## 이력` | the same `cvSummaryOf` line every packet states — never `profile.name`, `birth`, `email`, `phone`, a school or an employer |
+| `## 영역 등급` | one line per area: grade name and `n/9`, plus ` · 요구 {RANKS[need].name}` when `role.targets[id] > 0` |
+| `## 보유 자격·시험` | held certifications (`heldCertsOf`) and exam bests (`examBestText`), or `- 자격 없음` / `- 시험 없음` |
+| `## 기록 요약` | counts only, computed over `deals`/`milestones` filtered by `PACKET_TRACKS` (won/active/upcoming contract counts, this month's revenue, portfolio and AI-portfolio counts, milestone completion, per-stage lead counts, per-status notice counts) — never a deal title, client, lead name, notice title, milestone title, project or work item; a day-job record's existence is not counted |
+| `## 현재 단계` | per stage, its name and (unless trimmed) one line per condition value, or `- 없음` without stages |
+| `## 지난 판정` | the newest verdict's date, `probText`, capped stage figure and clipped summary, or `- 없음` |
+
+`ROLE_PACKET_HEAD` (verbatim, five numbered rules): facts and numbers only, `해요체`; a company/role target is
+judged against the real hiring specs of the last three years, a founding target against real survival/success
+rates, uncertain figures marked `추정`; scores/grades/payouts/difficulty are never evaluated or changed, grade
+names quoted exactly as `## 영역 등급` states them; stages propose only conditions the app can evaluate — the
+`type` and value vocabulary of `## 조건 종류` (generated from `COND_TYPES`, so the head can never drift from the
+evaluator) — at most 12 stages of 5 conditions each, stage names ≤ 40 chars, certification names official,
+area names from `## 영역 등급` only, requirement grades 1–8; the reply closes with a ≤ 5-line verdict (summary,
+probability, basis, position, gaps) then one JSON block
+(`{"verdict":{...},"stages":[...],"areas":{...},"note":"..."}`, `"stages": []` / `"areas": {}` when there is
+nothing to propose).
+
+**Trim order**, rebuilding and re-measuring after each step: (0) the story clips 2,000 → `ROLE_PACKET_STORY_TRIM`
+(1,000); (1) the condition lines drop from `## 현재 단계` (stage names stay); (2) the story clips again, →
+`ROLE_PACKET_STORY_TRIM2` (500); (3) the stage lines drop to `- 없음`. The header, the CV, the grades, the
+certificates, the counts and the last verdict are never dropped. Measured figures, packet lengths and demo
+values: [metrics-and-role-model.md](metrics-and-role-model.md#storage-arithmetic).
+
+### The reply — `parseRoleVerdictReply(text, state, today)`
+
+Reads the reply through the same `replyJson`; only `data.verdict`, `data.stages`, `data.areas` and `data.note`
+— `tasks`, `work`, `checks`, `deals`, `events` or any other key is ignored, not inspected. `verdict` is `null`
+unless `data.verdict` is an object, else `{ summary, probability (0–100, rounded, else null), basis, position,
+gaps[] (≤ 8, each ≤ 120 chars) }` — an object with an empty summary is still a verdict (the sheet prints `요약
+없음`). Each proposed stage is validated and, on the first invalid condition, **rejected whole** (a half-stage is
+never saved silently): empty name → `단계 이름이 없어요`; no conditions → `조건이 없어요`; an unknown `type` (not
+in `COND_TYPES`) → `알 수 없는 조건 종류예요: {type}`; a non-finite or negative `min` → `기준은 0 이상 숫자예요`;
+a `cert_held` whose `certByTitle(arg)` is `null` → `자격 표에 없는 이름이에요: {arg}` — matched, its `arg` is
+normalised to the official name (longest name first, [Rule 15](core-beliefs.md#rule-15)) so `condValue`'s exact
+match against `heldCertsOf` works. At most `ROLE_STAGES_MAX` (12) stages of `STAGE_CONDS_MAX` (5) conditions
+each are read. Each proposed area's name is matched **exactly** against `state.areas[].name` (unknown → `없는
+영역이에요: {name}`); its grade must be an integer 1–8 (else `요구 등급은 1–8이에요`); an area whose proposed
+grade equals the current requirement is **dropped** (only changes are listed); a duplicated name keeps the
+last entry.
+
+Returns `{ raw, verdict, stages, areas, note }` — nothing here writes state; a proposal becomes a stage, a grade
+or a verdict only in `importRoleVerdict`, after the user's tick. The raw reply is never stored — not on the
+journal (`upsertReply` is not called), not on the verdict record, which holds only the clipped text and the
+probability.
+
+### What the role verdict packet never carries
+
+Never `profile.name`, `birth`, `email`, `phone`, a school name, an employer name, a client or lead name, a
+day-job record, or a transcript, and makes no network call. The AI's own probability reaches no packet other
+than `## 지난 판정` of this packet itself — the daily packet and the briefing stay byte-identical, since the
+re-assessment line lives in the reader, not the briefing (`buildBriefing` is unchanged;
+[../product-specs/daily-reader.md](../product-specs/daily-reader.md#the-role-verdict-section)).

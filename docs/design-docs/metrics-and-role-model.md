@@ -103,6 +103,128 @@ byte-identical. See [assistant-bridge.md](assistant-bridge.md).
 `growth.md` (the retired tab's content map) carries one added row pointing here for the stages editor and the
 advice modal's stage block, since both now live behind `설정` and the CV rather than the old growth headline.
 
+## The story, the verdict and stage progress (2026-09-18)
+
+Schema stays **v28** — `role` gains three optional fields, none backfilled, the same "no migration" shape as the
+v26 memo/transcript change ([state-lifecycle.md](state-lifecycle.md)): `story?` (≤ `ROLE_STORY_MAX` 2,000 chars,
+the user's own `원하는 모습` written in `RoleModelModal`'s new first section, above the stages editor which is
+now labelled `세부 수정`), `verdicts?[{ id, date, probability?, summary, basis, position, gaps[], stageK, stageN,
+source: "ai" }]` (newest first, capped at `ROLE_VERDICTS_MAX` 24 — the oldest is dropped past the cap), and
+`seenStageK?` (a seen-stamp, below). Every reader tolerates their absence.
+
+### The fifth bridge packet and its parser
+
+`AI에게 판정 묻기` (`buildRoleVerdictPacket` / `parseRoleVerdictReply`) is the fifth packet the assistant bridge
+carries — see [assistant-bridge.md](assistant-bridge.md#the-fifth-packet--ai에게-판정-묻기) for its sections, cap
+and trim order, and the parser's validation table. It is built from the user's own story, the CV line, the area
+grades and requirements, the held certifications and exam bests, business-and-private record counts, the current
+stages with their condition values, and the last verdict — and carries no identifier. A reply may *propose*
+stages and area requirement grades, and *state* a verdict; nothing is saved without the user's tick
+([Rule 7](core-beliefs.md#rule-7) amendment, 2026-09-18).
+
+### `RoleVerdictModal` — send, paste, confirm
+
+Opened from `RoleAdviceModal`'s `AI에게 판정 묻기 ›` button (`modal.type: "roleVerdict"`, `roleVerdict` 39th
+value), disabled until `role.story` is set, with the caption `먼저 롤모델 설정에서 원하는 모습을 적어요 — 적은
+글이 패킷에 실려요.` Three steps sharing `PacketSendPane` / `ReplyPastePane` / `copyPacket` with the other bridge
+modals: **send** (the packet and its privacy caption); **paste** (`ReplyPastePane`, pre-ticks every
+non-rejected stage and area row on `읽기`); **confirm** — a verdict block (`AI 판단 · 검증되지 않음 · {today}`,
+`probText(probability)`, the summary, `근거:`/`현재 위치:` lines, gap lines, or `판정 없음 — 답변에 verdict가
+없어요` without one), then tickable stage rows (name, `why` or `근거 없음`, one mono condition line each, a
+rose reject reason when rejected — a stage with one invalid condition is rejected whole) and tickable area rows
+(`{name} 요구 {RANKS[need].name} (지금 {current ? RANKS[current].name : "제외"})`) — an area row appears only
+when the proposed grade differs from the current requirement. Saving replaces `role.stages` only when at least
+one stage is ticked; when stages already exist, `window.confirm("단계를 AI 제안으로 바꿔요. 계속할까요?")` gates
+it first (user data — no tick, no confirm, no write). `cert_held` arguments are normalised through
+`certByTitle(arg).n` (longest name first, [Rule 15](core-beliefs.md#rule-15)) before `condValue`'s exact-match
+read of `heldCertsOf`; an unmatched name rejects the stage with `자격 표에 없는 이름이에요: {arg}`. The raw reply
+is never stored, on the journal or the verdict — only the clipped `summary`/`basis`/`position`/`gaps` and the
+probability. Toasts: `AI 판정 저장 · 단계 {a}건 · 요구 등급 {b}건` with a verdict, `AI 제안 저장 · 단계 {a}건 ·
+요구 등급 {b}건` without one.
+
+### `stageProgressOf(state, today)` and the headline decision
+
+`stageProgressOf` → `null` without stages, else `{ rs, k, n, name, pct, journey, conds }`. `pct` is the current
+stage's fraction (mean of `min(1, value/min)` over its conditions, a stage without conditions counting as met)
+floored to a percentage, so `100` prints only once every condition is met; `journey` is `((k − 1) + fraction) /
+n` as a rounded percentage — the figure that moves at most `1/n` per stage. **The profile headline states `pct`,
+not `journey`**: `pct` is the number that moves with every record the user adds and names the stage it measures,
+while `journey` would blur which condition moved and is printed once, in the advice sheet's stage block
+(`진행 {pct}% · 전체 {journey}%`) — nowhere else. Both are derived at render, never stored
+([Rule 9](core-beliefs.md#rule-9)); the stage progress percentage is a second figure beside `roleGap`'s
+proximity, under its own label, never merged, averaged or weighted with it
+([Rule 14](core-beliefs.md#rule-14)). `condRatio(r)` (a threshold of 0 met by definition, past the threshold
+capped at 1) is the one top-level helper both `stageProgressOf` and `RoleStageLines`'s per-condition bars read.
+
+The `HomeTab` headline (`단계 {k}/{n} {name} · 진행 {pct}%` with a cyan bar, `title={stageLine(sp.rs)}`, opening
+`RoleAdviceModal`) renders **above** the unchanged proximity line, with the newest verdict's caption
+(`{probText(probability)} · {date}`) beneath the bar when a verdict exists; without stages the proximity line
+renders alone, as before v28.
+
+### The stage-completion overlay and `seenStageK`
+
+A third `Overlay` branch, `type: "stage"`: a cyan-bordered card with no portrait and no trophy — the mono label
+`STAGE`, `단계 완료`, the completed stage's name, `다음: {next stage name}` or `모든 단계 충족`, and `기록으로
+계산된 완료입니다.` — auto-closing after the existing 2,400 ms.
+
+`role.seenStageK` is a **seen-stamp, not stored progress** ([Rule 9](core-beliefs.md#rule-9)): it records which
+`k` the overlay was last shown for, exactly as `act.briefingSeen` records which day the reader was closed; `k`
+itself is always recomputed from the records. A save without a stamp, or a stage set just replaced by
+`saveRole`/`importRoleVerdict` (both stamp the new `k` in the same write, so replacing stages never fires the
+overlay), is stamped silently on the next render. A root effect (after the day-change effect) is the single
+place the overlay is raised: it compares the derived `k` against the stamp, raises the overlay only when the
+stamp exists and `k` rose since it was taken (a record write — a deal, a payment, a portfolio entry, a
+milestone, a lead, a notice, a certificate photo — is the only thing that can raise `k` between two stamped
+renders), and always re-stamps to the current `k` — a missing stamp or a lower `k` (a deleted record) is
+stamped silently, with no overlay.
+
+### Verdict history and the delta line
+
+`RoleAdviceModal`'s `AI 판정 기록` block: the `AI에게 판정 묻기 ›` button and its story caption, then — with two
+or more verdicts — the delta line `확률 {a} → {b} ({date a} → {date b}) · 단계 {ka} → {kb}` between the two
+newest, then the list newest first (label, `probText` + `단계 {k}/{n}`, the summary; the **newest** entry alone
+also prints `근거:`, `현재 위치:` and its gap lines) — `AI 판정 없음` without any. The list renders at most
+`ROLE_VERDICTS_MAX` entries (the store's own cap) — no further UI cap.
+
+**Known limit** ([TD-84](../exec-plans/tech-debt-tracker.md)): when the reader's re-assessment line appends a
+stage-rose suffix at the *last* stage, it reads `단계 n → n` — both `sp.k` and the verdict's `stageK` are capped
+at `n` for display, so the figure never visibly moves at the top of the ladder even though the stage did
+complete.
+
+### The re-assessment line — `roleVerdictDue(state, today)`
+
+`{ last, days, stageRose, due }`: due when there is no verdict yet, the last one is `ROLE_VERDICT_DAYS` (30) days
+old or older, or a stage has completed since it was given (`stageRose`, comparing the verdict's own `stageK`
+against the current derived `k`). Read by the reader's tenth section, `롤모델 판정` — see
+[daily-reader.md](../product-specs/daily-reader.md#the-role-verdict-section) — never by a packet: the AI's own
+probability must not travel back into a packet through the briefing, so `buildBriefing` stays byte-identical.
+
+### Storage arithmetic
+
+`STORAGE_BUDGET` = 3,672,064 chars. Story: `,"story":""` (11 chars) + up to 2,000 → ≤ 2.0 k once. A verdict record
+≈ 130 chars of overhead (measured: an empty one is 140 chars, the plan's ≈130 estimate having used a shorter
+`id`); full (300 + 500 + 300 + 8 × 122) ≈ 2.2 k; typical ≈ 600. `ROLE_VERDICTS_MAX` (24) × 2.2 k ≈ 53 k at the cap
+(1.4 % of the budget), ≈ 14 k typical — the oldest is dropped past 24. `seenStageK`: `,"seenStageK":1` = 15 chars.
+Every verdict save runs `recordFits(nextRole, JSON.stringify(prev.role || {}).length, "판정을")`.
+
+### Demo figures (2026-09-18)
+
+`demoState`'s `s.role` gains `story` (a two-sentence `원하는 모습` about the medical-AI company), `seenStageK: 1`
+(matching the seeded stage so no overlay fires on demo entry) and two AI-stated verdicts a month apart —
+`probability: 30` dated today, `probability: 20` dated `shiftDay(today, -29)`, both `stageK: 1`/`stageN: 9`,
+`source: "ai"`. Stage 1 reads `deals_active 1/1` met and `payment_paid 'deposit' 0/1` unmet →
+`stageProgressOf(demo)` = `{ pct: 50, journey: 6, k: 1, n: 9 }`; the headline reads `단계 1/9 계약 기반 개발자 ·
+진행 50%` with the caption `AI 추정 확률 30% · {today}`; the advice sheet's delta line reads `확률 20% → 30%` ·
+`단계 1 → 1` · `진행 50% · 전체 6%`; the reader's tenth section reads `롤모델 판정 · 마지막 {today} · 0일 지남 ·
+AI 추정 확률 30% · 단계 1/9`. The demo role verdict packet measures **2,434 chars**. `stageLine(rs)` is unchanged
+at `롤모델 1/9단계 · 조건 3/14 · 전환 조건 미충족 (0/1)`.
+
+Measured on synthetic heavy fixtures: 12 five-condition stages with long arguments trim story 2,000 → 1,000 and
+drop the condition lines, ending at **3,376 chars** with 12 stage lines; 260 forty-char areas (untrimmable by the
+reductions that touch stages and the story alone) run the whole chain (story → 500, condition lines dropped,
+stage lines → 0) and stay at **16,325 chars**, because the header, the CV, the grades, the certificates, the
+counts and the last verdict are never dropped.
+
 ## Direction (방향) advice (`RoleAdviceModal`)
 `방향 제안 — {role.name}` opens on the per-area requirement lines and segmented bars (above), followed once by the bar-legend paragraph `칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.` — rendered once under the bars rather than repeated at the end of each branch below (2026-09-15; it sat there, once per branch, while this modal was reached from the growth tab). Then, per area with `gap > 0`: `{RANKS[have].name} → {RANKS[need].name} · {gap}단계`, `다음 관문: {RANKS[have + 1].name} 승급 — 이 영역의 성취·증거가 필요합니다.`, a `JOB_FIELDS` toggle row that edits `area.dir` (intersection rule, [Rule 15](core-beliefs.md#rule-15)), then up to 4 certifications from `areaCatHints(state, area).cats` with `gain = round(certGainOf × jw.mult / 10) × 10` (gain 0 dropped; sorted by multiplier desc, then D asc) and, when the area hints an exam, up to 3 next bands above the current best `p`. No match → `매칭되는 표준 성취가 없습니다 — 이 영역은 프로젝트·실적 증거로 승급을 진행하세요.`; every gap closed → `모든 요구 영역을 충족했습니다. 근접도 {match}%.`
 

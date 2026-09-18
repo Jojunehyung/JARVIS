@@ -71,15 +71,28 @@ the same numbers by construction, never a different one ([decision log](../desig
 | `roadmap` | `사업 로드맵` | first `timeLine(state, today)` (`이번 주 사업 {h}/{budget}h · 남은 날 {d}`), then `stageOrderNote(milestones)` when present, then one item per not-done milestone by `milestoneOrder` (`milestoneLine`), each with a `조건: {clipped condition}` sub-line when the milestone carries one | `{ type: "biz" }` |
 | `pipeline` | `사업 파이프라인 · 공고` | leads not won whose next action is past (`leadLine`), then leads due within `LEAD_SOON_DAYS` (3), then open notices past or within `NOTICE_SOON_DAYS` (14) (`noticeLine`), each with a `메모: {note}` sub-line when the record carries one | `{ type: "biz" }` |
 
-Neither section is a packet (unlike the daily and work packets, [assistant-bridge.md](../design-docs/assistant-bridge.md)):
+**A tenth section (2026-09-18), after `goals`:**
+
+<a id="the-role-verdict-section"></a>
+
+| Key | Title | States | `action` |
+|---|---|---|---|
+| `role` | `롤모델 판정` | one derived item, from `roleVerdictDue(state, today)` and `stageProgressOf(state, today)`: no role model → `롤모델 미설정 — 설정에서 롤모델을 정해요`; a role but no verdict → `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요`; due (no verdict in `ROLE_VERDICT_DAYS` (30) days, or a stage completed since the last one) → `롤모델 재판정 — 마지막 {last.date} · {days}일 지남`, plus ` · 단계 {last stage} → {current stage}` when a stage rose (both figures capped at the stage count for display — [TD-84](../exec-plans/tech-debt-tracker.md) notes the `n → n` case at the last stage); otherwise → `롤모델 판정 · 마지막 {last.date} · {days}일 지남 · {probText(last.probability)} · 단계 {last stage}/{stageN}` | `{ type: "roleAdvice" }`, or `{ type: "role" }` without a role model |
+
+This section lives in the reader, never the briefing: `buildBriefing` feeds the daily packet, and the AI's own
+probability must not travel back into a packet through it — `buildBriefing` stays byte-identical
+([metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#the-re-assessment-line--roleverdictduestate-today)).
+
+Neither the `roadmap`/`pipeline` sections nor this tenth section is a packet (unlike the daily and work packets, [assistant-bridge.md](../design-docs/assistant-bridge.md)):
 `pipeline` states the **full** lead and notice line, never a count standing in for one, since the reader's own
 rule ([Rule 13](../design-docs/core-beliefs.md#rule-13)) applies here the same as everywhere else in this
 screen. The `계약·입금 미확인` (`biz`) section restates the briefing's payment-line, overdue-lead-count and
 open-notice lines by construction (it reuses the briefing's own `biz` items) — see
 [business.md](business.md#the-reader-and-the-calendar-file).
 
-The reader's own sections number **nine** (v28, up from seven); a `브리핑 ›` link row follows them (below) — the
-two together are what a user reads top to bottom, but only the nine above are `buildReader`'s `sections`.
+The reader's own sections number **ten** (up from nine, up from seven at v28); a `브리핑 ›` link row follows
+them (below) — the two together are what a user reads top to bottom, but only the ten above are `buildReader`'s
+`sections`.
 
 ## Track heads (v28)
 
@@ -148,7 +161,9 @@ no carried row); the follow-up section states the overdue item; the decisions se
 pace. (v28) `오늘 업무` and `오늘·내일 회의 준비` now show the `직장`/`사업` heads once the day-job project's
 records are counted; `사업 로드맵` opens with the time line, then the eight open demo milestones with their
 conditions (the ninth, seeded `done`, is excluded); `사업 파이프라인 · 공고` lists the two demo leads (one
-overdue) and the one demo notice. See [demo-data.md](../design-docs/demo-data.md).
+overdue) and the one demo notice. (2026-09-18) The tenth section, `롤모델 판정`, reads `롤모델 판정 · 마지막
+{today} · 0일 지남 · AI 추정 확률 30% · 단계 1/9` — the demo's newest verdict is dated today, so the section is
+not due. See [demo-data.md](../design-docs/demo-data.md).
 
 ## E2E coverage (written, not run — standing user instruction)
 
@@ -163,7 +178,11 @@ CV card and asserts its content. **Tracks and the roadmap/pipeline sections (v28
 `flow11.js` asserts the `오늘 업무` heads `직장 1건` / `사업 1건` / `개인 1건` in that order with one item per
 track planted; `flow8.js` asserts the `사업 로드맵` section states a planted milestone's pace and links
 (`3단계 · E2E 페이스 마일스톤 · D-10 · 업무 2/2 · 50%p 앞섬`) and the `사업 파이프라인 · 공고` section lists a
-planted lead's full line. See [tools/e2e/README.md](../../tools/e2e/README.md).
+planted lead's full line. **The tenth section (2026-09-18, written, not run):** `flow3.js` plants a re-dated
+verdict (`today − 31`) and asserts `롤모델 재판정 — 마지막 {date} · 31일 지남`, then an empty `role.verdicts`
+and asserts `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요`, and asserts the section's `›`
+(`aria-label="롤모델 판정 열기"`) opens `방향 제안 —`; `flow5.js`'s `READER_SECTIONS` gains `"롤모델 판정"`
+between `"뒤처진 목표 페이스"` and `"브리핑 ›"`. See [tools/e2e/README.md](../../tools/e2e/README.md).
 
 ## What the daily reader never does
 

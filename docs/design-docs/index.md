@@ -5,7 +5,7 @@ Engine and structure decisions. Rules are canonical in `core-beliefs.md`; everyt
 | Doc | Covers |
 |---|---|
 | [core-beliefs.md](core-beliefs.md) | The 19 invariant rules (achievement system 1–6, minimal identity 7–19) |
-| [assistant-bridge.md](assistant-bridge.md) | Agenda buckets, the daily-briefing rules, the four bridge packets (daily check-in, `오늘 업무 만들기`, `AI에게 회의 준비 묻기` since schema v27, and `주간 회고` since schema v28), the track filter (`PACKET_TRACKS`) every packet applies, and what the assistant never does |
+| [assistant-bridge.md](assistant-bridge.md) | Agenda buckets, the daily-briefing rules, the five bridge packets (daily check-in, `오늘 업무 만들기`, `AI에게 회의 준비 묻기` since schema v27, `주간 회고` since schema v28, and `AI에게 판정 묻기` since 2026-09-18), the track filter (`PACKET_TRACKS`) every packet applies, and what the assistant never does |
 | [job-weighting.md](job-weighting.md) | Job-fit multiplier: matrix, exceptions, intersection rule, evidence thresholds |
 | [decision-log.md](decision-log.md) | Dated product/engineering decisions |
 | [information-architecture.md](information-architecture.md) | Area → goal → KR → task hierarchy, KR–task bridge, the `실행` tab's time groups (not goal groups), screen map |
@@ -13,7 +13,7 @@ Engine and structure decisions. Rules are canonical in `core-beliefs.md`; everyt
 | [scoring-engine.md](scoring-engine.md) | Difficulty D, points P, grade cuts, certification and exam payout mechanics |
 | [goal-engine.md](goal-engine.md) | KR progress, goal progress, pace, deadlines, KR check-in, task creation rules |
 | [evidence-and-promotion.md](evidence-and-promotion.md) | Evidence gate, study tiers, activity logs, promotion gates |
-| [metrics-and-role-model.md](metrics-and-role-model.md) | Role-model proximity curve, streak and shields, and (schema v28) the optional nine-stage model beside proximity — condition grammar, the editor, `RoleAdviceModal`'s stage block, the briefing tail |
+| [metrics-and-role-model.md](metrics-and-role-model.md) | Role-model proximity curve, streak and shields, the optional nine-stage model beside proximity (schema v28), and (2026-09-18) the story, the fifth bridge packet and its AI verdict, stage-progress headline, the stage-completion overlay and verdict history |
 | [state-lifecycle.md](state-lifecycle.md) | Load → migrate → daily tick, migration policy (v11–v28), storage keys, date/id utilities |
 | [demo-data.md](demo-data.md) | What `demoState` contains and why |
 

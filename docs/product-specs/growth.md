@@ -10,7 +10,7 @@ The `성장` tab was removed on 2026-09-15: home became one CV plus a role-model
 | `성취의 벽` (collapsed) | `AchievementWallModal`, opened from the CV's `성취` row; the CV states the counts, the modal holds every earned item |
 | `데이터 — 백업 · 초기화` (collapsed) | `SettingsModal`, opened from the `설정` button in the CV's corner. Mechanics: [install-and-backup.md](install-and-backup.md) |
 | `롤모델 설정` / `롤모델 수정` button | `SettingsModal`'s `롤모델` section, which now (v28) also holds the stages editor — nine editable stages with evaluable conditions, beside the untouched proximity. Mechanics: [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md#role-stages-v28) |
-| `방향 제안` button | The home proximity line itself is now the entry (when a role model is set); the modal it opens, `RoleAdviceModal`, is unchanged, plus (v28) a stage block once stages exist |
+| `방향 제안` button | The home proximity line itself is now the entry (when a role model is set); the modal it opens, `RoleAdviceModal`, is unchanged, plus (v28) a stage block once stages exist, and (2026-09-18) an `AI 판정 기록` block with an `AI에게 판정 묻기 ›` button into `RoleVerdictModal` |
 
 Nav order became five tabs, `홈 · 목표 · 실행 · 일정 · 사업`, `grid-cols-5`, on 2026-09-15; a further rename and a
 sixth tab landed 2026-09-16 — `프로필 · 목표 · 할 일 · 일정 · 미팅 · 사업`, `grid-cols-6`; `업무` landed
