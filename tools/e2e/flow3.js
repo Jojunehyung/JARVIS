@@ -1,4 +1,4 @@
-// Remaining paths — exam KR and score report, exercise activity, the activity-kind gate, profile photo, direction advice, role-model stages and their editor, task and goal deletion, streak after a day gap
+// Remaining paths — exam KR and score report, exercise activity, the activity-kind gate, profile photo, the role screen `롤모델` (story templates, the storyline with its action buttons, the folded grade gaps, the reset) and its `roleEdit` sub-screen, the role verdict packet and reply, task and goal deletion, streak after a day gap
 module.exports = async (h) => {
   const { step, shot, clickText, clickInModal, clickInModalExact, assertDone, modalError, clickTab, hasText, expectText, typeInto, typeExact, completeQuest, closeModal, sleep, page, errors, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, openTodo } = h;
   // ── Profile photo upload (resizeImage path). The picker lives in the profile modal now, but the file input
@@ -155,15 +155,20 @@ module.exports = async (h) => {
     await sleep(1200); await closeModal();
   });
 
-  // ── Direction advice (RoleAdviceModal) → catalogue link. The sheet opens from the proximity line and leads with the
-  // per-area bars, whose cell widths are the squared curve `roleGap` averages (rule 14): read off the first bar and
-  // compared with the formula and with the save's grade and requirement for that area.
-  await step("the proximity line opens direction advice with the squared bars", async () => {
+  // ── The role screen (2026-09-18) → catalogue link. The screen opens from the proximity line; its grade gaps are folded
+  // away under `영역 등급` until `펼치기 ›`, and the per-area bars' cell widths are the squared curve `roleGap` averages
+  // (rule 14): read off the first bar and compared with the formula and with the save's grade and requirement for that area.
+  await step("the proximity line opens the role screen, whose grade-gap section expands to the squared bars", async () => {
     await clickTab("프로필");
     await clickText("롤모델 근접도"); await sleep(600);
+    const collapsed = await h.overlayText();
+    if (!collapsed.startsWith("롤모델")) throw new Error("the proximity line did not open the role screen: " + collapsed.slice(0, 60));
+    if (collapsed.includes("칸 하나 = 등급 한 단계")) throw new Error("the 영역 등급 section is open before `펼치기 ›`: " + collapsed.slice(0, 300));
+    if (!collapsed.includes("근접도 ")) throw new Error("the role screen states no proximity summary: " + collapsed.slice(0, 300));
+    await clickInModalExact("펼치기 ›");
     const sheet = await h.overlayText();
-    for (const t of ["방향 제안 —", "/ 요구", "칸 하나 = 등급 한 단계"]) {
-      if (!sheet.includes(t)) throw new Error(`direction advice does not state "${t}": ` + sheet.slice(0, 200));
+    for (const t of ["/ 요구", "칸 하나 = 등급 한 단계"]) {
+      if (!sheet.includes(t)) throw new Error(`the expanded 영역 등급 section does not state "${t}": ` + sheet.slice(0, 300));
     }
     const bar = await page.evaluate(() => {
       const row = document.querySelector(".fixed.inset-0 div.flex.h-2");
@@ -202,6 +207,23 @@ module.exports = async (h) => {
     const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
     return b ? { text: b.innerText.replace(/\s+/g, " ").trim(), title: b.getAttribute("title") || "" } : null;
   });
+  // The role screen, opened the way the user does: the CV stage headline. (Without stages the proximity line opens it.)
+  const openRole = async () => {
+    await clickTab("프로필"); await sleep(300);
+    const ok = await page.evaluate(() => {
+      const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
+      if (!b) return false; b.scrollIntoView({ block: "center" }); b.click(); return true;
+    });
+    if (!ok) throw new Error("no stage headline on the CV to open the role screen");
+    await sleep(500);
+  };
+  // The condition lines of the open role screen with their tone: met emerald, unmet rose (a peeked upcoming line is zinc).
+  const condLines = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    if (!ov) return [];
+    return [...ov.querySelectorAll("div")].filter((d) => (d.className || "").includes("font-mono") && (d.innerText || "").startsWith("- "))
+      .map((d) => ({ text: (d.innerText || "").trim(), emerald: /text-emerald-400/.test(d.className), rose: /text-rose-400/.test(d.className) }));
+  });
   const proximityFigure = () => page.evaluate(() => {
     const b = [...document.querySelectorAll("main button")].find((x) => (x.innerText || "").includes("롤모델 근접도"));
     return b ? ((b.innerText.match(/(\d+)%/) || [])[1] ?? null) : null;
@@ -239,11 +261,11 @@ module.exports = async (h) => {
       let sb = await stageButton();
       if (!sb || !sb.text.includes("단계 1/3") || !sb.title.includes("조건 1/4") || !sb.title.includes("전환 조건 미충족 (0/1)")) throw new Error("the planted stages read: " + JSON.stringify(sb));
       if ((await proximityFigure()) !== before) throw new Error(`proximity moved from ${before}% to ${await proximityFigure()}% when stages were planted`);
-      await page.evaluate(() => [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim())).click());
-      await sleep(500);
+      await openRole();
       const sheet = await h.overlayText();
-      for (const t of ["방향 제안 —", "단계", "1/3단계 · E2E 첫 계약", "- 계약 체결 수 'E2E단계고객' 0/1", "로드맵 열기 ›"]) {
-        if (!sheet.includes(t)) throw new Error(`direction advice does not state "${t}": ` + sheet.slice(0, 300));
+      for (const t of ["롤모델", "스토리라인", "1단계", "E2E 첫 계약", "진행 0%", "- 계약 체결 수 'E2E단계고객' 0/1", "계약 추가 ›",
+        "2단계", "조건 2개", "3단계", "조건 1개", "전체 0% · 전환 조건 미충족"]) {
+        if (!sheet.includes(t)) throw new Error(`the storyline does not state "${t}": ` + sheet.slice(0, 400));
       }
       await closeModal();
       const month = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
@@ -252,6 +274,22 @@ module.exports = async (h) => {
       await h.reload(); await clickTab("프로필"); await sleep(300);
       sb = await stageButton();
       if (!sb || !sb.text.includes("단계 2/3") || !sb.title.includes("조건 2/4") || !sb.title.includes("전환 조건 미충족 (0/1)")) throw new Error("after one won contract the line reads: " + JSON.stringify(sb));
+      // The met stage is compact with one `충족` mark and no date (none is stored, rule 9); stage 2 is the expanded card
+      await openRole();
+      const second = await h.overlayText();
+      for (const t of ["1단계", "E2E 완료 단계", "충족", "2단계", "E2E 실적", `- 보유 자격 '${saved.held}' 1/1`,
+        "- 포트폴리오 항목 수 'E2E단계포트폴리오' 0/1", "포트폴리오 추가 ›"]) {
+        if (!second.includes(t)) throw new Error(`the storyline after one contract does not state "${t}": ` + second.slice(0, 400));
+      }
+      // The journey line's `전환 조건 미충족` carries the same word, so it is removed before the timeline marks are counted
+      const marks = (second.replace(/미충족/g, "").match(/충족/g) || []).length;
+      if (marks !== 1) throw new Error(`the timeline marks ${marks} stages as met, expected the one done stage: ` + second.slice(0, 400));
+      const conds = await condLines();
+      const met = conds.find((c) => c.text.startsWith(`- 보유 자격 '${saved.held}'`));
+      const unmet = conds.find((c) => c.text.startsWith("- 포트폴리오 항목 수"));
+      if (!met || !met.emerald) throw new Error("the met condition is not emerald: " + JSON.stringify(met));
+      if (!unmet || !unmet.rose) throw new Error("the unmet condition is not rose: " + JSON.stringify(unmet));
+      await closeModal();
       await patchSave({ deals: [deal("e2e-stage-deal-2")], folio: [{ id: "e2e-stage-folio", title: "E2E단계포트폴리오", summary: "", stack: [], createdAt: `${month}-01` }] });
       await h.reload(); await clickTab("프로필"); await sleep(300);
       sb = await stageButton();
@@ -263,13 +301,15 @@ module.exports = async (h) => {
     }
   });
 
-  await step("the medical-AI preset seeds nine editable stages, the editor saves only role, and removing every stage drops the key", async () => {
+  await step("the editor's nine-stage seed button fills nine editable stages, the editor saves only role, and removing every stage drops the key", async () => {
     const original = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).role);
     if (!original || original.stages) throw new Error("the step expects a role model without stages: " + JSON.stringify(original));
     const stageInputs = () => page.evaluate(() => document.querySelectorAll(".fixed.inset-0 input[aria-label='단계 이름']").length);
+    // 2026-09-18: settings opens the `롤모델` screen and the manual editor sits behind its `세부 수정 ›`
     const openEditor = async () => {
       await h.openSettings();
       await clickInModalExact("롤모델 수정"); await sleep(400);
+      await clickInModalExact("세부 수정 ›"); await sleep(400);
     };
     try {
       // 2026-09-18: a story and an older verdict planted beside the stages must survive the editor's save untouched.
@@ -278,8 +318,8 @@ module.exports = async (h) => {
       await h.reload();
       await page.evaluate(() => { window.confirm = () => true; });
       await openEditor();
-      await clickInModalExact("의료 AI 솔루션 대표"); await sleep(300);
-      if ((await stageInputs()) !== 9) throw new Error(`the preset seeded ${await stageInputs()} stage cards`);
+      await clickInModalExact("기본 9단계 채우기"); await sleep(300);
+      if ((await stageInputs()) !== 9) throw new Error(`the nine-stage seed made ${await stageInputs()} stage cards`);
       if (!(await h.overlayText()).includes("9 / 12")) throw new Error("the stage count is not stated as 9 / 12");
       // An empty stage name is refused with its position
       await h.setValue(".fixed.inset-0 input[aria-label='단계 이름']", "", 0);
@@ -324,6 +364,290 @@ module.exports = async (h) => {
     }
   });
 
+  // ── The role screen (2026-09-18, second change of the day): one screen for the story, the storyline and the folded
+  // grade gaps. A template chip only fills the textarea, `저장` writes `role.story` alone, a `지금 할 것` button navigates
+  // to the place that changes its condition (it completes, pays and promotes nothing — rules 10, 11), and the footer's
+  // `롤모델 초기화` deletes the role record behind one confirm.
+  const STORY_TPL = {
+    job: "[회사] [직무]로 [시기]까지 입사하고 싶어요. 지금은 [현재 상황]이에요.",
+    founder: "[시기]까지 [분야] 회사를 세워 [규모] 규모의 대표가 되고 싶어요. 지금은 [현재 상황]이에요.",
+  };
+  const storyValue = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const t = ov && ov.querySelector("textarea[aria-label='원하는 모습']");
+    return t ? t.value : null;
+  });
+  const ctaEnabled = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll("button")].find((x) => /^(AI에게 판정 묻기|다시 판정) ›$/.test((x.innerText || "").trim()));
+    return b ? !b.disabled : null;
+  });
+  // Settings → the role screen: the path a save without stages takes (the CV headline needs stages).
+  const openRoleFromSettings = async () => {
+    await h.openSettings();
+    await clickInModalExact("롤모델 수정"); await sleep(400);
+  };
+  const otherKeys = (before, after) => Object.keys({ ...before, ...after })
+    .filter((k) => k !== "role" && k !== "lastTick" && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+  await step("the role screen fills a story template, appends a second one after a blank line, and the save writes role.story only", async () => {
+    const original = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).role);
+    try {
+      await openRoleFromSettings();
+      await h.setValue(".fixed.inset-0 textarea[aria-label='원하는 모습']", "");
+      await clickInModalExact("취업");
+      if ((await storyValue()) !== STORY_TPL.job) throw new Error("the first chip did not fill the empty story: " + JSON.stringify(await storyValue()));
+      await clickInModalExact("창업");
+      const both = STORY_TPL.job + "\n\n" + STORY_TPL.founder;
+      if ((await storyValue()) !== both) throw new Error("the second chip did not append after a blank line: " + JSON.stringify(await storyValue()));
+      if (!(await h.overlayText()).includes(`${both.length} / 2000`)) throw new Error("the counter does not state the story length: " + (await h.overlayText()).slice(0, 200));
+      const before = await readState();
+      await clickInModalExact("저장"); await sleep(500);
+      const after = await readState();
+      if (after.role.story !== both) throw new Error("role.story was not saved: " + JSON.stringify(after.role.story));
+      for (const k of ["name", "targets", "stages", "verdicts", "seenStageK"]) {
+        if (JSON.stringify(before.role?.[k]) !== JSON.stringify(after.role?.[k])) throw new Error(`saving the story moved role.${k}: ` + JSON.stringify(after.role?.[k]));
+      }
+      const changed = otherKeys(before, after);
+      if (changed.length) throw new Error("saving the story wrote other keys: " + changed.join(", "));
+      if ((await ctaEnabled()) !== true) throw new Error("the verdict CTA is still disabled after the story was saved");
+      try { await closeModal(); } catch {}
+    } finally {
+      await patchSave({ role: original });
+      await h.reload();
+    }
+  });
+
+  // The `지금 할 것` buttons of the current stage, in DOM order, by their known labels (a work row also ends in `›`).
+  const goButtons = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const card = ov && ov.querySelector("div.border-cyan-800");
+    if (!card) return [];
+    return [...card.querySelectorAll("button")].map((b) => (b.innerText || "").trim())
+      .filter((t) => /^(계약 추가|계약 목록|포트폴리오 추가|로드맵 열기|리드 추가|공고 추가|도감에서 찾기) ›$/.test(t));
+  });
+  // Where a tapped `지금 할 것` button landed: the stored business view, the highlighted tab, the open sheet's title.
+  const landing = () => page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const nav = [...document.querySelectorAll("nav button")].find((b) => (b.innerText || "").includes("사업"));
+    return {
+      bizView: s.ui?.bizView || null,
+      bizTab: !!nav && /text-cyan-300/.test(nav.className),
+      sheet: ov ? (ov.querySelector("h3")?.innerText || "").trim() : null,
+      main: (document.querySelector("main")?.innerText || "").replace(/\s+/g, " ").slice(0, 300),
+    };
+  });
+  const plantRole = (role) => page.evaluate((r) => {
+    const k = "liferpg-state-v1";
+    const s = JSON.parse(localStorage.getItem(k));
+    s.role = { ...(s.role || { name: "롤모델", targets: {} }), ...r };
+    localStorage.setItem(k, JSON.stringify(s));
+  }, role);
+  await step("the storyline shows done, current and upcoming stages, and each unmet condition's action button lands on its view, sheet or catalogue", async () => {
+    const st0 = await readState();
+    const stash = { role: st0.role, bizView: st0.ui?.bizView || null };
+    const held = (st0.profile?.certs || [])[0];
+    if (!held) throw new Error("the save holds no declared certification for the met condition");
+    const stage1 = { id: "e2e-rs1", name: "E2E 완료 단계", conds: [{ type: "cert_held", arg: held, min: 1 }] };
+    const stage3 = { id: "e2e-rs3", name: "E2E 다음 단계", conds: [
+      { type: "payment_paid", arg: "deposit", min: 1 }, { type: "cert_held", arg: "정보보안기사", min: 1 }, { type: "monthly_revenue", min: 1000000 }] };
+    try {
+      // Plant A: stage 1 met, stage 2 current with five unmet conditions, stage 3 upcoming
+      await plantRole({ stages: [stage1, { id: "e2e-rs2", name: "E2E 현재 단계", conds: [
+        { type: "deals_won", arg: "E2E화면고객", min: 1 }, { type: "folio_match", arg: "E2E화면포폴", min: 1 },
+        { type: "milestone_done", arg: "E2E화면", min: 1 }, { type: "leads_stage", arg: "demo", min: 1 },
+        { type: "notice_status", arg: "submitted", min: 1 }] }, stage3], seenStageK: 2 });
+      await h.reload();
+      await openRole();
+      const sheet = await h.overlayText();
+      for (const t of ["1단계", "E2E 완료 단계", "충족", "2단계", "E2E 현재 단계", "진행 0%", "3단계", "E2E 다음 단계", "조건 3개"]) {
+        if (!sheet.includes(t)) throw new Error(`the storyline does not state "${t}": ` + sheet.slice(0, 400));
+      }
+      const doneMark = await page.evaluate(() => {
+        const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+        const e = [...ov.querySelectorAll("span")].find((x) => (x.innerText || "").trim() === "충족");
+        return e ? /text-emerald-400/.test(e.className) : null;
+      });
+      if (doneMark !== true) throw new Error("the done stage's met mark is not emerald: " + JSON.stringify(doneMark));
+      const labels = await goButtons();
+      const want = ["계약 추가 ›", "포트폴리오 추가 ›", "로드맵 열기 ›", "리드 추가 ›", "공고 추가 ›"];
+      if (labels.join("|") !== want.join("|")) throw new Error("the action buttons read: " + labels.join("|"));
+      // An upcoming stage peeks its conditions on tap and stores nothing
+      await page.evaluate(() => {
+        const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+        [...ov.querySelectorAll("button")].find((b) => (b.innerText || "").trim().startsWith("3단계")).click();
+      });
+      await sleep(300);
+      if (!(await h.overlayText()).includes("- 입금 확인된 일시금 수 'deposit' 0/1")) throw new Error("the upcoming stage did not peek its conditions: " + (await h.overlayText()).slice(0, 400));
+      await closeModal();
+      // Each button lands on the one place that changes its condition and records nothing on the way (rules 10, 11)
+      const beforeGo = await readState();
+      const cases = [
+        ["계약 추가 ›", "deals", "새 계약"],
+        ["포트폴리오 추가 ›", "folio", "새 포트폴리오"],
+        ["로드맵 열기 ›", "roadmap", null],
+        ["리드 추가 ›", "leads", "리드 추가"],
+        ["공고 추가 ›", "notices", "공고 추가"],
+      ];
+      for (const [label, view, title] of cases) {
+        await openRole();
+        await clickInModalExact(label); await sleep(500);
+        const land = await landing();
+        if (land.bizView !== view) throw new Error(`"${label}" stored bizView ${land.bizView}, expected ${view}`);
+        if (!land.bizTab) throw new Error(`"${label}" did not land on the business tab: ` + JSON.stringify(land));
+        if (title === null) {
+          if (land.sheet !== null) throw new Error(`"${label}" left a sheet open: ` + land.sheet);
+          if (!land.main.includes("마일스톤 추가")) throw new Error(`"${label}" did not land on the roadmap view: ` + land.main);
+        } else {
+          if (land.sheet !== title) throw new Error(`"${label}" opened the sheet "${land.sheet}", expected "${title}"`);
+          try { await closeModal(); } catch {}
+        }
+      }
+      const afterGo = await readState();
+      const wrote = Object.keys({ ...beforeGo, ...afterGo }).filter((k) => k !== "ui" && k !== "lastTick" && JSON.stringify(beforeGo[k]) !== JSON.stringify(afterGo[k]));
+      if (wrote.length) throw new Error("the landing buttons wrote records: " + wrote.join(", "));
+      // Plant B: stage 3 is current — a payment condition lands on the deal list with no sheet, a certificate on the catalogue
+      await plantRole({ stages: [stage1, { id: "e2e-rs2", name: "E2E 중간 단계", conds: [{ type: "cert_held", arg: held, min: 1 }] }, stage3], seenStageK: 3 });
+      await h.reload();
+      await openRole();
+      const labelsB = await goButtons();
+      if (labelsB.join("|") !== ["계약 목록 ›", "도감에서 찾기 ›", "계약 추가 ›"].join("|")) throw new Error("stage 3's buttons read: " + labelsB.join("|"));
+      await clickInModalExact("계약 목록 ›"); await sleep(500);
+      let land = await landing();
+      if (land.bizView !== "deals" || land.sheet !== null) throw new Error("the payment condition button did not land on the deal list alone: " + JSON.stringify(land));
+      await openRole();
+      await clickInModalExact("도감에서 찾기 ›"); await sleep(600);
+      const cat = await page.evaluate(() => {
+        const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+        return { title: (ov.querySelector("h3")?.innerText || "").trim(), q: (ov.querySelector("input")?.value || ""), text: (ov.innerText || "").replace(/\s+/g, " ") };
+      });
+      if (cat.title !== "성취 도감" || cat.q !== "정보보안기사" || !cat.text.includes("정보보안기사")) throw new Error("the certificate condition button did not open the catalogue on that name: " + JSON.stringify({ title: cat.title, q: cat.q }));
+      await closeModal();
+      await openRole();
+      await clickInModalExact("계약 추가 ›"); await sleep(500);
+      land = await landing();
+      if (land.bizView !== "deals" || land.sheet !== "새 계약") throw new Error("the revenue condition did not open the deal form: " + JSON.stringify(land));
+      try { await closeModal(); } catch {}
+    } finally {
+      await page.evaluate((p2) => {
+        const k = "liferpg-state-v1";
+        const s = JSON.parse(localStorage.getItem(k));
+        s.role = p2.role;
+        if (p2.bizView) s.ui = { ...(s.ui || {}), bizView: p2.bizView };
+        localStorage.setItem(k, JSON.stringify(s));
+      }, stash);
+      await h.reload();
+    }
+  });
+
+  await step("the current stage lists the undone work items linked to its milestones, and a tap opens the work sheet", async () => {
+    const st0 = await readState();
+    const stash = { role: st0.role, work: st0.work || [], milestones: st0.milestones || [] };
+    const held = (st0.profile?.certs || [])[0];
+    const today = await dstrIn(0);
+    try {
+      await plantRole({ stages: [
+        { id: "e2e-rs1", name: "E2E 완료 단계", conds: [{ type: "cert_held", arg: held, min: 1 }] },
+        { id: "e2e-rs2", name: "E2E 현재 단계", conds: [{ type: "deals_won", arg: "E2E화면고객", min: 1 }] },
+      ], seenStageK: 2 });
+      await page.evaluate((d) => {
+        const k = "liferpg-state-v1";
+        const s = JSON.parse(localStorage.getItem(k));
+        s.work = [...(s.work || []), { id: "e2e-rs-work", date: d, title: "E2E 단계 업무", done: false, source: "manual", createdAt: d, track: "biz" }];
+        s.milestones = [...(s.milestones || []), { id: "e2e-rs-ms", stage: 2, title: "E2E 단계 마일스톤", status: "active", dealIds: [], documentIds: [], workIds: ["e2e-rs-work"], createdAt: d }];
+        localStorage.setItem(k, JSON.stringify(s));
+      }, today);
+      await h.reload();
+      await openRole();
+      const sheet = await h.overlayText();
+      if (!sheet.includes("이 단계의 업무") || !sheet.includes(`${today} E2E 단계 업무`)) throw new Error("the current stage does not list its linked work item: " + sheet.slice(0, 400));
+      // The row's spans are flex items, so its `innerText` carries line breaks — it is matched whitespace-normalised
+      const opened = await page.evaluate((t) => {
+        const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+        const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").replace(/\s+/g, " ").trim() === t);
+        if (!b) return false; b.click(); return true;
+      }, `${today} E2E 단계 업무 ›`);
+      if (!opened) throw new Error("the linked work row is not tappable: " + (await h.overlayText()).slice(0, 300));
+      await sleep(500);
+      const work = await page.evaluate(() => {
+        const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+        return { title: (ov.querySelector("h3")?.innerText || "").trim(), value: (ov.querySelector("input")?.value || "") };
+      });
+      if (work.title !== "업무" || work.value !== "E2E 단계 업무") throw new Error("the work row did not open its sheet: " + JSON.stringify(work));
+      await closeModal();
+      // A done item is not listed: the section states what is missing instead (rule 13)
+      await page.evaluate(() => {
+        const k = "liferpg-state-v1";
+        const s = JSON.parse(localStorage.getItem(k));
+        s.work = (s.work || []).map((w) => (w.id === "e2e-rs-work" ? { ...w, done: true } : w));
+        localStorage.setItem(k, JSON.stringify(s));
+      });
+      await h.reload();
+      await openRole();
+      if (!(await h.overlayText()).includes("연결된 업무 없음 — 로드맵에서 마일스톤에 업무를 연결해요")) throw new Error("a done linked item is still listed: " + (await h.overlayText()).slice(0, 400));
+      await closeModal();
+    } finally {
+      await page.evaluate((p2) => {
+        const k = "liferpg-state-v1";
+        const s = JSON.parse(localStorage.getItem(k));
+        s.role = p2.role; s.work = p2.work; s.milestones = p2.milestones;
+        localStorage.setItem(k, JSON.stringify(s));
+      }, stash);
+      await h.reload();
+    }
+  });
+
+  await step("the role reset asks once and removes the role record only", async () => {
+    const original = await page.evaluate(() => JSON.parse(localStorage.getItem("liferpg-state-v1")).role);
+    try {
+      await openRoleFromSettings();
+      await page.evaluate(() => { window.confirm = () => false; });
+      const before = await readState();
+      await clickInModalExact("롤모델 초기화"); await sleep(400);
+      const declined = await readState();
+      if (JSON.stringify(declined.role) !== JSON.stringify(before.role)) throw new Error("a declined confirm changed the role record");
+      if (!(await h.overlayText()).startsWith("롤모델")) throw new Error("a declined confirm closed the role screen");
+      await page.evaluate(() => { window.confirm = () => true; });
+      await clickInModalExact("롤모델 초기화"); await sleep(600);
+      const after = await readState();
+      if (after.role !== null) throw new Error("the confirmed reset did not remove the role record: " + JSON.stringify(after.role));
+      if (await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length)) throw new Error("the reset left a sheet open: " + (await h.overlayText()).slice(0, 60));
+      const changed = otherKeys(before, after);
+      if (changed.length) throw new Error("the reset wrote other keys: " + changed.join(", "));
+      await clickTab("프로필"); await sleep(300);
+      const line = await page.evaluate(() => {
+        const main = document.querySelector("main");
+        const last = main && main.children[main.children.length - 1];
+        return last ? { tag: last.tagName, text: (last.innerText || "").trim() } : null;
+      });
+      if (!line || line.tag !== "P" || line.text !== "롤모델 미설정 — 근접도 계산 대상 없음") throw new Error("the CV does not state the unset line as a P: " + JSON.stringify(line));
+    } finally {
+      await patchSave({ role: original });
+      await h.reload();
+    }
+  });
+
+  await step("the briefing's next-step line and the reader's role section open the role screen", async () => {
+    await clickTab("할 일");
+    await clickText("브리핑 열기"); await sleep(400);
+    const ok = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const block = ov && [...ov.querySelectorAll("div.bg-zinc-950")].find((d) => (d.innerText || "").trim().startsWith("다음 단계"));
+      const b = block && block.querySelector("button");
+      if (!b) return false; b.click(); return true;
+    });
+    if (!ok) throw new Error("the briefing states no next-step line");
+    await sleep(500);
+    if (!(await h.overlayText()).startsWith("롤모델")) throw new Error("the briefing's next-step line did not open the role screen: " + (await h.overlayText()).slice(0, 60));
+    await closeModal();
+    await clickTab("프로필");
+    await clickText("오늘 읽을 것"); await sleep(400);
+    await page.evaluate(() => document.querySelector(".fixed.inset-0 button[aria-label='롤모델 판정 열기']").click());
+    await sleep(500);
+    if (!(await h.overlayText()).startsWith("롤모델")) throw new Error("the reader's role section did not open the role screen: " + (await h.overlayText()).slice(0, 60));
+    await closeModal();
+  });
+
   // ── Role verdict (2026-09-18, the fifth packet): the story is the one free text sent verbatim; the packet states the CV
   // line, the grades, the held records, the record counts and the stages, and never an identifier, a client or a day-job
   // deal. The reply's proposals become stages, requirement grades and a dated verdict only through the user's tick.
@@ -341,10 +665,15 @@ module.exports = async (h) => {
     await h.reload();
   };
   const openVerdictSheet = async () => {
-    await clickTab("프로필"); await sleep(300);
-    await page.evaluate(() => [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim())).click());
+    await openRole();
+    // The role screen's CTA reads `다시 판정 ›` once the save carries a verdict, `AI에게 판정 묻기 ›` before the first one
+    const ok = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = ov && [...ov.querySelectorAll("button")].find((x) => /^(AI에게 판정 묻기|다시 판정) ›$/.test((x.innerText || "").trim()));
+      if (!b) return false; b.click(); return true;
+    });
+    if (!ok) throw new Error("the role screen carries no verdict CTA");
     await sleep(500);
-    await clickInModalExact("AI에게 판정 묻기 ›"); await sleep(500);
   };
   await step("the role verdict packet carries the story, the CV line, the area grades, the counts and the stages, and no identifier", async () => {
     const st = await readState();
@@ -425,6 +754,12 @@ module.exports = async (h) => {
       }
       await page.evaluate(() => { window.confirm = () => true; });
       await clickInModalExact("선택한 항목 저장"); await sleep(600);
+      // The save returns to the role screen, whose card carries the verdict just stored
+      const back = await h.overlayText();
+      if (!back.startsWith("롤모델")) throw new Error("the verdict save did not land on the role screen: " + back.slice(0, 60));
+      for (const t of ["AI 추정 확률 35%", "E2E 판정 요약"]) {
+        if (!back.includes(t)) throw new Error(`the role screen does not state "${t}" after the save: ` + back.slice(0, 300));
+      }
       const after = await readState();
       const r = after.role || {};
       if (!Array.isArray(r.stages) || r.stages.length !== 1 || r.stages[0].name !== "E2E 제안 단계") throw new Error("the ticked stage did not replace the stages: " + JSON.stringify(r.stages));
@@ -537,7 +872,7 @@ module.exports = async (h) => {
       if (!txt.includes("롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요")) throw new Error("the reader does not state the absence line: " + txt.slice(0, 300));
       await page.evaluate(() => document.querySelector(".fixed.inset-0 button[aria-label='롤모델 판정 열기']").click());
       await sleep(500);
-      if (!(await h.overlayText()).startsWith("방향 제안 —")) throw new Error("the section's › did not open direction advice: " + (await h.overlayText()).slice(0, 60));
+      if (!(await h.overlayText()).startsWith("롤모델")) throw new Error("the section's › did not open the role screen: " + (await h.overlayText()).slice(0, 60));
       await closeModal();
     } finally {
       // Restores the role, the certificates and the contracts the two steps above planted

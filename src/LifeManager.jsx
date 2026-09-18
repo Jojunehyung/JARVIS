@@ -1091,7 +1091,6 @@ const GATE_CHIPS = {
   9: ["정상급 위치의 공적 증거"],
 };
 const AREA_PRESETS = ["사업", "직업·커리어", "기본지식", "건강", "어학", "인맥", "자산", "취미·창작"];
-const ROLE_PRESETS = ["대기업 현직 전문가", "월 500 1인 사업가", "프리랜서 전문가", "창업가·대표", "의료 AI 솔루션 대표"];
 const TASK_TEMPLATES = [
   { t: "아침 운동 30분", kind: "fit", diff: "E", type: "daily" },
   { t: "독서 30분", kind: "book", diff: "E", type: "daily" },
@@ -2648,7 +2647,35 @@ const roleVerdictDue = (state, today) => {
   return { last, days, stageRose, due: !last || days >= ROLE_VERDICT_DAYS || stageRose };
 };
 
-// Standard achievements that would close each role-model gap. Shared by RoleAdviceModal and the briefing;
+/* ── The role screen (2026-09-18): story templates and the place each condition is changed ── */
+// Tap-to-fill story templates: static text the user edits; a chip never writes state (only the save button does).
+const ROLE_STORY_TEMPLATES = [
+  ["취업", "[회사] [직무]로 [시기]까지 입사하고 싶어요. 지금은 [현재 상황]이에요."],
+  ["창업", "[시기]까지 [분야] 회사를 세워 [규모] 규모의 대표가 되고 싶어요. 지금은 [현재 상황]이에요."],
+  ["전문가", "[분야]에서 [수준]의 전문가로 인정받고 싶어요 — [기준, 예: 연봉·직급·자격]. 지금은 [현재 상황]이에요."],
+];
+// The one place that changes each condition type: a business view (and the add modal that opens over it) or the
+// certificate catalogue. Navigation only — nothing here completes, pays or promotes (rules 10, 11).
+const ROLE_COND_ACTIONS = {
+  deals_won:       { label: "계약 추가 ›",       view: "deals",    modal: "deals" },
+  deals_active:    { label: "계약 추가 ›",       view: "deals",    modal: "deals" },
+  monthly_revenue: { label: "계약 추가 ›",       view: "deals",    modal: "deals" },
+  payment_paid:    { label: "계약 목록 ›",       view: "deals" },
+  folio_match:     { label: "포트폴리오 추가 ›", view: "folio",    modal: "folio" },
+  milestone_done:  { label: "로드맵 열기 ›",     view: "roadmap" },
+  leads_stage:     { label: "리드 추가 ›",       view: "leads",    modal: "lead" },
+  notice_status:   { label: "공고 추가 ›",       view: "notices",  modal: "notice" },
+  cert_held:       { label: "도감에서 찾기 ›",   catalog: true },
+};
+// The story after a template tap: inserted when the story is empty, appended after a blank line otherwise; clipped.
+const storyWithTemplate = (story, tpl) => (story.trim() ? `${story}\n\n${tpl}` : tpl).slice(0, ROLE_STORY_MAX);
+// Undone work items linked to the milestones of stage `k`, in `workOn`'s carried-first order (derived at render, rule 9).
+const stageWorkOf = (state, today, k) => {
+  const ids = new Set((state.milestones || []).filter((m) => m.stage === k).flatMap((m) => m.workIds || []));
+  return workOn(state, today, today).filter((w) => !w.done && ids.has(w.id));
+};
+
+// Standard achievements that would close each role-model gap. Shared by RoleGradeSection and the briefing;
 // the tiering and payout logic is unchanged (rules 14, 15).
 const roleRecommendations = (state) => {
   const rg = roleGap(state);
@@ -2870,7 +2897,7 @@ const AREA_STALE_DAYS = 30;
 const ACTIVITY_GAP_DAYS = 7;
 const CAP = 5;
 // Briefing actions that switch the tab. `closeBriefing` handles `task` before this list and opens any other type as
-// the modal of that name, which the root must render: `bridge`, `journal`, `review`, `roleAdvice` and `role`.
+// the modal of that name, which the root must render: `bridge`, `journal`, `review` and `role`.
 const TAB_ACTIONS = ["home", "goals", "work", "schedule", "meetings", "biz"];
 
 // `직장 {a} · 사업 {b} · 개인 {c}` over records carrying a track (v28) — every track printed, zero included (rule 13).
@@ -3046,7 +3073,7 @@ const buildBriefing = (state, today) => {
   let nextItem;
   // Without a role model the line opens the role model form itself: on home the same fact is an inert line
   if (!rg) nextItem = { kind: "next", severity: 2, text: "롤모델 미설정 — 근접도 계산 대상 없음", action: { type: "role" } };
-  else if (!gaps.length) nextItem = { kind: "next", severity: 1, text: `모든 요구 영역 충족 · 근접도 ${rg.match}%`, action: { type: "roleAdvice" } };
+  else if (!gaps.length) nextItem = { kind: "next", severity: 1, text: `모든 요구 영역 충족 · 근접도 ${rg.match}%`, action: { type: "role" } };
   else {
     const g0 = gaps[0];
     const r = g0.recs[0];
@@ -3057,7 +3084,7 @@ const buildBriefing = (state, today) => {
       : r ?`추천: ${r.jw?.tier || "—"} ${r.c.n} D${r.c.d} +${r.gain.toLocaleString()}P`
       : e ? `추천: ${e.e.n} ${e.band?.[0] ?? ""} D${e.band?.[1] ?? ""} +${(e.payout || 0).toLocaleString()}P`
         : "매칭되는 표준 성취 없음 — 도감에서 직접 찾아요";
-    nextItem = { kind: "next", severity: 2, text: `${g0.area.name} ${RANKS[g0.have].name}→${RANKS[g0.need].name} · ${tail}`, action: { type: "roleAdvice" } };
+    nextItem = { kind: "next", severity: 2, text: `${g0.area.name} ${RANKS[g0.have].name}→${RANKS[g0.need].name} · ${tail}`, action: { type: "role" } };
   }
   add("next", "다음 단계", [nextItem]);
 
@@ -3225,7 +3252,7 @@ const buildReader = (state, today) => {
     : !d.last ? "롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요"
     : d.due ? `롤모델 재판정 — 마지막 ${d.last.date} · ${d.days}일 지남${d.stageRose && sp ? ` · 단계 ${lastStage} → ${sp.k}` : ""}`
     : `롤모델 판정 · 마지막 ${d.last.date} · ${d.days}일 지남 · ${probText(d.last.probability)} · 단계 ${lastStage}/${d.last.stageN}`;
-  add("role", "롤모델 판정", [{ text: roleLine }], state.role ? { type: "roleAdvice" } : { type: "role" });
+  add("role", "롤모델 판정", [{ text: roleLine }], { type: "role" });
 
   return { since, sections };
 };
@@ -5317,7 +5344,7 @@ function AreaGradeRow({ area: p, onPromote }) {
   );
 }
 
-function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleAdvice, onWall, onReader }) {
+function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRole, onWall, onReader }) {
   const cv = cvSummaryOf(state.profile, today);
   const held = heldCertsOf(state);
   const bests = Object.entries(state.exams?.best || {})
@@ -5385,7 +5412,7 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
           percentage is a second figure under its own label — it never enters, scales or is averaged with the proximity
           below (rule 14); `pct` is derived at render (rule 9). The condition count and the quit text stay on `title`. */}
       {sp && (
-        <button onClick={onRoleAdvice} title={stageLine(sp.rs)} className="w-full text-left px-1 active:opacity-70">
+        <button onClick={onRole} title={stageLine(sp.rs)} className="w-full text-left px-1 active:opacity-70">
           <div className="flex items-center gap-1.5 text-sm">
             <span className="text-zinc-500 shrink-0">단계</span>
             <span className="font-mono font-bold text-cyan-300 shrink-0">{sp.k}/{sp.n}</span>
@@ -5397,15 +5424,18 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRoleA
           {last && <div className="text-xs font-mono text-zinc-500 mt-1">{probText(last.probability)} · {last.date}</div>}
         </button>
       )}
-      {/* Proximity is computed from the verified grades above (rule 14) — the smaller line beneath the headline. Without
-          a role model it is an inert fact: the role model is set in settings, and direction advice has nothing to explain. */}
+      {/* Proximity is computed from the verified grades above (rule 14) — the smaller line beneath the headline. A role
+          record without requirement grades (a story saved first) states the missing input and opens the role screen;
+          without any role model it is an inert fact: the role model is set in settings, and there is nothing to explain. */}
       {rg ? (
-        <button onClick={onRoleAdvice} className="w-full text-left flex items-center gap-1.5 px-1 text-xs active:opacity-70">
+        <button onClick={onRole} className="w-full text-left flex items-center gap-1.5 px-1 text-xs active:opacity-70">
           <span className="text-zinc-500 shrink-0">롤모델 근접도</span>
           <span className="font-mono font-bold text-cyan-300 shrink-0">{rg.match}%</span>
           <span className="text-zinc-500 truncate">· {rg.name}</span>
           <span className="text-zinc-600 shrink-0">›</span>
         </button>
+      ) : state.role ? (
+        <button onClick={onRole} className="w-full text-left px-1 text-xs text-zinc-500 active:opacity-70">근접도 계산 대상 없음 — 세부 수정에서 요구 등급을 정해요 ›</button>
       ) : (
         <p className="px-1 text-xs text-zinc-500">롤모델 미설정 — 근접도 계산 대상 없음</p>
       )}
@@ -6138,10 +6168,10 @@ function EvidenceViewModal({ task, onClose }) {
 }
 
 /* ── Achievement catalogue — actual payout P for certifications and exams ── */
-function CatalogModal({ state, initialCat, onClose }) {
+function CatalogModal({ state, initialCat, initialQuery, onClose }) {
   const [mode, setMode] = useState("cert");
   const [cat, setCat] = useState(initialCat || "전체");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery || "");
   const [fam, setFam] = useState(EXAMS[0]);
   const hits = useMemo(() => {
     const kw = q.trim().toLowerCase();
@@ -6224,11 +6254,11 @@ function CatalogModal({ state, initialCat, onClose }) {
   );
 }
 
-/* ── Role-model direction advice ── */
-/* The current stage, its conditions with a bar each, the progress and journey figures, and the next milestone — the
-   advice sheet's stage block and the business area's gap block print the same lines. Every line is derived at render
+/* ── Role-model grade gaps ── */
+/* The current stage, its conditions with a bar each, the progress and journey figures, and the next milestone — printed
+   by the `사업` gap block of `RoleGradeSection` (its one caller since 2026-09-18). Every line is derived at render
    (rule 9); unmet conditions are rose, met emerald. `sp` is `stageProgressOf`, whose `conds` carry each ratio; the
-   journey figure is printed here and nowhere else. */
+   journey figure prints here and on the role screen's timeline, never on the CV. */
 function RoleStageLines({ state, sp, today }) {
   const rs = sp.rs;
   const next = (state.milestones || []).filter((m) => m.status !== "done").sort(milestoneOrder)[0];
@@ -6254,53 +6284,15 @@ function RoleStageLines({ state, sp, today }) {
   );
 }
 
-function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpenRoadmap, onAskVerdict }) {
+/* ── The grade-gap section of the role screen (2026-09-18) — the former advice sheet's body: the one surface that draws
+   and explains the proximity bars, one tap from the home line that states the number (rule 14), then each gap's next
+   gate, its job-field chips and the standard achievements that would close it. Nothing here is stored (rule 9). ── */
+function RoleGradeSection({ state, today, onOpenCatalog, onSetDir }) {
   const { rg, gaps } = roleRecommendations(state);
   const sp = stageProgressOf(state, today);
-  const verdicts = (state.role?.verdicts || []).slice(0, ROLE_VERDICTS_MAX);
-  // Verdict history (2026-09-18): the entry to the fifth packet — the story is the one text sent verbatim, so without
-  // it the button is off — then the delta between the two newest verdicts and the dated list, newest first. Every line
-  // is the AI's own statement, labelled as unverified; the app adds nothing to it.
-  const stageText = (v) => `단계 ${Math.min(v.stageK, v.stageN)}/${v.stageN}`;
-  const pctText = (p) => (Number.isFinite(p) ? `${p}%` : "확률 미제시");
-  const delta = verdicts.length >= 2 ? { a: verdicts[1], b: verdicts[0] } : null;
-  const verdictBlock = (
-    <div className="bg-zinc-950 rounded-xl p-3 mb-3">
-      <SectionLabel>AI 판정 기록</SectionLabel>
-      <button onClick={onAskVerdict} disabled={!state.role?.story}
-        className="px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70 disabled:opacity-30">AI에게 판정 묻기 ›</button>
-      {!state.role?.story && <p className="text-xs text-zinc-600 mt-1">먼저 롤모델 설정에서 원하는 모습을 적어요 — 적은 글이 패킷에 실려요.</p>}
-      {delta && (
-        <div className="font-mono text-xs text-cyan-300 mt-2">
-          확률 {pctText(delta.a.probability)} → {pctText(delta.b.probability)} ({delta.a.date} → {delta.b.date}) · 단계 {Math.min(delta.a.stageK, delta.a.stageN)} → {Math.min(delta.b.stageK, delta.b.stageN)}
-        </div>
-      )}
-      {verdicts.length ? (
-        <div className="mt-2 space-y-2">
-          {verdicts.map((v, i) => (
-            <div key={v.id}>
-              <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {v.date}</div>
-              <div className="text-xs font-mono text-zinc-300">{probText(v.probability)} · {stageText(v)}</div>
-              <div className="text-xs text-zinc-300 break-words">{v.summary || "요약 없음"}</div>
-              {i === 0 && (
-                <>
-                  <div className="text-xs text-zinc-400 break-words">근거: {v.basis || "없음"}</div>
-                  <div className="text-xs text-zinc-400 break-words">현재 위치: {v.position || "없음"}</div>
-                  {(v.gaps || []).map((g, j) => <div key={j} className="text-xs text-zinc-400 break-words">- {g}</div>)}
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-zinc-500 mt-2">AI 판정 없음</p>
-      )}
-    </div>
-  );
-  // The one surface that draws and explains the proximity bars, one tap from the home line that states the number (rule 14).
   const legend = <p className="text-xs text-zinc-600">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.</p>;
   return (
-    <Modal title={`방향 제안 — ${rg?.name || "롤모델"}`} onClose={onClose}>
+    <div>
       {/* Per-area requirement lines and segmented bars, moved from the growth headline, with the legend once under them */}
       <div className="space-y-2 mb-3">
         {(rg?.items || []).map((i) => (
@@ -6325,15 +6317,6 @@ function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpe
         ))}
         {legend}
       </div>
-      {sp && (
-        <div className="bg-zinc-950 rounded-xl p-3 mb-3">
-          <SectionLabel>단계</SectionLabel>
-          <RoleStageLines state={state} sp={sp} today={today} />
-          <button onClick={onOpenRoadmap}
-            className="mt-2 px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70">로드맵 열기 ›</button>
-        </div>
-      )}
-      {verdictBlock}
       {gaps.length === 0 ? (
         <div className="space-y-2">
           <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다. 근접도 {rg?.match}%.</p>
@@ -6399,7 +6382,7 @@ function RoleAdviceModal({ state, today, onClose, onOpenCatalog, onSetDir, onOpe
           <p className="text-xs text-zinc-600">추천은 직무 분야 매칭과 직무 가중 기준입니다.</p>
         </div>
       )}
-    </Modal>
+    </div>
   );
 }
 
@@ -7312,17 +7295,16 @@ function PromoteModal({ area, onClose, onSubmit }) {
 
 // A stored stage as the editor holds it: the argument and the threshold are kept as typed strings until save.
 const stageDraft = (st) => ({ id: st.id || uid(), name: st.name || "", conds: (st.conds || []).map((c) => ({ type: c.type, arg: c.arg == null ? "" : String(c.arg), min: String(c.min ?? "") })) });
-const ROLE_STAGE_PRESET = "의료 AI 솔루션 대표"; // the preset that seeds the nine stages
 
+/* The `roleEdit` sub-screen (2026-09-18): the manual controls behind the role screen's `세부 수정 ›` — the name, the
+   per-area requirement grades and the stage editor. The story lives on the role screen; this sheet never writes it. */
 function RoleModelModal({ state, onClose, onSave }) {
   const [name, setName] = useState(state.role?.name || "");
   const [targets, setTargets] = useState(state.role?.targets || {});
   const [stages, setStages] = useState(() => (state.role?.stages || []).map(stageDraft));
-  const [story, setStory] = useState(state.role?.story || "");
   const [err, setErr] = useState("");
-  const pickPreset = (r) => {
-    setName(r);
-    if (r !== ROLE_STAGE_PRESET) return;
+  // The offline way to a full ladder without an AI reply: the nine-stage seed, replacing existing stages after a confirm.
+  const seedNine = () => {
     if (stages.length && !window.confirm("단계를 기본 9단계로 바꿔요. 계속할까요?")) return;
     setStages(seedStages().map(stageDraft));
   };
@@ -7342,25 +7324,12 @@ function RoleModelModal({ state, onClose, onSave }) {
       }
       out.push({ id: st.id, name: st.name.trim(), conds });
     }
-    onSave({ name: name.trim() || "롤모델", targets, ...(out.length ? { stages: out } : {}), ...(story.trim() ? { story: story.trim() } : {}) });
+    onSave({ name: name.trim() || "롤모델", targets, ...(out.length ? { stages: out } : {}) });
   };
   return (
-    <Modal title="롤모델 설정" onClose={onClose}>
-      {/* The story (2026-09-18): the one free text sent verbatim in the role verdict packet — the caption says so */}
-      <SectionLabel>원하는 모습</SectionLabel>
-      <textarea value={story} onChange={(e) => setStory(e.target.value)} rows={5} maxLength={ROLE_STORY_MAX} aria-label="원하는 모습"
-        placeholder="예: 2029년까지 직원 20명 규모 의료 AI 회사의 대표가 되고 싶어요. / 예: ○○전자 로봇 SW 직무로 2027년 상반기 입사하고 싶어요. — 회사·직무·규모·시기를 적어요"
-        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
-      <div className="text-xs font-mono text-zinc-500 text-right">{story.length} / {ROLE_STORY_MAX}</div>
-      <p className="text-xs text-zinc-600 mb-4">여기 적은 글은 그대로 AI 패킷에 실려요 — 이름·연락처는 적지 않아요.</p>
-      <SectionLabel>세부 수정</SectionLabel>
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        {ROLE_PRESETS.map((r) => (
-          <Chip key={r} on={name === r} onClick={() => pickPreset(r)}>{r}</Chip>
-        ))}
-      </div>
+    <Modal title="롤모델 세부 수정" onClose={onClose}>
       <input value={name} onChange={(e) => setName(e.target.value)}
-        placeholder="직접 입력 (예: 연 매출 1억 1인 사업가)"
+        placeholder="롤모델 이름 (예: 연 매출 1억 1인 사업가)"
         className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-500 mb-4" />
       <div className="space-y-3">
         {state.areas.map((p) => (
@@ -7386,7 +7355,10 @@ function RoleModelModal({ state, onClose, onSave }) {
       <div className="mt-4">
         <div className="flex items-center justify-between gap-2">
           <SectionLabel>단계 (선택)</SectionLabel>
-          <span className="text-xs font-mono text-zinc-500 mb-2">{stages.length} / {ROLE_STAGES_MAX}</span>
+          <div className="flex items-center gap-2 mb-2">
+            <button onClick={seedNine} className="text-xs text-cyan-300">기본 9단계 채우기</button>
+            <span className="text-xs font-mono text-zinc-500">{stages.length} / {ROLE_STAGES_MAX}</span>
+          </div>
         </div>
         <div className="space-y-2">
           {stages.map((st, i) => (
@@ -7440,6 +7412,196 @@ function RoleModelModal({ state, onClose, onSave }) {
         className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm mt-4">
         저장
       </button>
+    </Modal>
+  );
+}
+
+/* ── The role screen `롤모델` (2026-09-18): one screen read top to bottom — the story with its templates, the save and the
+   verdict CTA with the newest verdict beneath; the storyline timeline (done stages compact, the current one expanded
+   with a `지금 할 것` button per unmet condition and the undone work items linked to its milestones, upcoming ones
+   peekable); and the grade gaps folded away under `영역 등급`. Everything shown is derived at render or held in
+   component state — no met date, no current stage, no collapse state is written (rule 9); a button here navigates and
+   completes, pays or promotes nothing (rules 10, 11); the verdict stays the AI's own statement under its unverified
+   label (rule 13); the proximity figure is `roleGap`'s and the stage figures are a second number beside it (rule 14). ── */
+function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, onReset, onGo, onOpenWork, onOpenCatalog, onSetDir }) {
+  const [story, setStory] = useState(state.role?.story || "");
+  const [savedStory, setSavedStory] = useState(state.role?.story || "");
+  const [showHistory, setShowHistory] = useState(false);
+  const [showGrades, setShowGrades] = useState(false);
+  const [peek, setPeek] = useState(() => new Set());
+  const last = lastVerdictOf(state);
+  const verdictCount = (state.role?.verdicts || []).length;
+  const verdicts = (state.role?.verdicts || []).slice(0, ROLE_VERDICTS_MAX);
+  const delta = verdicts.length >= 2 ? { a: verdicts[1], b: verdicts[0] } : null;
+  const sp = stageProgressOf(state, today);
+  const rs = sp?.rs;
+  const work = sp ? stageWorkOf(state, today, sp.k) : [];
+  const { rg, gaps } = roleRecommendations(state);
+  const next = (state.milestones || []).filter((m) => m.status !== "done").sort(milestoneOrder)[0];
+  // The CTA reads the saved story: an unsaved edit does not enable it, because the packet carries what is saved.
+  const canAsk = !!state.role?.story;
+  const stageText = (v) => `단계 ${Math.min(v.stageK, v.stageN)}/${v.stageN}`;
+  const pctText = (p) => (Number.isFinite(p) ? `${p}%` : "확률 미제시");
+  const togglePeek = (i) => setPeek((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+  const saveStory = () => { const t = story.trim(); onSaveStory(t); setSavedStory(t); };
+  return (
+    <Modal title="롤모델" onClose={onClose}>
+      <SectionLabel>원하는 모습</SectionLabel>
+      <p className="text-xs text-zinc-600 mb-1">탭하면 틀이 들어가요 — 괄호를 내 상황으로 바꿔요.</p>
+      <div className="flex gap-1.5 mb-2">
+        {ROLE_STORY_TEMPLATES.map(([label, tpl]) => (
+          <Chip key={label} on={false} onClick={() => setStory((s) => storyWithTemplate(s, tpl))}>{label}</Chip>
+        ))}
+      </div>
+      <textarea value={story} onChange={(e) => setStory(e.target.value)} rows={5} maxLength={ROLE_STORY_MAX} aria-label="원하는 모습"
+        placeholder="예: 2029년까지 직원 20명 규모 의료 AI 회사의 대표가 되고 싶어요. / 예: ○○전자 로봇 SW 직무로 2027년 상반기 입사하고 싶어요. — 회사·직무·규모·시기를 적어요"
+        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm" />
+      <div className="text-xs font-mono text-zinc-500 text-right">{story.length} / {ROLE_STORY_MAX}</div>
+      <p className="text-xs text-zinc-600">여기 적은 글은 그대로 AI 패킷에 실려요 — 이름·연락처는 적지 않아요.</p>
+      <button onClick={saveStory} disabled={story.trim() === savedStory.trim()}
+        className="mt-2 px-3 py-1.5 rounded-lg border border-zinc-700 text-xs font-bold text-zinc-200 disabled:opacity-30">저장</button>
+      <button onClick={onAskVerdict} disabled={!canAsk}
+        className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm mt-3 disabled:opacity-30">{last ? "다시 판정 ›" : "AI에게 판정 묻기 ›"}</button>
+      {!canAsk && <p className="text-xs text-zinc-600 mt-1">먼저 원하는 모습을 적고 저장해요 — 적은 글이 패킷에 실려요.</p>}
+      {last ? (
+        <div className="bg-zinc-950 rounded-xl p-3 mt-3 space-y-1">
+          <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {last.date}</div>
+          <div className="text-xs font-mono text-cyan-300">{probText(last.probability)} · {stageText(last)}</div>
+          <div className="text-sm text-zinc-200 break-words">{last.summary || "요약 없음"}</div>
+          <div className="text-xs text-zinc-400 break-words">현재 위치: {last.position || "없음"}</div>
+          {(last.gaps || []).length ? (
+            <>
+              <div className="text-xs text-zinc-500">부족한 것</div>
+              {last.gaps.map((g, j) => <div key={j} className="text-xs text-zinc-400 break-words">- {g}</div>)}
+            </>
+          ) : <div className="text-xs text-zinc-500">부족한 것 없음</div>}
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500 mt-2">AI 판정 없음</p>
+      )}
+      {verdictCount > 0 && (
+        <button onClick={() => setShowHistory((v) => !v)} className="text-xs text-cyan-300 mt-2">
+          {showHistory ? "판정 기록 접기" : `판정 기록 ${verdictCount}건 ›`}
+        </button>
+      )}
+      {/* The history: the delta between the two newest verdicts, then summaries only — the newest entry's basis, position
+          and gaps are already on the card above. */}
+      {showHistory && (
+        <div className="mt-2 space-y-2">
+          {delta && (
+            <div className="font-mono text-xs text-cyan-300">
+              확률 {pctText(delta.a.probability)} → {pctText(delta.b.probability)} ({delta.a.date} → {delta.b.date}) · 단계 {Math.min(delta.a.stageK, delta.a.stageN)} → {Math.min(delta.b.stageK, delta.b.stageN)}
+            </div>
+          )}
+          {verdicts.map((v) => (
+            <div key={v.id}>
+              <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {v.date}</div>
+              <div className="text-xs font-mono text-zinc-300">{probText(v.probability)} · {stageText(v)}</div>
+              <div className="text-xs text-zinc-300 break-words">{v.summary || "요약 없음"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4">
+        <SectionLabel>스토리라인</SectionLabel>
+        {!sp ? (
+          <>
+            <p className="text-xs text-zinc-500">단계 없음 — AI 판정에서 단계를 받거나 세부 수정에서 직접 적어요</p>
+            <div className="flex gap-3 mt-1">
+              <button onClick={onAskVerdict} disabled={!canAsk} className="text-xs text-cyan-300 disabled:opacity-30">AI에게 판정 묻기 ›</button>
+              <button onClick={onEdit} className="text-xs text-cyan-300">세부 수정 ›</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              {rs.stages.map((st, i) => {
+                const k = i + 1;
+                // A done stage reads `충족` and nothing more — no met date exists in the save (rule 9)
+                if (k < rs.k) return (
+                  <div key={st.s.id || k} className="flex items-center gap-1.5 text-xs text-zinc-500">
+                    <Check size={13} className="text-emerald-400 shrink-0" />
+                    <span className="font-mono shrink-0">{k}단계</span>
+                    <span className="truncate">{st.s.name}</span>
+                    <span className="font-mono text-emerald-400 shrink-0 ml-auto">충족</span>
+                  </div>
+                );
+                if (k === rs.k) return (
+                  <div key={st.s.id || k} className="bg-zinc-950 border border-cyan-800 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-1.5 text-sm">
+                      <span className="font-mono font-bold text-cyan-300 shrink-0">{sp.k}단계</span>
+                      <span className="text-zinc-100 font-bold truncate">{sp.name}</span>
+                      <span className="font-mono text-cyan-300 shrink-0 ml-auto">진행 {sp.pct}%</span>
+                    </div>
+                    <Bar ratio={sp.pct / 100} color="bg-cyan-400" h="h-1.5" />
+                    <div>
+                      <SectionLabel>지금 할 것</SectionLabel>
+                      {/* `sp.conds[j]` aligns with `st.results[j]` (the current stage); `r.c` carries the type and argument */}
+                      <div className="space-y-1.5">
+                        {st.results.map((r, j) => (
+                          <div key={j}>
+                            <div className={`text-xs font-mono ${r.met ? "text-emerald-400" : "text-rose-400"}`}>- {r.text}</div>
+                            <Bar ratio={sp.conds[j].ratio} color={r.met ? "bg-emerald-400" : "bg-rose-400"} h="h-1" />
+                            {!r.met && ROLE_COND_ACTIONS[r.c.type] && (
+                              <button onClick={() => onGo(r.c)}
+                                className="mt-1 px-2.5 py-1 rounded-lg border border-cyan-800 text-xs text-cyan-300 active:opacity-70">{ROLE_COND_ACTIONS[r.c.type].label}</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <SectionLabel>이 단계의 업무</SectionLabel>
+                      {work.length ? work.map((w) => (
+                        <button key={w.id} onClick={() => onOpenWork(w.id)} className="w-full text-left flex items-center gap-1.5 text-xs active:opacity-70">
+                          <span className="font-mono text-zinc-500 shrink-0">{w.date}</span>
+                          <span className="text-zinc-200 truncate">{w.title}</span>
+                          <span className="text-zinc-600 shrink-0 ml-auto">›</span>
+                        </button>
+                      )) : <p className="text-xs text-zinc-500">연결된 업무 없음 — 로드맵에서 마일스톤에 업무를 연결해요</p>}
+                    </div>
+                  </div>
+                );
+                return (
+                  <div key={st.s.id || k}>
+                    <button onClick={() => togglePeek(i)} className="w-full text-left flex items-center gap-1.5 text-xs text-zinc-500 active:opacity-70">
+                      <span className="font-mono shrink-0">{k}단계</span>
+                      <span className="truncate">{st.s.name}</span>
+                      <span className="font-mono shrink-0 ml-auto">조건 {st.results.length}개</span>
+                      <span className="shrink-0">{peek.has(i) ? "▾" : "›"}</span>
+                    </button>
+                    {peek.has(i) && st.results.map((r, j) => <div key={j} className="text-xs font-mono text-zinc-600 pl-4">- {r.text}</div>)}
+                  </div>
+                );
+              })}
+              {rs.k > rs.n && <div className="text-xs font-mono text-emerald-400">모든 단계 충족</div>}
+            </div>
+            <div className="text-xs font-mono text-zinc-400 mt-2">전체 {sp.journey}% · 전환 조건 {rs.quit ? "충족" : "미충족"}</div>
+            <div className="text-xs text-zinc-500">
+              {next ? <>다음 마일스톤: {milestoneLine(state, next, today)}</> : "다음 마일스톤 없음 — 로드맵에서 추가해요"}
+            </div>
+            <button onClick={() => onGo({ type: "milestone_done" })}
+              className="mt-2 px-2.5 py-1 rounded-lg border border-zinc-700 text-xs text-zinc-300 active:opacity-70">로드맵 열기 ›</button>
+          </>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between">
+          <SectionLabel>영역 등급</SectionLabel>
+          <button onClick={() => setShowGrades((v) => !v)} className="text-xs text-cyan-300 mb-2">{showGrades ? "접기" : "펼치기 ›"}</button>
+        </div>
+        <div className="text-xs font-mono text-zinc-500">
+          {rg ? `근접도 ${rg.match}% · 요구 영역 ${rg.items.length}개 · 부족 ${gaps.length}개` : "요구 등급 없음 — 세부 수정에서 정해요"}
+        </div>
+        {showGrades && <div className="mt-2"><RoleGradeSection state={state} today={today} onOpenCatalog={onOpenCatalog} onSetDir={onSetDir} /></div>}
+      </div>
+
+      <div className="mt-5 flex items-center justify-between">
+        <button onClick={onEdit} className="px-3 py-2 rounded-xl border border-zinc-700 text-xs font-bold text-zinc-200">세부 수정 ›</button>
+        {state.role && <button onClick={onReset} className="text-xs text-rose-400">롤모델 초기화</button>}
+      </div>
     </Modal>
   );
 }
@@ -10942,19 +11104,21 @@ export default function LifeManager() {
 
   /* Role model (2026-09-18): the editor and the verdict sheet both write `role` and nothing else. `verdicts` pass through
      the editor untouched; every write stamps `seenStageK` with the stage index computed on the new state, so a stage set
-     the user just wrote never fires the completion overlay — only a record that raises `k` afterwards does. */
+     the user just wrote never fires the completion overlay — only a record that raises `k` afterwards does. Every role
+     write returns to the role screen, so the user lands on the story with the new verdict card or the edited timeline. */
   const saveRole = (rm) => {
     setState((prev) => {
       const s = structuredClone(prev);
       const next = { ...(s.role || {}), name: rm.name, targets: rm.targets };
       if (rm.stages) next.stages = rm.stages; else delete next.stages;
-      if (rm.story) next.story = rm.story; else delete next.story;
+      // The `roleEdit` sub-screen sends no story, so the one saved on the role screen passes through untouched
+      if ("story" in rm) { if (rm.story) next.story = rm.story; else delete next.story; }
       s.role = next;
       const rs = roleStageOf(s, today);
       if (rs) next.seenStageK = rs.k; else delete next.seenStageK;
       return s;
     });
-    setModal(null);
+    setModal({ type: "role" });
     showToast({ msg: "롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다" });
   };
   // Saves what the user ticked on the verdict sheet: ticked stages replace `role.stages` (the sheet has confirmed), ticked
@@ -10979,9 +11143,36 @@ export default function LifeManager() {
     const refused = recordFits(role, JSON.stringify(state.role || {}).length, "판정을");
     if (refused) return refused;
     setState((prev) => ({ ...prev, role }));
-    setModal(null);
+    setModal({ type: "role" });
     showToast({ msg: `${verdict ? "AI 판정 저장" : "AI 제안 저장"} · 단계 ${stages.length}건 · 요구 등급 ${areas.length}건` });
     return "";
+  };
+  // Writes role.story alone — never stages, targets, verdicts or the seen-stamp (the story is the one text sent verbatim).
+  const saveRoleStory = (story) => {
+    setState((prev) => {
+      const s = structuredClone(prev);
+      const next = { ...(s.role || { name: "롤모델", targets: {} }) };
+      if (story) next.story = story; else delete next.story;
+      s.role = next;
+      return s;
+    });
+    showToast({ msg: story ? `원하는 모습 저장 · ${story.length}자` : "원하는 모습 지움" });
+  };
+  // Deletes the whole role record on the user's explicit confirm — name, targets, stages, story, verdicts, seen-stamp.
+  const resetRole = () => {
+    if (!window.confirm("롤모델·단계·판정 기록을 모두 지워요. 계속할까요?")) return;
+    setState((prev) => ({ ...prev, role: null }));
+    setModal(null);
+    showToast({ msg: "롤모델 삭제 — 근접도·단계 계산 대상 없음" });
+  };
+  // The place a condition is changed: a business view with its add modal over it, or the catalogue for a certificate name.
+  const goRoleAction = (c) => {
+    const a = ROLE_COND_ACTIONS[c?.type];
+    if (!a) return;
+    setModal(null);
+    if (a.catalog) { const arg = c.arg == null ? "" : String(c.arg).trim(); setModal({ type: "catalog", cat: certByTitle(arg)?.c || null, q: arg }); return; }
+    setBizView(a.view); setTab("biz");
+    if (a.modal) setModal({ type: a.modal });
   };
 
   /* Business — portfolio, unit prices and period contracts. A business record is a record, never a task:
@@ -11732,7 +11923,7 @@ export default function LifeManager() {
           <HomeTab state={state} today={today} imgs={imgs} onProfile={() => setModal({ type: "profile" })}
             onSettings={() => setModal({ type: "settings" })}
             onPromote={(area) => setModal({ type: "promote", area })}
-            onRoleAdvice={() => setModal({ type: "roleAdvice" })}
+            onRole={() => setModal({ type: "role" })}
             onWall={() => setModal({ type: "wall" })}
             onReader={() => setModal({ type: "reader" })} />
         )}
@@ -11818,7 +12009,13 @@ export default function LifeManager() {
           onSubmit={(ev) => promoteArea(modal.area.id, ev)} />
       )}
       {modal?.type === "role" && (
-        <RoleModelModal state={state} onClose={() => setModal(null)} onSave={saveRole} />
+        <RoleModal state={state} today={today} onClose={() => setModal(null)} onSaveStory={saveRoleStory}
+          onAskVerdict={() => setModal({ type: "roleVerdict" })} onEdit={() => setModal({ type: "roleEdit" })}
+          onReset={resetRole} onGo={goRoleAction} onOpenWork={(workId) => setModal({ type: "work", workId })}
+          onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir} />
+      )}
+      {modal?.type === "roleEdit" && (
+        <RoleModelModal state={state} onClose={() => setModal({ type: "role" })} onSave={saveRole} />
       )}
       {modal?.type === "activity" && (
         <ActivityLogModal task={modal.task} onClose={() => setModal(null)}
@@ -11851,16 +12048,10 @@ export default function LifeManager() {
         <EvidenceViewModal task={modal.task} onClose={() => setModal(null)} />
       )}
       {modal?.type === "catalog" && (
-        <CatalogModal state={state} initialCat={modal.cat} onClose={() => setModal(null)} />
-      )}
-      {modal?.type === "roleAdvice" && (
-        <RoleAdviceModal state={state} today={today} onClose={() => setModal(null)}
-          onOpenCatalog={(cat) => setModal({ type: "catalog", cat })} onSetDir={setAreaDir}
-          onOpenRoadmap={() => { setModal(null); setBizView("roadmap"); setTab("biz"); }}
-          onAskVerdict={() => setModal({ type: "roleVerdict" })} />
+        <CatalogModal state={state} initialCat={modal.cat} initialQuery={modal.q} onClose={() => setModal(null)} />
       )}
       {modal?.type === "roleVerdict" && (
-        <RoleVerdictModal state={state} today={today} onClose={() => setModal(null)} onImport={importRoleVerdict} onToast={(msg) => showToast({ msg })} />
+        <RoleVerdictModal state={state} today={today} onClose={() => setModal({ type: "role" })} onImport={importRoleVerdict} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "event" && (
         <EventModal event={modal.event} initialDate={modal.date} projects={state.meetingProjects || []} onClose={() => setModal(null)}

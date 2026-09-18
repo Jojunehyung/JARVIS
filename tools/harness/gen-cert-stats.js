@@ -70,7 +70,7 @@ assertCount("CERT_W_EXC", Object.keys(CERT_W_EXC).length, cfg?.exceptions);
 
 /* ── onboarding-tables.md ── */
 {
-  const names = ["AGE_OPTS", "STATUS_OPTS", "EDU_OPTS", "MAJOR_FIELDS", "KNOWLEDGE_FIELDS", "CAREER_OPTS", "LEAD_OPTS", "BIZ_OPTS", "OUTPUT_OPTS", "JOB_FIELDS", "GATE_CHIPS", "TASK_TEMPLATES", "STUDY_REQ", "RANKS", "DIFFS", "AREA_PRESETS", "ROLE_PRESETS"];
+  const names = ["AGE_OPTS", "STATUS_OPTS", "EDU_OPTS", "MAJOR_FIELDS", "KNOWLEDGE_FIELDS", "CAREER_OPTS", "LEAD_OPTS", "BIZ_OPTS", "OUTPUT_OPTS", "JOB_FIELDS", "GATE_CHIPS", "TASK_TEMPLATES", "STUDY_REQ", "RANKS", "DIFFS", "AREA_PRESETS"];
   let md = HEAD("gen-cert-stats.js", "SPEC-E") + `# Onboarding and rule tables\n\nOption lists and rule tables as defined in source. Korean values are UI copy and stay Korean.\n\n`;
   for (const n of names) {
     const v = get(n); if (v === undefined) continue;

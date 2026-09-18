@@ -75,6 +75,16 @@ expect("교육·복지", "사회복지사 1급", "S", 560); // individual except
 expect("개발", "지게차운전기능사", "C", 0);
 ok(achGrade(67) === "B", "D67 must be grade B");
 
+
+// 4b) role stage conditions: every condition type the editor offers has a landing on the role screen (2026-09-18)
+{
+  const COND_TYPES = S.evalConst("COND_TYPES", src), ROLE_COND_ACTIONS = S.evalConst("ROLE_COND_ACTIONS", src);
+  for (const [t] of COND_TYPES) ok(ROLE_COND_ACTIONS[t], `COND_TYPES "${t}" has no ROLE_COND_ACTIONS landing`);
+  for (const t of Object.keys(ROLE_COND_ACTIONS)) ok(COND_TYPES.some(([x]) => x === t), `ROLE_COND_ACTIONS "${t}" is not a condition type`);
+  for (const [t, a] of Object.entries(ROLE_COND_ACTIONS)) ok(a.label && (a.catalog || a.view), `ROLE_COND_ACTIONS "${t}" states no label or destination`);
+  console.log(`role conditions: ${COND_TYPES.length} types, each with a landing`);
+}
+
 // 5) calendar file — the RFC 5545 builder, lifted from the app source and run without a browser
 const ICS_NAMES = [
   "dstr", "shiftDay", "daysBetween", "EVENT_KIND_LABEL", "EVENT_HORIZON_DAYS", "MAX_OCC", "occurrencesOf",

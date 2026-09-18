@@ -279,7 +279,18 @@ module.exports = async (h) => {
     // The import button drives the input mounted on the app shell, so the sheet must not declare one of its own.
     if (await page.$('.fixed.inset-0 input[type="file"]')) throw new Error("the settings sheet declared a file input of its own");
     await clickInModal("롤모델");
-    if (!(await h.overlayText()).includes("요구 등급")) throw new Error("the role model button did not open the role model form");
+    // 2026-09-18: the settings button opens the one `롤모델` screen; the manual editor is one tap further, behind `세부 수정 ›`
+    const role = await h.overlayText();
+    if (!role.startsWith("롤모델")) throw new Error("the role model button did not open the role screen: " + role.slice(0, 60));
+    for (const t of ["원하는 모습", "스토리라인", "영역 등급", "세부 수정 ›"]) {
+      if (!role.includes(t)) throw new Error(`the role screen does not state "${t}": ` + role.slice(0, 200));
+    }
+    await clickInModalExact("세부 수정 ›");
+    const edit = await h.overlayText();
+    if (!edit.startsWith("롤모델 세부 수정")) throw new Error("the detail-edit link did not open the sub-screen: " + edit.slice(0, 60));
+    if (!edit.includes("요구 등급")) throw new Error("the sub-screen does not carry the requirement grades: " + edit.slice(0, 200));
+    // The sub-screen's close returns to the role screen, which the second call closes
+    await closeModal();
     await closeModal();
   });
   await shot("home-cv");
@@ -324,7 +335,10 @@ module.exports = async (h) => {
     await clickText("브리핑 열기");
     await sleep(400);
     await clickInModal("롤모델 미설정");
-    if (!(await h.overlayText()).includes("요구 등급")) throw new Error("the no-role next-step line did not open the role model form");
+    const sheet = await h.overlayText();
+    for (const t of ["원하는 모습", "단계 없음 — AI 판정에서 단계를 받거나 세부 수정에서 직접 적어요"]) {
+      if (!sheet.includes(t)) throw new Error(`the no-role next-step line did not open the role screen ("${t}" missing): ` + sheet.slice(0, 200));
+    }
     await closeModal();
   });
 
@@ -431,10 +445,16 @@ module.exports = async (h) => {
         if (!headline || !headline.text.startsWith("단계 1/9 계약 기반 개발자") || !headline.text.includes("· 진행 50%")) throw new Error("the demo stage headline reads: " + JSON.stringify(headline));
         if (headline.title !== "롤모델 1/9단계 · 조건 3/14 · 전환 조건 미충족 (0/1)") throw new Error("the demo stage title reads: " + headline.title);
         if (!headline.text.includes(`AI 추정 확률 30% · ${demoToday}`)) throw new Error("the demo verdict caption is missing: " + headline.text);
-        // The advice sheet states the delta between the demo's two verdicts (29 days apart) and the journey figure once.
+        // The role screen (2026-09-18): the story, the newest verdict card, the timeline with the current stage's one
+        // unmet condition and its landing button, and the grade gaps folded away until `펼치기 ›`.
         await page.evaluate(() => [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim())).click());
         await sleep(500);
-        for (const t of ["확률 20% → 30%", "단계 1 → 1", "진행 50% · 전체 6%"]) await expectText(t);
+        for (const t of ["롤모델", "AI 추정 확률 30% · 단계 1/9", "1단계", "계약 기반 개발자", "진행 50%",
+          "- 입금 확인된 일시금 수 'deposit' 0/1", "계약 목록 ›", "연결된 업무 없음", "전체 6% · 전환 조건 미충족", "2단계", "조건 1개"]) await expectText(t);
+        await clickInModalExact("판정 기록 2건 ›");
+        for (const t of ["확률 20% → 30%", "단계 1 → 1"]) await expectText(t);
+        await clickInModalExact("펼치기 ›");
+        for (const t of ["/ 요구", "칸 하나 = 등급 한 단계"]) await expectText(t);
         await closeModal();
         // v27: entering the demo opens nothing, so the daily reader is opened from the CV card's own button.
         // 2026-09-18: the reader's tenth section states the newest verdict's age, probability and stage.

@@ -137,6 +137,9 @@ module.exports = async (h) => {
     await h.openSettings();
     try { await clickInModal("롤모델"); } catch { errors.push("롤모델 진입 실패"); }
     await sleep(400);
+    // 2026-09-18: the name and the requirement grades live on the `roleEdit` sub-screen behind `세부 수정 ›`
+    try { await clickInModalExact("세부 수정 ›"); } catch { errors.push("role edit sub-screen not reached"); }
+    await sleep(400);
     const inp = await page.$(".fixed.inset-0 input");
     if (inp) { await inp.click(); await inp.type("시니어 하네스 설계자", { delay: 4 }); }
     // required grades per area must be set for proximity to compute (roleGap is null when the requirement is 0)
@@ -155,6 +158,7 @@ module.exports = async (h) => {
     if (!picked) errors.push("role model required-grade button not found");
     await sleep(250);
     await clickInModalExact("저장");
+    // The save returns to the role screen, which `closeModal` closes after the sub-screen
     await sleep(800); await closeModal();
   });
   await step("role-model proximity sits under the CV and matches roleGap", async () => {
