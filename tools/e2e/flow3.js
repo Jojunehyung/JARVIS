@@ -152,51 +152,37 @@ module.exports = async (h) => {
     });
     await sleep(200);
     try { await clickInModal("증거 제출 · 승급"); } catch { errors.push("승급 제출 실패"); }
-    await sleep(1200); await closeModal();
+    await sleep(1200);
+    // The RANK UP overlay (z-50) states the area and the rank; since 2026-09-18 it carries no proximity line and no
+    // percentage (rule 14 amendment). Read before `closeModal`, which dismisses it.
+    const rankUp = await page.evaluate(() => { const o = document.querySelector(".fixed.inset-0.z-50"); return o ? o.innerText.replace(/\s+/g, " ").trim() : ""; });
+    if (!rankUp.includes("RANK UP")) errors.push("no RANK UP overlay after the promotion: " + rankUp.slice(0, 120));
+    if (/롤모델|\d+%/.test(rankUp)) throw new Error("the RANK UP overlay states a role-model line or a percentage: " + rankUp);
+    await closeModal();
   });
 
-  // ── The role screen (2026-09-18) → catalogue link. The screen opens from the proximity line; its grade gaps are folded
-  // away under `영역 등급` until `펼치기 ›`, and the per-area bars' cell widths are the squared curve `roleGap` averages
-  // (rule 14): read off the first bar and compared with the formula and with the save's grade and requirement for that area.
-  await step("the proximity line opens the role screen, whose grade-gap section expands to the squared bars", async () => {
+  // ── The role screen (2026-09-18) → catalogue link. The screen opens from the role line; its grade gaps are folded
+  // away under `영역 등급` until `펼치기 ›`, and the expanded section states the per-area requirement lines only — no
+  // bar, no legend and no percentage since the rule 14 amendment.
+  await step("the role line opens the role screen, whose grade-gap section expands to the requirement lines with no bar and no percentage", async () => {
     await clickTab("프로필");
-    await clickText("롤모델 근접도"); await sleep(600);
+    await clickText("단계 없음"); await sleep(600);
     const collapsed = await h.overlayText();
-    if (!collapsed.startsWith("롤모델")) throw new Error("the proximity line did not open the role screen: " + collapsed.slice(0, 60));
-    if (collapsed.includes("칸 하나 = 등급 한 단계")) throw new Error("the 영역 등급 section is open before `펼치기 ›`: " + collapsed.slice(0, 300));
-    if (!collapsed.includes("근접도 ")) throw new Error("the role screen states no proximity summary: " + collapsed.slice(0, 300));
+    if (!collapsed.startsWith("롤모델")) throw new Error("the role line did not open the role screen: " + collapsed.slice(0, 60));
+    if (collapsed.includes("칸 하나 = 등급 한 단계")) throw new Error("the 영역 등급 section carries the retired bar legend: " + collapsed.slice(0, 300));
+    if (!collapsed.includes("요구 영역 ")) throw new Error("the role screen states no requirement summary: " + collapsed.slice(0, 300));
     await clickInModalExact("펼치기 ›");
     const sheet = await h.overlayText();
-    for (const t of ["/ 요구", "칸 하나 = 등급 한 단계"]) {
-      if (!sheet.includes(t)) throw new Error(`the expanded 영역 등급 section does not state "${t}": ` + sheet.slice(0, 300));
-    }
-    const bar = await page.evaluate(() => {
-      const row = document.querySelector(".fixed.inset-0 div.flex.h-2");
-      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
-      const area = (s.areas || []).find((a) => (s.role?.targets?.[a.id] || 0) > 0);
-      if (!row || !area) return { row: !!row, area: !!area };
-      const cells = [...row.children];
-      return {
-        row: true, area: true, have: area.grade, target: s.role.targets[area.id],
-        widths: cells.map((c) => parseFloat(c.style.width)),
-        cyan: cells.filter((c) => /bg-cyan-400/.test(c.className)).length,
-      };
-    });
-    if (!bar.row) throw new Error("direction advice draws no proximity bar");
-    if (!bar.area) throw new Error("the save carries no area with a role-model requirement");
-    const need = bar.widths.length;
-    if (need !== bar.target) throw new Error(`the first bar has ${need} cells, the save requires grade ${bar.target}`);
-    bar.widths.forEach((w, k) => {
-      const want = (Math.pow((k + 1) / need, 2) - Math.pow(k / need, 2)) * 100;
-      if (!(Math.abs(w - want) <= 0.05)) throw new Error(`cell ${k} is ${w}% wide, the squared curve gives ${want.toFixed(2)}% — widths ${bar.widths.join(", ")}`);
-    });
-    if (bar.cyan !== Math.min(bar.have, need)) throw new Error(`${bar.cyan} filled cell(s), expected min(grade ${bar.have}, requirement ${need})`);
+    if (!sheet.includes("/ 요구")) throw new Error("the expanded 영역 등급 section does not state the requirement lines: " + sheet.slice(0, 300));
+    if (sheet.includes("칸 하나 = 등급 한 단계")) throw new Error("the expanded 영역 등급 section carries the retired bar legend: " + sheet.slice(0, 300));
+    if (await page.evaluate(() => document.querySelector(".fixed.inset-0 div.flex.h-2") !== null)) throw new Error("the expanded grade-gap section draws a bar");
+    if (/\d+%/.test(sheet)) throw new Error("the role screen states a percentage: " + sheet.slice(0, 400));
     try { await clickText("도감에서 더 보기"); await sleep(600); } catch {}
     await closeModal(); await closeModal();
   });
 
-  // ── Role-model stages (v28): a second figure beside proximity, derived from the save's own records and never merged
-  // into the percentage (rule 14). The CV button's children are flex items, so its text is read whitespace-normalised.
+  // ── Role-model stages (v28): stage and condition counts derived from the save's own records, stated as facts with no
+  // percentage (rule 14 amendment, 2026-09-18). The CV button's children are flex items, so its text is read whitespace-normalised.
   const stageLineText = () => page.evaluate(() => {
     const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
     return b ? b.innerText.replace(/\s+/g, " ").trim() : null;
@@ -207,7 +193,7 @@ module.exports = async (h) => {
     const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
     return b ? { text: b.innerText.replace(/\s+/g, " ").trim(), title: b.getAttribute("title") || "" } : null;
   });
-  // The role screen, opened the way the user does: the CV stage headline. (Without stages the proximity line opens it.)
+  // The role screen, opened the way the user does: the CV stage headline. (Without stages the role line opens it.)
   const openRole = async () => {
     await clickTab("프로필"); await sleep(300);
     const ok = await page.evaluate(() => {
@@ -224,10 +210,9 @@ module.exports = async (h) => {
     return [...ov.querySelectorAll("div")].filter((d) => (d.className || "").includes("font-mono") && (d.innerText || "").startsWith("- "))
       .map((d) => ({ text: (d.innerText || "").trim(), emerald: /text-emerald-400/.test(d.className), rose: /text-rose-400/.test(d.className) }));
   });
-  const proximityFigure = () => page.evaluate(() => {
-    const b = [...document.querySelectorAll("main button")].find((x) => (x.innerText || "").includes("롤모델 근접도"));
-    return b ? ((b.innerText.match(/(\d+)%/) || [])[1] ?? null) : null;
-  });
+  // Whether anything on home states a percentage — always false since the rule 14 amendment (2026-09-18).
+  const homePercent = () => page.evaluate(() => /\d+%/.test((document.querySelector("main")?.innerText || "")));
+  const homeText = () => page.evaluate(() => (document.querySelector("main")?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 300));
   // Plants the role model and appends the stage fixtures' contracts and portfolio entries; `null` lists remove them.
   const patchSave = (patch) => page.evaluate((p) => {
     const k = "liferpg-state-v1";
@@ -242,8 +227,7 @@ module.exports = async (h) => {
   }, patch);
   await step("the stage line states the current stage, the condition count and the quit condition, and the advice lists the unmet conditions", async () => {
     await clickTab("프로필"); await sleep(300);
-    const before = await proximityFigure();
-    if (before == null) throw new Error("no proximity figure on the CV before the stages are planted");
+    if (await homePercent()) throw new Error("a percentage renders on home before the stages are planted: " + (await homeText()));
     const saved = await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
       return { role: s.role, held: (s.profile?.certs || [])[0] || null };
@@ -259,21 +243,22 @@ module.exports = async (h) => {
       ] } });
       await h.reload(); await clickTab("프로필"); await sleep(300);
       let sb = await stageButton();
-      if (!sb || !sb.text.includes("단계 1/3") || !sb.title.includes("조건 1/4") || !sb.title.includes("전환 조건 미충족 (0/1)")) throw new Error("the planted stages read: " + JSON.stringify(sb));
-      if ((await proximityFigure()) !== before) throw new Error(`proximity moved from ${before}% to ${await proximityFigure()}% when stages were planted`);
+      if (!sb || !sb.text.includes("단계 1/3") || !sb.text.includes("· 조건 1/4") || !sb.title.includes("조건 1/4") || !sb.title.includes("전환 조건 미충족 (0/1)")) throw new Error("the planted stages read: " + JSON.stringify(sb));
+      if (await homePercent()) throw new Error("a percentage renders on home with stages planted: " + (await homeText()));
       await openRole();
       const sheet = await h.overlayText();
-      for (const t of ["롤모델", "스토리라인", "1단계", "E2E 첫 계약", "진행 0%", "- 계약 체결 수 'E2E단계고객' 0/1", "계약 추가 ›",
-        "2단계", "조건 2개", "3단계", "조건 1개", "전체 0% · 전환 조건 미충족"]) {
+      for (const t of ["롤모델", "스토리라인", "1단계", "E2E 첫 계약", "- 계약 체결 수 'E2E단계고객' 0/1", "계약 추가 ›",
+        "2단계", "조건 2개", "3단계", "조건 1개", "롤모델 1/3단계 · 조건 1/4 · 전환 조건 미충족 (0/1)"]) {
         if (!sheet.includes(t)) throw new Error(`the storyline does not state "${t}": ` + sheet.slice(0, 400));
       }
+      if (/\d+%/.test(sheet)) throw new Error("the role screen states a percentage: " + sheet.slice(0, 400));
       await closeModal();
       const month = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
       const deal = (id) => ({ id, client: "E2E단계고객", title: "단계 확인", status: "won", monthly: 1000000, months: 1, startMonth: month, paidMonths: [], createdAt: `${month}-01`, track: "biz" });
       await patchSave({ deals: [deal("e2e-stage-deal-1")] });
       await h.reload(); await clickTab("프로필"); await sleep(300);
       sb = await stageButton();
-      if (!sb || !sb.text.includes("단계 2/3") || !sb.title.includes("조건 2/4") || !sb.title.includes("전환 조건 미충족 (0/1)")) throw new Error("after one won contract the line reads: " + JSON.stringify(sb));
+      if (!sb || !sb.text.includes("단계 2/3") || !sb.text.includes("· 조건 2/4") || !sb.title.includes("조건 2/4") || !sb.title.includes("전환 조건 미충족 (0/1)")) throw new Error("after one won contract the line reads: " + JSON.stringify(sb));
       // The met stage is compact with one `충족` mark and no date (none is stored, rule 9); stage 2 is the expanded card
       await openRole();
       const second = await h.overlayText();
@@ -281,7 +266,7 @@ module.exports = async (h) => {
         "- 포트폴리오 항목 수 'E2E단계포트폴리오' 0/1", "포트폴리오 추가 ›"]) {
         if (!second.includes(t)) throw new Error(`the storyline after one contract does not state "${t}": ` + second.slice(0, 400));
       }
-      // The journey line's `전환 조건 미충족` carries the same word, so it is removed before the timeline marks are counted
+      // The stage line's `전환 조건 미충족` carries the same word, so it is removed before the timeline marks are counted
       const marks = (second.replace(/미충족/g, "").match(/충족/g) || []).length;
       if (marks !== 1) throw new Error(`the timeline marks ${marks} stages as met, expected the one done stage: ` + second.slice(0, 400));
       const conds = await condLines();
@@ -293,8 +278,8 @@ module.exports = async (h) => {
       await patchSave({ deals: [deal("e2e-stage-deal-2")], folio: [{ id: "e2e-stage-folio", title: "E2E단계포트폴리오", summary: "", stack: [], createdAt: `${month}-01` }] });
       await h.reload(); await clickTab("프로필"); await sleep(300);
       sb = await stageButton();
-      if (!sb || !sb.text.includes("단계 3/3") || !sb.title.includes("조건 4/4") || !sb.title.includes("전환 조건 충족 (1/1)")) throw new Error("with every condition met the line reads: " + JSON.stringify(sb));
-      if ((await proximityFigure()) !== before) throw new Error(`proximity moved from ${before}% to ${await proximityFigure()}% while conditions were met`);
+      if (!sb || !sb.text.includes("단계 3/3") || !sb.text.includes("· 조건 4/4") || !sb.title.includes("조건 4/4") || !sb.title.includes("전환 조건 충족 (1/1)")) throw new Error("with every condition met the line reads: " + JSON.stringify(sb));
+      if (await homePercent()) throw new Error("a percentage renders on home with every condition met: " + (await homeText()));
     } finally {
       await patchSave({ role: saved.role, deals: null, folio: null });
       await h.reload();
@@ -314,6 +299,7 @@ module.exports = async (h) => {
     try {
       // 2026-09-18: a story and an older verdict planted beside the stages must survive the editor's save untouched.
       const old = await dstrIn(-40);
+      // a legacy field from the pre-2026-09-18 template: nothing reads it, and the editor's save must leave it in place
       await patchSave({ role: { ...original, story: "E2E 스토리", verdicts: [{ id: "e2e-v0", date: old, probability: 10, summary: "E2E 이전 판정", basis: "", position: "", gaps: [], stageK: 1, stageN: 9, source: "ai" }] } });
       await h.reload();
       await page.evaluate(() => { window.confirm = () => true; });
@@ -338,10 +324,16 @@ module.exports = async (h) => {
       if (r.stages[0].conds.length !== 1) throw new Error(`the first stage keeps ${r.stages[0].conds.length} conditions, expected 1 after removing one of 2`);
       if (JSON.stringify(r.targets) !== JSON.stringify(original.targets)) throw new Error("saving the stages changed role.targets");
       if (!Array.isArray(r.verdicts) || r.verdicts.length !== 1 || r.verdicts[0].id !== "e2e-v0") throw new Error("the editor's save did not keep the planted verdict: " + JSON.stringify(r.verdicts));
+      if (r.verdicts?.[0]?.probability !== 10) throw new Error("the legacy probability was stripped or moved: " + JSON.stringify(r.verdicts));
       if (r.story !== "E2E 스토리") throw new Error("the editor's save did not keep the story: " + JSON.stringify(r.story));
       if (!Number.isFinite(r.seenStageK)) throw new Error("the editor's save did not stamp seenStageK: " + JSON.stringify(r.seenStageK));
       const changed = Object.keys({ ...before, ...after }).filter((k) => k !== "role" && k !== "lastTick" && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
       if (changed.length) throw new Error("saving the role model wrote other keys: " + changed.join(", "));
+      // The save lands on the role screen: the legacy verdict renders its stage and no percentage or probability text
+      await clickInModalExact("판정 기록 1건 ›"); await sleep(300);
+      const history = await h.overlayText();
+      if (!history.includes("단계 1/9")) throw new Error("the verdict history does not state the legacy verdict's stage: " + history.slice(0, 400));
+      if (/\d+%|확률/.test(history)) throw new Error("the verdict history states a percentage or a probability: " + history.slice(0, 400));
       try { await closeModal(); } catch {}
       // Remove every stage and restore the name: the saved role carries no stages key
       await openEditor();
@@ -460,9 +452,10 @@ module.exports = async (h) => {
       await h.reload();
       await openRole();
       const sheet = await h.overlayText();
-      for (const t of ["1단계", "E2E 완료 단계", "충족", "2단계", "E2E 현재 단계", "진행 0%", "3단계", "E2E 다음 단계", "조건 3개"]) {
+      for (const t of ["1단계", "E2E 완료 단계", "충족", "2단계", "E2E 현재 단계", "3단계", "E2E 다음 단계", "조건 3개"]) {
         if (!sheet.includes(t)) throw new Error(`the storyline does not state "${t}": ` + sheet.slice(0, 400));
       }
+      if (/\d+%/.test(sheet)) throw new Error("the storyline states a percentage: " + sheet.slice(0, 400));
       const doneMark = await page.evaluate(() => {
         const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
         const e = [...ov.querySelectorAll("span")].find((x) => (x.innerText || "").trim() === "충족");
@@ -620,7 +613,7 @@ module.exports = async (h) => {
         const last = main && main.children[main.children.length - 1];
         return last ? { tag: last.tagName, text: (last.innerText || "").trim() } : null;
       });
-      if (!line || line.tag !== "P" || line.text !== "롤모델 미설정 — 근접도 계산 대상 없음") throw new Error("the CV does not state the unset line as a P: " + JSON.stringify(line));
+      if (!line || line.tag !== "P" || line.text !== "롤모델 미설정 — 설정에서 롤모델을 정해요") throw new Error("the CV does not state the unset line as a P: " + JSON.stringify(line));
     } finally {
       await patchSave({ role: original });
       await h.reload();
@@ -690,6 +683,7 @@ module.exports = async (h) => {
         { id: "e2e-role-deal-biz", client: "E2E고객사", title: "판정 확인", status: "won", monthly: 1000000, months: 1, startMonth: p.month, paidMonths: [], createdAt: `${p.month}-01`, track: "biz" },
         { id: "e2e-role-deal-work", client: "E2E직장고객", title: "E2E-ROLE-WORK-SENTINEL-7c21", status: "won", monthly: 1000000, months: 1, startMonth: p.month, paidMonths: [], createdAt: `${p.month}-01`, track: "work" }];
       s.role = { ...(s.role || { name: "롤모델", targets: {} }), story: "E2E 원하는 모습 — 직원 20명 의료 AI 회사 대표",
+        // a legacy field from the pre-2026-09-18 template: nothing reads it, and the packet must not state it
         verdicts: [{ id: "e2e-v0", date: p.old, probability: 10, summary: "E2E 이전 판정", basis: "", position: "", gaps: [], stageK: 1, stageN: 9, source: "ai" }],
         stages: [
           { id: "e2e-st1", name: "E2E 첫 계약", conds: [{ type: "deals_won", arg: "E2E단계고객", min: 1 }] },
@@ -708,10 +702,13 @@ module.exports = async (h) => {
     if (wonBiz < 1) throw new Error("the planted business deal is missing from the save");
     const must = ["[인생 관리 — 롤모델 판정 요청", "E2E 원하는 모습 — 직원 20명 의료 AI 회사 대표", "## 이력", "## 영역 등급", "## 보유 자격·시험", "## 기록 요약", `계약 체결 ${wonBiz}건`,
       "## 현재 단계", "1단계 E2E 첫 계약", "- 계약 체결 수 'E2E단계고객' 0/1", "조건 종류:", "- cert_held:",
+      "## 지난 판정", `- ${old} · 단계 1/9 · E2E 이전 판정`, '"summary":"..."', "판정 4줄 이내",
       ...saved.areas.map((a) => `- ${a.name}: ${RANK_NAMES[a.grade]} (${a.grade}/9)`)];
     for (const part of must) if (!packet.includes(part)) throw new Error(`the role packet lacks "${part}" (${packet.length} chars)`);
-    const never = [saved.profile.name, saved.profile.birth, "e2e-role@example.com", "010-1234-0000", "E2E대학교", "E2E직장주식회사", "E2E고객사", "E2E-ROLE-WORK-SENTINEL-7c21"];
+    // Since 2026-09-18 the packet asks for no probability and the legacy field of the planted verdict never enters it
+    const never = [saved.profile.name, saved.profile.birth, "e2e-role@example.com", "010-1234-0000", "E2E대학교", "E2E직장주식회사", "E2E고객사", "E2E-ROLE-WORK-SENTINEL-7c21", '"probability"', "확률"];
     for (const part of never) if (part && packet.includes(part)) throw new Error(`the role packet carries "${part}"`);
+    if (/\d+%/.test(packet)) throw new Error("the role packet states a percentage: " + (packet.match(/.{0,40}\d+%.{0,40}/) || [])[0]);
     if (packet.length > 12000) throw new Error(`the role packet is ${packet.length} chars`);
     await closeModal(); await closeModal();
     // The story travels in the role packet only: the daily packet never states it.
@@ -734,7 +731,8 @@ module.exports = async (h) => {
       await openVerdictSheet();
       await clickInModalExact("AI 답변 붙여넣기 ›"); await sleep(300);
       // `정보보안기사` is in the table and not held by this save (the save holds 정보처리기사 and 전기기사), so its row reads 0/1.
-      const reply = ["판정 5줄 이내.", "```json", JSON.stringify({
+      // the pre-2026-09-18 key: the parser must ignore it
+      const reply = ["판정 4줄 이내.", "```json", JSON.stringify({
         verdict: { summary: "E2E 판정 요약", probability: 35, basis: "E2E 근거 (추정)", position: "E2E 위치", gaps: ["E2E 부족 1", "E2E 부족 2"] },
         stages: [
           { name: "E2E 제안 단계", why: "E2E 이유", conds: [{ type: "deals_won", arg: "E2E판정고객", min: 2 }, { type: "cert_held", arg: "정보보안기사", min: 1 }] },
@@ -747,27 +745,30 @@ module.exports = async (h) => {
       await h.setValue(".fixed.inset-0 textarea", reply);
       await clickInModalExact("답변 확인"); await sleep(500);
       const sheet = await h.overlayText();
-      for (const t of [`AI 판단 · 검증되지 않음 · ${today}`, "AI 추정 확률 35%", "E2E 판정 요약", "근거: E2E 근거 (추정)", "- E2E 부족 1", "제안 단계 — 3건",
+      for (const t of [`AI 판단 · 검증되지 않음 · ${today}`, "E2E 판정 요약", "근거: E2E 근거 (추정)", "- E2E 부족 1", "제안 단계 — 3건",
         "- 계약 체결 수 'E2E판정고객' 0/2", "- 보유 자격 '정보보안기사' 0/1", "알 수 없는 조건 종류예요: unknown_type", "자격 표에 없는 이름이에요: 존재하지않는자격증",
         "없는 영역이에요: 없는영역", "저장하면 지금 단계 3개가 선택한 단계로 바뀌어요."]) {
         if (!sheet.includes(t)) throw new Error(`the confirm sheet does not state "${t}": ` + sheet.slice(0, 400));
       }
+      if (/\d+%|확률/.test(sheet)) throw new Error("the confirm sheet states a percentage or a probability: " + sheet.slice(0, 400));
       await page.evaluate(() => { window.confirm = () => true; });
       await clickInModalExact("선택한 항목 저장"); await sleep(600);
-      // The save returns to the role screen, whose card carries the verdict just stored
+      // The save returns to the role screen, whose card carries the verdict just stored — its stage, never a figure
       const back = await h.overlayText();
       if (!back.startsWith("롤모델")) throw new Error("the verdict save did not land on the role screen: " + back.slice(0, 60));
-      for (const t of ["AI 추정 확률 35%", "E2E 판정 요약"]) {
+      for (const t of ["E2E 판정 요약", "단계 1/1"]) {
         if (!back.includes(t)) throw new Error(`the role screen does not state "${t}" after the save: ` + back.slice(0, 300));
       }
+      if (/\d+%/.test(back)) throw new Error("the role screen states a percentage after the save: " + back.slice(0, 400));
       const after = await readState();
       const r = after.role || {};
       if (!Array.isArray(r.stages) || r.stages.length !== 1 || r.stages[0].name !== "E2E 제안 단계") throw new Error("the ticked stage did not replace the stages: " + JSON.stringify(r.stages));
       if (JSON.stringify(r.stages[0].conds) !== JSON.stringify([{ type: "deals_won", arg: "E2E판정고객", min: 2 }, { type: "cert_held", arg: "정보보안기사", min: 1 }])) throw new Error("the saved conditions differ: " + JSON.stringify(r.stages[0].conds));
       if ("why" in r.stages[0]) throw new Error("the stage's why was stored");
       const v = (r.verdicts || [])[0] || {};
-      if (v.date !== today || v.probability !== 35 || v.summary !== "E2E 판정 요약" || (v.gaps || []).length !== 2 || v.stageK !== 1 || v.stageN !== 1 || v.source !== "ai") throw new Error("the verdict record differs: " + JSON.stringify(v));
+      if (v.date !== today || "probability" in v || v.summary !== "E2E 판정 요약" || (v.gaps || []).length !== 2 || v.stageK !== 1 || v.stageN !== 1 || v.source !== "ai") throw new Error("the verdict record differs: " + JSON.stringify(v));
       if (r.verdicts.length !== 2 || r.verdicts[1].id !== "e2e-v0") throw new Error("the older verdict is not behind the new one: " + JSON.stringify(r.verdicts.map((x) => x.id)));
+      if (r.verdicts[1].probability !== 10) throw new Error("the older verdict's legacy field was touched: " + JSON.stringify(r.verdicts[1]));
       if (r.targets[area.id] !== 5) throw new Error("the ticked requirement is not stored: " + JSON.stringify(r.targets));
       if (r.seenStageK !== 1) throw new Error("seenStageK is not the new stage index: " + JSON.stringify(r.seenStageK));
       const changed = Object.keys({ ...before, ...after }).filter((k) => k !== "role" && k !== "lastTick" && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
@@ -779,26 +780,24 @@ module.exports = async (h) => {
     }
   });
 
-  // ── Stage progress and the completion overlay (2026-09-18, Phase 2): the headline percentage is derived from the records
-  // and the proximity beneath it never moves with them (rule 14); the overlay fires once per stage, stamped on
-  // `role.seenStageK`, and not again on reload. The reply step restores its plant in `finally`, so the one stage it saved
-  // (`deals_won 'E2E판정고객' ≥ 2` + `cert_held 정보보안기사`) is replanted here with that save's verdict and stamp.
+  // ── The stage line and the completion overlay (2026-09-18): the headline states the stage and the condition count as
+  // facts derived from the records — no percentage anywhere on home since the rule 14 amendment; the overlay fires once
+  // per stage, stamped on `role.seenStageK`, and not again on reload. The reply step restores its plant in `finally`, so
+  // the one stage it saved (`deals_won 'E2E판정고객' ≥ 2` + `cert_held 정보보안기사`) is replanted here with that save's
+  // verdict and stamp.
   const readHeadline = () => page.evaluate(() => {
     const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
     if (!b) return null;
-    const row = b.querySelector("div.flex");
-    const cap = [...b.querySelectorAll("div")].find((d) => /AI 추정 확률|확률 미제시/.test(d.innerText || ""));
-    const prox = [...document.querySelectorAll("main button")].find((x) => (x.innerText || "").includes("롤모델 근접도"));
     return {
-      row: row ? row.innerText.replace(/\s+/g, " ").replace(/\s*›\s*$/, "").trim() : "",
-      caption: cap ? cap.innerText.trim() : "",
-      precedes: !!prox && !!(b.compareDocumentPosition(prox) & Node.DOCUMENT_POSITION_FOLLOWING),
+      row: b.innerText.replace(/\s+/g, " ").replace(/\s*›\s*$/, "").trim(),
+      title: b.getAttribute("title") || "",
+      percent: /\d+%/.test(document.querySelector("main")?.innerText || ""),
     };
   });
   // Overlays are `z-50`; modals are `z-40`, so a reader opened by the same reload is not mistaken for the card.
   const stageOverlay = () => page.evaluate(() => { const o = document.querySelector(".fixed.inset-0.z-50"); return o ? o.innerText.replace(/\s+/g, " ").trim() : ""; });
   let progressStash = null;
-  await step("the headline states stage progress with the proximity beneath, records move the progress while the proximity stays, and the completion overlay shows once", async () => {
+  await step("the headline states the stage and the condition count, records move the condition values with no percentage anywhere, and the completion overlay shows once", async () => {
     const st = await readState();
     progressStash = { role: st.role, certs: st.profile.certs };
     const today = await dstrIn(0);
@@ -810,25 +809,28 @@ module.exports = async (h) => {
       const s = JSON.parse(localStorage.getItem(k));
       s.role = { ...(s.role || { name: "롤모델", targets: {} }), story: "E2E 원하는 모습",
         stages: [{ id: "e2e-stage-p2", name: "E2E 제안 단계", conds: [{ type: "deals_won", arg: "E2E판정고객", min: 2 }, { type: "cert_held", arg: "정보보안기사", min: 1 }] }],
+        // a legacy field from the pre-2026-09-18 template: nothing reads it, and no surface may print it
         verdicts: [{ id: "e2e-v1", date: p.today, probability: 35, summary: "E2E 판정 요약", basis: "", position: "", gaps: [], stageK: 1, stageN: 1, source: "ai" }],
         seenStageK: 1 };
       localStorage.setItem(k, JSON.stringify(s));
     }, { today });
     await h.reload(); await clickTab("프로필"); await sleep(300);
-    const p0 = await proximityFigure();
-    if (p0 == null) throw new Error("no proximity figure beneath the headline");
     let hl = await readHeadline();
-    if (!hl || hl.row !== "단계 1/1 E2E 제안 단계 · 진행 0%") throw new Error("the headline reads: " + JSON.stringify(hl));
-    if (hl.caption !== `AI 추정 확률 35% · ${today}`) throw new Error("the verdict caption reads: " + JSON.stringify(hl.caption));
-    if (!hl.precedes) throw new Error("the headline does not precede the proximity line");
+    if (!hl || hl.row !== "단계 1/1 E2E 제안 단계 · 조건 0/2") throw new Error("the headline reads: " + JSON.stringify(hl));
+    if (hl.percent) throw new Error("a percentage renders on home: " + (await homeText()));
     if (await stageOverlay()) throw new Error("an overlay shows on a stamped save: " + (await stageOverlay()));
-    // One of two contracts: the stage's mean ratio is (0.5 + 0) / 2
+    // One of two contracts: the condition value moves to 1/2 while the headline still reads `조건 0/2` (the condition is unmet)
     await patchSave({ deals: [deal("e2e-stage-p2-deal-1")] });
     await h.reload(); await clickTab("프로필"); await sleep(300);
     hl = await readHeadline();
-    if (!hl || hl.row !== "단계 1/1 E2E 제안 단계 · 진행 25%") throw new Error("after one won contract the headline reads: " + JSON.stringify(hl));
-    if ((await proximityFigure()) !== p0) throw new Error(`proximity moved from ${p0}% to ${await proximityFigure()}% with a contract`);
-    if (await stageOverlay()) throw new Error("an overlay shows at 25 %: " + (await stageOverlay()));
+    if (!hl || hl.row !== "단계 1/1 E2E 제안 단계 · 조건 0/2") throw new Error("after one won contract the headline reads: " + JSON.stringify(hl));
+    if (hl.percent) throw new Error("a percentage renders on home with a contract: " + (await homeText()));
+    await openRole();
+    const partial = (await condLines()).find((c) => c.text === "- 계약 체결 수 'E2E판정고객' 1/2");
+    if (!partial || !partial.rose) throw new Error("the role screen does not state the moved condition value in rose: " + JSON.stringify(await condLines()));
+    if (/\d+%/.test(await h.overlayText())) throw new Error("the role screen states a percentage: " + (await h.overlayText()).slice(0, 400));
+    await closeModal();
+    if (await stageOverlay()) throw new Error("an overlay shows with one of two contracts: " + (await stageOverlay()));
     // The second contract and the held certificate complete the stage: the overlay shows once, within 800 ms of the reload
     await patchSave({ deals: [deal("e2e-stage-p2-deal-2")] });
     await page.evaluate(() => { const k = "liferpg-state-v1"; const s = JSON.parse(localStorage.getItem(k)); s.profile = { ...s.profile, certs: ["정보보안기사"] }; localStorage.setItem(k, JSON.stringify(s)); });
@@ -845,8 +847,8 @@ module.exports = async (h) => {
     try { await closeModal(); } catch {}
     await clickTab("프로필"); await sleep(300);
     hl = await readHeadline();
-    if (!hl || hl.row !== "단계 1/1 모든 단계 충족 · 진행 100%") throw new Error("with every condition met the headline reads: " + JSON.stringify(hl));
-    if ((await proximityFigure()) !== p0) throw new Error(`proximity moved from ${p0}% to ${await proximityFigure()}% when the stage completed`);
+    if (!hl || hl.row !== "단계 1/1 모든 단계 충족 · 조건 2/2") throw new Error("with every condition met the headline reads: " + JSON.stringify(hl));
+    if (hl.percent) throw new Error("a percentage renders on home when the stage completed: " + (await homeText()));
   });
 
   await step("the reader states the re-assessment line for an old verdict and the absence line without one", async () => {

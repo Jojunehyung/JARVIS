@@ -2046,16 +2046,17 @@ const krRemainText = (kr, goal, state) => {
   if (kr.type === "cert") return kr.done ? "취득" : "미취득";
   return "";
 };
-const roleGap = (state) => {
+// The role model's per-area requirement facts: the required grade, the verified grade and the steps still missing.
+// The proximity percentage that used to be averaged from these items was retired on 2026-09-18 (rule 14 amendment):
+// nothing here scores, weights or averages — the items are read as they are.
+const roleAreas = (state) => {
   const r = state?.role;
   if (!r) return null;
   const items = (state.areas || [])
     .filter((p) => (r.targets?.[p.id] || 0) > 0)
     .map((p) => ({ area: p, need: r.targets[p.id], have: p.grade, gap: Math.max(0, r.targets[p.id] - p.grade) }));
   if (!items.length) return null;
-  // Squared curve: the number cannot rise without higher grades. One step below the requirement (just short) ≈ 60–70%.
-  const match = Math.round((items.reduce((s, i) => s + Math.pow(Math.min(1, i.have / i.need), 2), 0) / items.length) * 100);
-  return { name: r.name, items, match };
+  return { name: r.name, items };
 };
 const certGainOf = (state, c) => {
   const base = certP(c.d);
@@ -2381,7 +2382,7 @@ const bizSummary = (state, today) => {
 
 /* ── Roadmap (v28) ── */
 /* Milestones are records, never tasks: a milestone pays nothing, completes nothing and moves no goal, grade or
-   proximity (rules 1, 14, 18). The status is the user's own field; the D-day, the linked-work completion, the pace and
+   role-model requirement (rules 1, 14, 18). The status is the user's own field; the D-day, the linked-work completion, the pace and
    the stage-order note are derived at render and never stored (rule 9). Storage: an empty milestone ≈ 120 chars plus
    its title; a typical one (30-char title, a due, a stage, a 60-char condition, three links) ≈ 320; a full one (60 +
    200 + three lists of 10) ≈ 900; the nine seeds ≈ 2.2 k once. Every write runs `recordFits` (`마일스톤을`). */
@@ -2474,7 +2475,7 @@ const milestoneTrack = (state, m) => {
 
 /* ── Pipeline and notices (v28) ── */
 /* Hospital leads and national-project notices are records, never tasks: registering or moving one pays nothing,
-   completes nothing and moves no goal, grade or proximity (rules 1, 14, 18). Both are business by nature and carry no
+   completes nothing and moves no goal, grade or role-model requirement (rules 1, 14, 18). Both are business by nature and carry no
    `track`; neither enters the work or prep packet, and the calendar file leaves leads out. The stage, the status and
    `stageAt` are the user's own fields; overdue actions, near deadlines and the ordering are derived (rule 9). Storage: a
    lead ≈ 110 chars of overhead, ≈ 260 typical, ≈ 880 full; a notice ≈ 110, ≈ 250 typical, ≈ 820 full with ten document
@@ -2513,8 +2514,8 @@ const noticeLine = (n) => `공고 · ${[n.title, n.agency, NOTICE_STATUS_LABEL[n
 /* The role model's optional stages: each stage is a list of fact conditions `{ type, arg?, min }` the app evaluates
    from its own records; a stage is met when every condition is met, and the current stage is the first unmet one.
    Only the user's stage definitions are stored (`role.stages`); every value, the current stage and the quit condition
-   are derived at render (rule 9). The stage count is a second number beside `roleGap`, never merged into it (rule 14),
-   and nothing here pays, promotes or moves a grade (rule 1). Storage: nine stages with two conditions each ≈ 1.5 k. */
+   are derived at render (rule 9), and nothing here pays, promotes, moves a grade or produces a percentage (rule 1; the
+   rule 14 amendment of 2026-09-18). Storage: nine stages with two conditions each ≈ 1.5 k. */
 const ROLE_STAGES_MAX = 12;
 const STAGE_CONDS_MAX = 5;
 const ROLE_STAGE_NAME = 40;
@@ -2585,7 +2586,7 @@ const condText = (state, today, c) => {
   const arg = c?.arg == null ? "" : String(c.arg).trim();
   return `${label}${arg ? ` '${arg}'` : ""} ${money ? wonText(value) : value}/${money ? wonText(c?.min) : Number(c?.min) || 0}`;
 };
-// Derived at render, never stored (rule 9); a second number beside `roleGap`, never merged into it (rule 14).
+// Derived at render, never stored (rule 9); counts and met flags only — no ratio, no percentage (rule 14 amendment).
 const roleStageOf = (state, today) => {
   const list = state?.role?.stages;
   if (!Array.isArray(list) || !list.length) return null;
@@ -2604,11 +2605,12 @@ const roleStageOf = (state, today) => {
 };
 const quitText = (rs) => (rs.quit ? "전환 조건 충족 (1/1)" : "전환 조건 미충족 (0/1)");
 const stageLine = (rs) => `롤모델 ${Math.min(rs.k, rs.n)}/${rs.n}단계 · 조건 ${rs.condsMet}/${rs.condsTotal} · ${quitText(rs)}`;
+const stageName = (rs) => (rs.current ? rs.current.s.name : "모든 단계 충족");
 
-/* ── Role story, verdicts and stage progress (2026-09-18) ── */
-/* The user's own `원하는 모습` (`role.story`), the dated AI verdicts pasted back through the fifth packet (`role.verdicts`,
-   newest first, clipped text and a probability the app never turns into a grade, payout or proximity) and the stage
-   progress figures derived from the stages above. Storage: the story ≤ 2.0 k once; a verdict ≈ 130 chars of overhead,
+/* ── Role story and verdicts (2026-09-18) ── */
+/* The user's own `원하는 모습` (`role.story`) and the dated AI verdicts pasted back through the fifth packet (`role.verdicts`,
+   newest first, clipped text the app never turns into a grade, payout or figure; a probability field written by the
+   pre-2026-09-18 template is unread). Storage: the story ≤ 2.0 k once; a verdict ≈ 130 chars of overhead,
    ≈ 600 typical, ≈ 2.2 k full, ≈ 53 k at the 24-record cap (1.4 % of STORAGE_BUDGET); the seen-stamp 15 chars. */
 const ROLE_STORY_MAX = 2000;        // chars of `role.story` — the one free text the user writes to be sent verbatim
 const ROLE_VERDICTS_MAX = 24;       // verdict records kept, newest first; the oldest is dropped past this
@@ -2620,24 +2622,6 @@ const ROLE_VERDICT_GAPS = 8;        // gap lines kept, each clipped to ROLE_VERD
 const ROLE_VERDICT_GAP = 120;
 const ROLE_STAGE_WHY = 200;         // chars of a proposed stage's `why`, shown on the confirm sheet only — never stored
 const lastVerdictOf = (state) => (state?.role?.verdicts || [])[0] || null;
-const probText = (p) => (Number.isFinite(p) ? `AI 추정 확률 ${p}%` : "확률 미제시");
-// One condition's share of its threshold: a threshold of 0 is met by definition, anything past the threshold is 1.
-const condRatio = (r) => ((Number(r.c.min) || 0) <= 0 ? 1 : Math.min(1, r.value / Number(r.c.min)));
-/* The current stage's progress: derived at render, never stored (rule 9); a second number beside `roleGap`, never
-   merged into it (rule 14). A stage's fraction is the mean of its conditions' ratios (a stage without conditions is 1);
-   `pct` is floored so `100` prints only for a met stage; `journey` counts the met stages plus the current fraction
-   over the stage count, and is printed once, in the advice sheet. `k` is capped at `n` for display. */
-const stageProgressOf = (state, today) => {
-  const rs = roleStageOf(state, today);
-  if (!rs) return null;
-  const fractionOf = (st) => (st.results.length ? st.results.reduce((sum, r) => sum + condRatio(r), 0) / st.results.length : 1);
-  const fraction = rs.current ? fractionOf(rs.current) : 1;
-  const k = Math.min(rs.k, rs.n);
-  const pct = rs.current ? Math.floor(fraction * 100) : 100;
-  const journey = Math.round(((rs.k - 1) + (rs.current ? fraction : 0)) / rs.n * 100);
-  const conds = (rs.current?.results || []).map((r) => ({ text: r.text, value: r.value, min: Number(r.c.min) || 0, ratio: condRatio(r), met: r.met }));
-  return { rs, k, n: rs.n, name: rs.current ? rs.current.s.name : "모든 단계 충족", pct, journey, conds };
-};
 // Whether the reader should ask for a re-assessment: no verdict yet, the last one older than ROLE_VERDICT_DAYS, or a
 // stage completed since it was given (`stageRose`). Derived at render from the dated records (rule 9).
 const roleVerdictDue = (state, today) => {
@@ -2676,10 +2660,10 @@ const stageWorkOf = (state, today, k) => {
 };
 
 // Standard achievements that would close each role-model gap. Shared by RoleGradeSection and the briefing;
-// the tiering and payout logic is unchanged (rules 14, 15).
+// the tiering and payout logic is unchanged (rule 15).
 const roleRecommendations = (state) => {
-  const rg = roleGap(state);
-  const gaps = (rg?.items || []).filter((i) => i.gap > 0).map((i) => {
+  const areas = roleAreas(state);
+  const gaps = (areas?.items || []).filter((i) => i.gap > 0).map((i) => {
     const h = areaCatHints(state, i.area);
     const recs = h.cats
       .flatMap((k) => CERTS_BY_CAT[k] || [])
@@ -2700,7 +2684,7 @@ const roleRecommendations = (state) => {
       : [];
     return { ...i, h, recs, examRecs };
   });
-  return { rg, gaps };
+  return { areas, gaps };
 };
 
 // Buckets the open tasks by date. Pure: derived at render, never stored (rule 9).
@@ -3069,11 +3053,12 @@ const buildBriefing = (state, today) => {
     text: `최근 ${AREA_STALE_DAYS}일 정체 영역 없음 · 최근 ${ACTIVITY_GAP_DAYS}일 활동 공백 없음` }]);
 
   /* Next step — the same recommendation the direction advice screen shows */
-  const { rg, gaps } = roleRecommendations(state);
+  const { areas, gaps } = roleRecommendations(state);
   let nextItem;
-  // Without a role model the line opens the role model form itself: on home the same fact is an inert line
-  if (!rg) nextItem = { kind: "next", severity: 2, text: "롤모델 미설정 — 근접도 계산 대상 없음", action: { type: "role" } };
-  else if (!gaps.length) nextItem = { kind: "next", severity: 1, text: `모든 요구 영역 충족 · 근접도 ${rg.match}%`, action: { type: "role" } };
+  // Without a role model the line opens the role screen itself: on home the same fact is an inert line
+  if (!state.role) nextItem = { kind: "next", severity: 2, text: "롤모델 미설정 — 설정에서 롤모델을 정해요", action: { type: "role" } };
+  else if (!areas) nextItem = { kind: "next", severity: 2, text: "요구 등급 없음 — 세부 수정에서 정해요", action: { type: "role" } };
+  else if (!gaps.length) nextItem = { kind: "next", severity: 1, text: "모든 요구 영역 충족", action: { type: "role" } };
   else {
     const g0 = gaps[0];
     const r = g0.recs[0];
@@ -3244,14 +3229,14 @@ const buildReader = (state, today) => {
   ), { type: "biz" });
   add("goals", "뒤처진 목표 페이스", briefItems("goals").filter((it) => it.severity === 3).map((it) => ({ text: it.text })), { type: "goals" });
   /* The role verdict (2026-09-18) — the monthly re-assessment line lives in the reader, not the briefing: the briefing
-     feeds the daily packet, and an AI-stated probability must not travel back into a packet. One derived item. */
+     feeds the daily packet, and the verdict's text must not travel back into a packet. One derived item. */
   const d = roleVerdictDue(state, today);
-  const sp = stageProgressOf(state, today);
+  const rs = roleStageOf(state, today);
   const lastStage = d.last ? Math.min(d.last.stageK, d.last.stageN) : 0;
   const roleLine = !state.role ? "롤모델 미설정 — 설정에서 롤모델을 정해요"
     : !d.last ? "롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물어요"
-    : d.due ? `롤모델 재판정 — 마지막 ${d.last.date} · ${d.days}일 지남${d.stageRose && sp ? ` · 단계 ${lastStage} → ${sp.k}` : ""}`
-    : `롤모델 판정 · 마지막 ${d.last.date} · ${d.days}일 지남 · ${probText(d.last.probability)} · 단계 ${lastStage}/${d.last.stageN}`;
+    : d.due ? `롤모델 재판정 — 마지막 ${d.last.date} · ${d.days}일 지남${d.stageRose && rs ? ` · 단계 ${lastStage} → ${Math.min(rs.k, rs.n)}` : ""}`
+    : `롤모델 판정 · 마지막 ${d.last.date} · ${d.days}일 지남 · 단계 ${lastStage}/${d.last.stageN}`;
   add("role", "롤모델 판정", [{ text: roleLine }], { type: "role" });
 
   return { since, sections };
@@ -3331,7 +3316,7 @@ const bizPacketLines = (state, today) => {
 const buildAssistantPacket = (state, today) => {
   const brief = buildBriefing(state, today);
   const act = state.act || {};
-  const rg = roleGap(state);
+  const rs = roleStageOf(state, today);
   const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
   const sec = packetSection;
 
@@ -3370,7 +3355,7 @@ const buildAssistantPacket = (state, today) => {
   const reviewLines = review ? [`- ${review.weekOf} 주 · 잘된 것: ${review.wins} · 막힌 것: ${review.blocks}`] : [];
   const stateLines = [
     `- 연속 ${act.streak}일 · 마지막 완료 ${act.lastActive || "없음"} · 보호권 ${act.shieldsLeft}`,
-    rg ? `- 롤모델 ${rg.name} 근접도 ${rg.match}%` : "- 롤모델 미설정",
+    !state.role ? "- 롤모델 미설정" : rs ? `- 롤모델 ${state.role.name} · 단계 ${Math.min(rs.k, rs.n)}/${rs.n} · 조건 ${rs.condsMet}/${rs.condsTotal}` : `- 롤모델 ${state.role.name} · 단계 없음`,
   ];
 
   const build = (jl) => [
@@ -3792,13 +3777,13 @@ const ROLE_PACKET_STORY_TRIM = 1000;   // the story clip once the packet runs ov
 const ROLE_PACKET_STORY_TRIM2 = 500;   // the second story clip, after the condition lines are dropped
 const ROLE_PACKET_HEAD = [
   "역할: 이 사용자가 적은 '원하는 모습'에 지금 얼마나 가까운지 비판적으로 판정하는 비서예요. 아래 데이터만 근거로 답해요.",
-  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 달성 가능성을 숫자로 쓰지 않아요. 해요체로 써요.",
   "2) 회사·직무가 목표면 최근 3년 실제 채용 스펙(학력·경력 연수·자격·어학 점수)과 비교해요. 창업이 목표면 업종·규모별 실제 생존율·성공률과 비교해요. 확실하지 않은 수치는 '추정'이라고 표시해요.",
   "3) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요. 등급 이름은 아래 '영역 등급'의 표기를 그대로 써요.",
   "4) 단계는 앱이 기록으로 계산할 수 있는 조건만 제안해요 — 아래 '조건 종류'의 type과 값만 써요. 단계 12개 · 단계당 조건 5개 이내, 단계 이름 40자 이내. 자격은 공식 명칭 그대로, 영역 이름은 아래 '영역 등급'에 있는 것만, 요구 등급은 1–8로 써요.",
-  "5) 답변 형식: ① 판정 5줄 이내 (요약·확률·근거·현재 위치·부족한 것) ② 마지막에 아래 JSON 블록 1개 (단계 제안이 없으면 \"stages\": [], 등급 제안이 없으면 \"areas\": {}).",
+  "5) 답변 형식: ① 판정 4줄 이내 (요약·근거·현재 위치·부족한 것) ② 마지막에 아래 JSON 블록 1개 (단계 제안이 없으면 \"stages\": [], 등급 제안이 없으면 \"areas\": {}).",
   "```json",
-  '{"verdict":{"summary":"...","probability":0-100 또는 null,"basis":"...","position":"...","gaps":["..."]},"stages":[{"name":"...","why":"...","conds":[{"type":"...","arg":"...","min":0}]}],"areas":{"<영역 이름>":1-8},"note":"한 줄"}',
+  '{"verdict":{"summary":"...","basis":"...","position":"...","gaps":["..."]},"stages":[{"name":"...","why":"...","conds":[{"type":"...","arg":"...","min":0}]}],"areas":{"<영역 이름>":1-8},"note":"한 줄"}',
   "```",
 ];
 // The condition vocabulary the head states, generated from COND_TYPES so the packet never drifts from the evaluator.
@@ -3812,7 +3797,7 @@ const condTypeLines = () => ["조건 종류:", ...COND_TYPES.map(([type, label, 
    the last verdict's line. Nothing of a day-job record, a transcript or a meeting enters. When the text exceeds
    ROLE_PACKET_MAX the reductions run one step at a time, rebuilding after each: story 2,000 → 1,000, condition lines
    dropped (stage names stay), story → 500, stage lines → 0. The header, the CV, the grades, the certificates, the
-   counts and the last verdict are never dropped. Derived on demand, never stored (rule 9); the AI's own probability
+   counts and the last verdict are never dropped. Derived on demand, never stored (rule 9); the last verdict's text
    travels only here, as `## 지난 판정`, never into the daily packet or the briefing. */
 const buildRoleVerdictPacket = (state, today) => {
   const role = state.role || {};
@@ -3845,7 +3830,7 @@ const buildRoleVerdictPacket = (state, today) => {
   const rs = roleStageOf(state, today);
   const last = lastVerdictOf(state);
   const verdictLines = last
-    ? [`- ${last.date} · ${probText(last.probability)} · 단계 ${Math.min(last.stageK, last.stageN)}/${last.stageN} · ${oneLineText(last.summary, ROLE_VERDICT_SUMMARY)}`]
+    ? [`- ${last.date} · 단계 ${Math.min(last.stageK, last.stageN)}/${last.stageN} · ${oneLineText(last.summary, ROLE_VERDICT_SUMMARY)}`]
     : [];
 
   const k = { story: ROLE_STORY_MAX, condLines: true, stages: rs ? rs.n : 0 };
@@ -3879,7 +3864,8 @@ const buildRoleVerdictPacket = (state, today) => {
    2026-09-18). A stage with one invalid condition is rejected whole, with the first reason found; a `cert_held`
    argument is normalised to the official name through `certByTitle` (longest name first, rule 15) so `condValue`'s
    exact match against `heldCertsOf` works. An area row appears only when the proposed grade differs from the current
-   requirement; a duplicated area name keeps the last entry. Nothing here writes state. */
+   requirement; a duplicated area name keeps the last entry. Nothing here writes state. A probability key, which a
+   reply written to the pre-2026-09-18 template may still carry, is ignored, not inspected. */
 const parseRoleVerdictReply = (text, state, today) => {
   const raw = String(text || "");
   const data = replyJson(raw);
@@ -3887,10 +3873,8 @@ const parseRoleVerdictReply = (text, state, today) => {
   let verdict = null;
   if (data?.verdict && typeof data.verdict === "object" && !Array.isArray(data.verdict)) {
     const v = data.verdict;
-    const p = typeof v.probability === "number" || (typeof v.probability === "string" && v.probability.trim()) ? Number(v.probability) : NaN;
     verdict = {
       summary: clip(v.summary, ROLE_VERDICT_SUMMARY),
-      probability: Number.isFinite(p) && p >= 0 && p <= 100 ? Math.round(p) : null,
       basis: clip(v.basis, ROLE_VERDICT_BASIS),
       position: clip(v.position, ROLE_VERDICT_POSITION),
       gaps: (Array.isArray(v.gaps) ? v.gaps : []).map((g) => String(g ?? "").trim()).filter(Boolean).slice(0, ROLE_VERDICT_GAPS).map((g) => clip(g, ROLE_VERDICT_GAP)),
@@ -4287,15 +4271,15 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
- *   role: { name, targets{areaId: requiredGrade(1-8)},             // proximity is derived by roleGap
+ *   role: { name, targets{areaId: requiredGrade(1-8)},             // requirement grades; the per-area gap facts are derived (`roleAreas`)
  *           stages?[{ id, name, conds[{ type, arg?, min }] }],      // role stages (v28, optional): fact conditions evaluated from the save
- *                                                                 // (`roleStageOf`); the current stage is derived, never stored; proximity
- *                                                                 // (`roleGap`) is untouched
- *           story?, verdicts?[{ id, date, probability?, summary, basis, position, gaps[], stageK, stageN, source("ai") }],
+ *                                                                 // (`roleStageOf`); the current stage is derived, never stored
+ *           story?, verdicts?[{ id, date, summary, basis, position, gaps[], stageK, stageN, source("ai") }],
  *                                                                 // story (2026-09-18, optional, ≤ 2,000 chars): the user's own `원하는 모습`,
  *                                                                 // sent verbatim in the role verdict packet; verdicts (optional, newest first,
- *                                                                 // ≤ 24): AI-stated, unverified — clipped text and a probability the app never
- *                                                                 // turns into a grade, payout or proximity; the raw reply is never stored
+ *                                                                 // ≤ 24): AI-stated, unverified — clipped text the app never turns into a grade,
+ *                                                                 // payout or figure; a `probability` written before 2026-09-18 is unread; the raw
+ *                                                                 // reply is never stored
  *           seenStageK? } | null,                                 // seenStageK (optional): the stage index the completion overlay was last shown
  *                                                                 // for — a seen-stamp like act.briefingSeen, never read as progress (rule 9)
  *   ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
@@ -4303,7 +4287,7 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   settings: { bizHoursPerWeek },   // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
  *   lastTick, dModel
  * }
- * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
+ * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), the role-model gap facts (`roleAreas`),
  * agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
  * contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
  * business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
@@ -4318,9 +4302,8 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  * reader (`buildReader`, `readerSince`), the track order of every list (`byTrack`, `meetingTrack`), the roadmap's D-day,
  * completion and pace (`milestoneWork`, `milestonePace`, `stageOrderNote`), the weekly time sums (`weekMinutes`), the
  * payment figures of `bizSummary`, the role stage and every condition value (`roleStageOf`, `condValue`), the review
- * facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds, the stage progress
- * and journey figures (`stageProgressOf`), the re-assessment line (`roleVerdictDue`) and the role verdict packet
- * (`buildRoleVerdictPacket`).
+ * facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds, the re-assessment
+ * line (`roleVerdictDue`) and the role verdict packet (`buildRoleVerdictPacket`).
  */
 const migrate = (s) => {
   if (!s || typeof s !== "object") return null;
@@ -4724,20 +4707,20 @@ const demoState = () => {
   // and the unpaid deposit keeps stage 1 current.
   // The story and two AI-stated verdicts a month apart (2026-09-18; synthetic, unverified by construction), so the
   // advice sheet shows the delta line and the reader's line reads today's date; `seenStageK` matches the current stage so
-  // no overlay fires on demo entry. Stage 1 reads `deals_active 1/1` met and `payment_paid 'deposit' 0/1` unmet →
-  // stage progress 50 %, journey 6 %.
+  // no overlay fires on demo entry. Stage 1 reads `deals_active 1/1` met and `payment_paid 'deposit' 0/1` unmet → the
+  // headline `단계 1/9 계약 기반 개발자 · 조건 3/14`.
   s.role = {
     name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 }, stages: seedStages(),
     story: "2029년까지 직원 20명 규모의 의료 AI 솔루션 회사 대표가 되고 싶어요. 지금은 연구원으로 일하면서 병원 데이터 ETL 계약을 병행하고 있어요.",
     seenStageK: 1,
     verdicts: [
-      { id: uid(), date: today, probability: 30,
+      { id: uid(), date: today,
         summary: "현재 계약 1건·진행 예정 1건으로 반복 매출 근거가 없어요. 병원 세일즈 기록이 없어 5년 내 20명 규모 도달 확률은 낮아요.",
         basis: "국내 SaaS·의료 IT 창업 5년 생존율 약 30% (추정) · 병원 대상 첫 계약까지 평균 9–12개월 (추정)",
         position: "1단계 계약 기반 개발자 — 계약금 미입금",
         gaps: ["병원 리드 5건 이상 접촉 기록 없음", "AI 포트폴리오 1건 — 납품 실적 없음", "국가사업 제출 이력 없음"],
         stageK: 1, stageN: 9, source: "ai" },
-      { id: uid(), date: shiftDay(today, -29), probability: 20,
+      { id: uid(), date: shiftDay(today, -29),
         summary: "계약 1건, 포트폴리오 2건. 병원 세일즈와 반복 매출 근거가 없어요.",
         basis: "동일 업종 5년 생존율 약 30% (추정)",
         position: "1단계 계약 기반 개발자",
@@ -5289,8 +5272,8 @@ function Onboarding({ onStart, onDemo }) {
 }
 
 /* ───────────────────────── Home — the CV ───────────────────────── */
-/* Home is one CV that evaluates the account in numbers and grades, with the role-model proximity line under it
-   (2026-09-15). A row is admitted when its value is a number, a grade or an ordinal credential level; a name
+/* Home is one CV that evaluates the account in numbers and grades, with the role-model stage line under it
+   (2026-09-15; the stage line since 2026-09-18). A row is admitted when its value is a number, a grade or an ordinal credential level; a name
    appears only as the label of such a value. The `자격` and `시험` rows print a count and then names (an exam with its
    exact recorded score, or its band label for a record from before v22 — `examBestText`) without their D figures (2026-09-16): they stay sorted highest D first, and the D that explains a
    payout is on the wall sheet. Everything is derived at render and stored nowhere (rule 9), and a
@@ -5351,9 +5334,7 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRole,
     .sort(([ia, a], [ib, b]) => (b?.d ?? -1) - (a?.d ?? -1) || ia.localeCompare(ib));
   const trophies = (state.room?.trophies || []).length;
   const achTotal = (state.areas || []).reduce((n, p) => n + (p.achievements || []).length, 0);
-  const rg = roleGap(state);
-  const sp = stageProgressOf(state, today);
-  const last = lastVerdictOf(state);
+  const rs = roleStageOf(state, today);
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
@@ -5408,36 +5389,21 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRole,
         </div>
       </section>
 
-      {/* The stage headline (2026-09-18): the current stage, its progress and the last AI verdict's caption. The stage
-          percentage is a second figure under its own label — it never enters, scales or is averaged with the proximity
-          below (rule 14); `pct` is derived at render (rule 9). The condition count and the quit text stay on `title`. */}
-      {sp && (
-        <button onClick={onRole} title={stageLine(sp.rs)} className="w-full text-left px-1 active:opacity-70">
-          <div className="flex items-center gap-1.5 text-sm">
-            <span className="text-zinc-500 shrink-0">단계</span>
-            <span className="font-mono font-bold text-cyan-300 shrink-0">{sp.k}/{sp.n}</span>
-            <span className="text-zinc-200 truncate">{sp.name}</span>
-            <span className="font-mono text-cyan-300 shrink-0 ml-auto">· 진행 {sp.pct}%</span>
-            <span className="text-zinc-600 shrink-0">›</span>
-          </div>
-          <div className="mt-1"><Bar ratio={sp.pct / 100} color="bg-cyan-400" h="h-1.5" /></div>
-          {last && <div className="text-xs font-mono text-zinc-500 mt-1">{probText(last.probability)} · {last.date}</div>}
-        </button>
-      )}
-      {/* Proximity is computed from the verified grades above (rule 14) — the smaller line beneath the headline. A role
-          record without requirement grades (a story saved first) states the missing input and opens the role screen;
-          without any role model it is an inert fact: the role model is set in settings, and there is nothing to explain. */}
-      {rg ? (
-        <button onClick={onRole} className="w-full text-left flex items-center gap-1.5 px-1 text-xs active:opacity-70">
-          <span className="text-zinc-500 shrink-0">롤모델 근접도</span>
-          <span className="font-mono font-bold text-cyan-300 shrink-0">{rg.match}%</span>
-          <span className="text-zinc-500 truncate">· {rg.name}</span>
+      {/* The stage line (2026-09-18): the current stage and the condition count — facts from `roleStageOf`, derived at render
+          (rule 9); the quit text stays on `title`. No percentage renders here since the rule 14 amendment; a role without
+          stages states that, and no role model is an inert fact (the role model is set in settings). */}
+      {rs ? (
+        <button onClick={onRole} title={stageLine(rs)} className="w-full text-left flex items-center gap-1.5 px-1 text-sm active:opacity-70">
+          <span className="text-zinc-500 shrink-0">단계</span>
+          <span className="font-mono font-bold text-cyan-300 shrink-0">{Math.min(rs.k, rs.n)}/{rs.n}</span>
+          <span className="text-zinc-200 truncate">{stageName(rs)}</span>
+          <span className="font-mono text-cyan-300 shrink-0 ml-auto">· 조건 {rs.condsMet}/{rs.condsTotal}</span>
           <span className="text-zinc-600 shrink-0">›</span>
         </button>
       ) : state.role ? (
-        <button onClick={onRole} className="w-full text-left px-1 text-xs text-zinc-500 active:opacity-70">근접도 계산 대상 없음 — 세부 수정에서 요구 등급을 정해요 ›</button>
+        <button onClick={onRole} className="w-full text-left px-1 text-xs text-zinc-500 active:opacity-70">{state.role.name} · 단계 없음 — AI 판정에서 받거나 세부 수정에서 적어요 ›</button>
       ) : (
-        <p className="px-1 text-xs text-zinc-500">롤모델 미설정 — 근접도 계산 대상 없음</p>
+        <p className="px-1 text-xs text-zinc-500">롤모델 미설정 — 설정에서 롤모델을 정해요</p>
       )}
     </>
   );
@@ -6255,12 +6221,10 @@ function CatalogModal({ state, initialCat, initialQuery, onClose }) {
 }
 
 /* ── Role-model grade gaps ── */
-/* The current stage, its conditions with a bar each, the progress and journey figures, and the next milestone — printed
-   by the `사업` gap block of `RoleGradeSection` (its one caller since 2026-09-18). Every line is derived at render
-   (rule 9); unmet conditions are rose, met emerald. `sp` is `stageProgressOf`, whose `conds` carry each ratio; the
-   journey figure prints here and on the role screen's timeline, never on the CV. */
-function RoleStageLines({ state, sp, today }) {
-  const rs = sp.rs;
+/* The current stage, its condition lines and the next milestone — printed by the `사업` gap block of `RoleGradeSection`.
+   Every line is derived at render (rule 9); unmet conditions are rose, met emerald; no ratio, no bar, no percentage
+   (rule 14 amendment of 2026-09-18). */
+function RoleStageLines({ state, rs, today }) {
   const next = (state.milestones || []).filter((m) => m.status !== "done").sort(milestoneOrder)[0];
   return (
     <div className="space-y-1">
@@ -6269,13 +6233,9 @@ function RoleStageLines({ state, sp, today }) {
           ? <><span className="font-mono">{rs.k}/{rs.n}</span>단계 · {rs.current.s.name}</>
           : <>전환 조건 충족 — <span className="font-mono">{rs.n}/{rs.n}</span>단계</>}
       </div>
-      {sp.conds.map((r, j) => (
-        <div key={j}>
-          <div className={`text-xs font-mono ${r.met ? "text-emerald-400" : "text-rose-400"}`}>- {r.text}</div>
-          <Bar ratio={r.ratio} color={r.met ? "bg-emerald-400" : "bg-rose-400"} h="h-1" />
-        </div>
+      {(rs.current?.results || []).map((r, j) => (
+        <div key={j} className={`text-xs font-mono ${r.met ? "text-emerald-400" : "text-rose-400"}`}>- {r.text}</div>
       ))}
-      <div className="text-xs font-mono text-zinc-400">진행 {sp.pct}% · 전체 {sp.journey}%</div>
       <div className="text-xs font-mono text-zinc-500">{stageLine(rs)}</div>
       <div className="text-xs text-zinc-500">
         {next ? <>다음 마일스톤: {milestoneLine(state, next, today)}</> : "다음 마일스톤 없음 — 로드맵에서 추가해요"}
@@ -6284,49 +6244,37 @@ function RoleStageLines({ state, sp, today }) {
   );
 }
 
-/* ── The grade-gap section of the role screen (2026-09-18) — the former advice sheet's body: the one surface that draws
-   and explains the proximity bars, one tap from the home line that states the number (rule 14), then each gap's next
-   gate, its job-field chips and the standard achievements that would close it. Nothing here is stored (rule 9). ── */
+/* ── The grade-gap section of the role screen (2026-09-18): the per-area requirement lines, then each gap's next gate,
+   its job-field chips and the standard achievements that would close it. No bar and no figure since the rule 14
+   amendment. Nothing here is stored (rule 9). ── */
 function RoleGradeSection({ state, today, onOpenCatalog, onSetDir }) {
-  const { rg, gaps } = roleRecommendations(state);
-  const sp = stageProgressOf(state, today);
-  const legend = <p className="text-xs text-zinc-600">칸 하나 = 등급 한 단계, 칸 너비 = 그 단계의 비중. 하위 등급은 좁고 상위 등급은 넓어, 상위 승급 없이는 근접도가 오르지 않습니다. 롤모델 요구에 없는 영역의 활동은 반영되지 않습니다.</p>;
+  const { areas, gaps } = roleRecommendations(state);
+  const rs = roleStageOf(state, today);
   return (
     <div>
-      {/* Per-area requirement lines and segmented bars, moved from the growth headline, with the legend once under them */}
+      {/* Per-area requirement lines: the verified grade, the required grade and the steps still missing */}
       <div className="space-y-2 mb-3">
-        {(rg?.items || []).map((i) => (
-          <div key={i.area.id}>
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="text-zinc-100 font-medium truncate">{i.area.name}</span>
-              <span className={`font-mono text-right shrink-0 ${i.gap === 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                {RANKS[i.have].name} / 요구 {RANKS[i.need].name}{i.gap > 0 ? ` · ${i.gap}단계 부족` : " · 충족"}
-              </span>
-            </div>
-            {/* Cell widths are the squared curve itself — the same formula as `roleGap` (rule 14) */}
-            <div className="flex h-2 gap-0.5 mt-1">
-              {Array.from({ length: i.need }, (_, k) => {
-                const w = (Math.pow((k + 1) / i.need, 2) - Math.pow(k / i.need, 2)) * 100;
-                return (
-                  <div key={k} style={{ width: `${w}%` }}
-                    className={`rounded border ${k < Math.min(i.have, i.need) ? "bg-cyan-400 border-cyan-300" : "bg-zinc-900 border-zinc-800"}`} />
-                );
-              })}
-            </div>
+        {(areas?.items || []).map((i) => (
+          <div key={i.area.id} className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-zinc-100 font-medium truncate">{i.area.name}</span>
+            <span className={`font-mono text-right shrink-0 ${i.gap === 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {RANKS[i.have].name} / 요구 {RANKS[i.need].name}{i.gap > 0 ? ` · ${i.gap}단계 부족` : " · 충족"}
+            </span>
           </div>
         ))}
-        {legend}
       </div>
-      {gaps.length === 0 ? (
+      {!areas ? (
+        <p className="text-xs text-zinc-500">요구 등급 없음 — 세부 수정에서 정해요</p>
+      ) : gaps.length === 0 ? (
         <div className="space-y-2">
-          <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다. 근접도 {rg?.match}%.</p>
+          <p className="text-sm text-zinc-400">모든 요구 영역을 충족했습니다.</p>
         </div>
       ) : (
         <div className="space-y-3">
           {gaps.map((i) => {
             const { h, recs, examRecs } = i;
             // With stages, the business area is advanced by records, not certifications: the stage lines replace them
-            const staged = sp && i.area.name === "사업";
+            const staged = rs && i.area.name === "사업";
             return (
               <div key={i.area.id} className="bg-zinc-950 rounded-xl p-3">
                 <div className="flex items-center justify-between gap-2 text-sm">
@@ -6334,7 +6282,7 @@ function RoleGradeSection({ state, today, onOpenCatalog, onSetDir }) {
                   <span className="font-mono text-xs text-rose-400 shrink-0">{RANKS[i.have].name} → {RANKS[i.need].name} · {i.gap}단계</span>
                 </div>
                 <div className="text-xs text-zinc-600 mt-1">다음 관문: {RANKS[i.have + 1].name} 승급 — 이 영역의 성취·증거가 필요합니다.</div>
-                {staged && <div className="mt-2"><RoleStageLines state={state} sp={sp} today={today} /></div>}
+                {staged && <div className="mt-2"><RoleStageLines state={state} rs={rs} today={today} /></div>}
                 <div className="flex flex-wrap gap-1 mt-2">
                   {JOB_FIELDS.map((d) => {
                     const on = normDirs(i.area).includes(d);
@@ -7161,7 +7109,7 @@ function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onExport, o
           <button onClick={onRoleModel} className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold">
             {state.role ? "롤모델 수정" : "롤모델 설정"}
           </button>
-          <p className="text-xs text-zinc-500 mt-1.5">목표 인물상의 영역별 요구 등급을 정하면, 검증된 등급으로만 근접도를 계산합니다.</p>
+          <p className="text-xs text-zinc-500 mt-1.5">원하는 모습을 적고 AI 판정으로 단계를 받거나, 세부 수정에서 요구 등급과 단계를 정해요.</p>
         </div>
         <div>
           <SectionLabel tone="text-cyan-400">사업 시간 — 주간 예산</SectionLabel>
@@ -7351,7 +7299,7 @@ function RoleModelModal({ state, onClose, onSave }) {
           </div>
         ))}
       </div>
-      {/* Stages are optional fact conditions; the proximity above never reads them (rule 14) */}
+      {/* Stages are optional fact conditions; the requirement grades above never read them (rule 14 amendment) */}
       <div className="mt-4">
         <div className="flex items-center justify-between gap-2">
           <SectionLabel>단계 (선택)</SectionLabel>
@@ -7405,7 +7353,7 @@ function RoleModelModal({ state, onClose, onSave }) {
             className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-xs text-zinc-300 disabled:opacity-30">단계 추가</button>
           {stages.length >= ROLE_STAGES_MAX && <span className="text-xs text-zinc-500">단계는 12개까지예요.</span>}
         </div>
-        <p className="text-xs text-zinc-600 mt-2">조건은 앱의 기록으로 계산돼요 — 근접도와는 별개예요.</p>
+        <p className="text-xs text-zinc-600 mt-2">조건은 앱의 기록으로 계산돼요.</p>
       </div>
       {err && <div className="text-xs text-rose-400 mt-2">{err}</div>}
       <button onClick={save}
@@ -7422,7 +7370,7 @@ function RoleModelModal({ state, onClose, onSave }) {
    peekable); and the grade gaps folded away under `영역 등급`. Everything shown is derived at render or held in
    component state — no met date, no current stage, no collapse state is written (rule 9); a button here navigates and
    completes, pays or promotes nothing (rules 10, 11); the verdict stays the AI's own statement under its unverified
-   label (rule 13); the proximity figure is `roleGap`'s and the stage figures are a second number beside it (rule 14). ── */
+   label (rule 13); no percentage of any kind renders here (rule 14 amendment of 2026-09-18). ── */
 function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, onReset, onGo, onOpenWork, onOpenCatalog, onSetDir }) {
   const [story, setStory] = useState(state.role?.story || "");
   const [savedStory, setSavedStory] = useState(state.role?.story || "");
@@ -7433,15 +7381,13 @@ function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, o
   const verdictCount = (state.role?.verdicts || []).length;
   const verdicts = (state.role?.verdicts || []).slice(0, ROLE_VERDICTS_MAX);
   const delta = verdicts.length >= 2 ? { a: verdicts[1], b: verdicts[0] } : null;
-  const sp = stageProgressOf(state, today);
-  const rs = sp?.rs;
-  const work = sp ? stageWorkOf(state, today, sp.k) : [];
-  const { rg, gaps } = roleRecommendations(state);
+  const rs = roleStageOf(state, today);
+  const work = rs ? stageWorkOf(state, today, Math.min(rs.k, rs.n)) : [];
+  const { areas, gaps } = roleRecommendations(state);
   const next = (state.milestones || []).filter((m) => m.status !== "done").sort(milestoneOrder)[0];
   // The CTA reads the saved story: an unsaved edit does not enable it, because the packet carries what is saved.
   const canAsk = !!state.role?.story;
   const stageText = (v) => `단계 ${Math.min(v.stageK, v.stageN)}/${v.stageN}`;
-  const pctText = (p) => (Number.isFinite(p) ? `${p}%` : "확률 미제시");
   const togglePeek = (i) => setPeek((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
   const saveStory = () => { const t = story.trim(); onSaveStory(t); setSavedStory(t); };
   return (
@@ -7466,7 +7412,7 @@ function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, o
       {last ? (
         <div className="bg-zinc-950 rounded-xl p-3 mt-3 space-y-1">
           <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {last.date}</div>
-          <div className="text-xs font-mono text-cyan-300">{probText(last.probability)} · {stageText(last)}</div>
+          <div className="text-xs font-mono text-cyan-300">{stageText(last)}</div>
           <div className="text-sm text-zinc-200 break-words">{last.summary || "요약 없음"}</div>
           <div className="text-xs text-zinc-400 break-words">현재 위치: {last.position || "없음"}</div>
           {(last.gaps || []).length ? (
@@ -7490,13 +7436,13 @@ function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, o
         <div className="mt-2 space-y-2">
           {delta && (
             <div className="font-mono text-xs text-cyan-300">
-              확률 {pctText(delta.a.probability)} → {pctText(delta.b.probability)} ({delta.a.date} → {delta.b.date}) · 단계 {Math.min(delta.a.stageK, delta.a.stageN)} → {Math.min(delta.b.stageK, delta.b.stageN)}
+              단계 {Math.min(delta.a.stageK, delta.a.stageN)} → {Math.min(delta.b.stageK, delta.b.stageN)} ({delta.a.date} → {delta.b.date})
             </div>
           )}
           {verdicts.map((v) => (
             <div key={v.id}>
               <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {v.date}</div>
-              <div className="text-xs font-mono text-zinc-300">{probText(v.probability)} · {stageText(v)}</div>
+              <div className="text-xs font-mono text-zinc-300">{stageText(v)}</div>
               <div className="text-xs text-zinc-300 break-words">{v.summary || "요약 없음"}</div>
             </div>
           ))}
@@ -7505,7 +7451,7 @@ function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, o
 
       <div className="mt-4">
         <SectionLabel>스토리라인</SectionLabel>
-        {!sp ? (
+        {!rs ? (
           <>
             <p className="text-xs text-zinc-500">단계 없음 — AI 판정에서 단계를 받거나 세부 수정에서 직접 적어요</p>
             <div className="flex gap-3 mt-1">
@@ -7530,19 +7476,16 @@ function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, o
                 if (k === rs.k) return (
                   <div key={st.s.id || k} className="bg-zinc-950 border border-cyan-800 rounded-xl p-3 space-y-2">
                     <div className="flex items-center gap-1.5 text-sm">
-                      <span className="font-mono font-bold text-cyan-300 shrink-0">{sp.k}단계</span>
-                      <span className="text-zinc-100 font-bold truncate">{sp.name}</span>
-                      <span className="font-mono text-cyan-300 shrink-0 ml-auto">진행 {sp.pct}%</span>
+                      <span className="font-mono font-bold text-cyan-300 shrink-0">{Math.min(rs.k, rs.n)}단계</span>
+                      <span className="text-zinc-100 font-bold truncate">{stageName(rs)}</span>
                     </div>
-                    <Bar ratio={sp.pct / 100} color="bg-cyan-400" h="h-1.5" />
                     <div>
                       <SectionLabel>지금 할 것</SectionLabel>
-                      {/* `sp.conds[j]` aligns with `st.results[j]` (the current stage); `r.c` carries the type and argument */}
+                      {/* `r.c` carries the type and argument of each condition of the current stage */}
                       <div className="space-y-1.5">
                         {st.results.map((r, j) => (
                           <div key={j}>
                             <div className={`text-xs font-mono ${r.met ? "text-emerald-400" : "text-rose-400"}`}>- {r.text}</div>
-                            <Bar ratio={sp.conds[j].ratio} color={r.met ? "bg-emerald-400" : "bg-rose-400"} h="h-1" />
                             {!r.met && ROLE_COND_ACTIONS[r.c.type] && (
                               <button onClick={() => onGo(r.c)}
                                 className="mt-1 px-2.5 py-1 rounded-lg border border-cyan-800 text-xs text-cyan-300 active:opacity-70">{ROLE_COND_ACTIONS[r.c.type].label}</button>
@@ -7577,7 +7520,7 @@ function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, o
               })}
               {rs.k > rs.n && <div className="text-xs font-mono text-emerald-400">모든 단계 충족</div>}
             </div>
-            <div className="text-xs font-mono text-zinc-400 mt-2">전체 {sp.journey}% · 전환 조건 {rs.quit ? "충족" : "미충족"}</div>
+            <div className="text-xs font-mono text-zinc-400 mt-2">{stageLine(rs)}</div>
             <div className="text-xs text-zinc-500">
               {next ? <>다음 마일스톤: {milestoneLine(state, next, today)}</> : "다음 마일스톤 없음 — 로드맵에서 추가해요"}
             </div>
@@ -7593,7 +7536,7 @@ function RoleModal({ state, today, onClose, onSaveStory, onAskVerdict, onEdit, o
           <button onClick={() => setShowGrades((v) => !v)} className="text-xs text-cyan-300 mb-2">{showGrades ? "접기" : "펼치기 ›"}</button>
         </div>
         <div className="text-xs font-mono text-zinc-500">
-          {rg ? `근접도 ${rg.match}% · 요구 영역 ${rg.items.length}개 · 부족 ${gaps.length}개` : "요구 등급 없음 — 세부 수정에서 정해요"}
+          {areas ? `요구 영역 ${areas.items.length}개 · 부족 ${gaps.length}개` : "요구 등급 없음 — 세부 수정에서 정해요"}
         </div>
         {showGrades && <div className="mt-2"><RoleGradeSection state={state} today={today} onOpenCatalog={onOpenCatalog} onSetDir={onSetDir} /></div>}
       </div>
@@ -10546,7 +10489,6 @@ function RoleVerdictModal({ state, today, onClose, onImport, onToast }) {
           {v ? (
             <>
               <div className="text-xs font-mono text-zinc-500">AI 판단 · 검증되지 않음 · {today}</div>
-              <div className="font-mono text-cyan-300 text-sm">{probText(v.probability)}</div>
               <div className="text-sm text-zinc-200 break-words">{v.summary || "요약 없음"}</div>
               <div className="text-xs text-zinc-400 break-words">근거: {v.basis || "없음"}</div>
               <div className="text-xs text-zinc-400 break-words">현재 위치: {v.position || "없음"}</div>
@@ -10617,15 +10559,6 @@ function Overlay({ data, onClose }) {
           <div className="flex justify-center my-3"><div className="rounded-xl overflow-hidden border border-zinc-800"><PortraitSprite look={data.look} gender={data.gender} size={64} /></div></div>
           <div className="text-sm text-zinc-400">{data.area}</div>
           <div className="text-2xl font-black text-cyan-300 mt-1">{data.rank}</div>
-          {data.roleTo != null && (
-            data.roleTo !== data.roleFrom ? (
-              <div className="text-xs font-mono text-cyan-300 mt-3">롤모델 근접도 {data.roleFrom}% → {data.roleTo}%</div>
-            ) : (
-              <div className="text-xs text-zinc-600 mt-3">
-                {data.roleTargeted ? "롤모델 근접도 변화 없음 — 이미 요구를 충족한 영역" : "롤모델 요구 외 영역 — 근접도 변화 없음"}
-              </div>
-            )
-          )}
           <p className="text-xs text-zinc-500 mt-3">증거로 증명된 승급입니다.</p>
         </div>
       )}
@@ -10926,15 +10859,12 @@ export default function LifeManager() {
   const promoteArea = (areaId, evidenceText) => {
     setState((prev) => {
       const s = structuredClone(prev);
-      const rBefore = roleGap(prev)?.match ?? null;
       const p = s.areas.find((x) => x.id === areaId);
       if (!p || p.grade >= RANKS.length - 1) return prev;
       p.grade += 1;
       p.achievements = [...p.achievements, { id: uid(), text: evidenceText, date: dstr(), grade: p.grade }];
       s.room.trophies = [...s.room.trophies, { id: uid(), kind: "rank", label: `${p.name} ${RANKS[p.grade].name}`, date: dstr() }];
-      const rAfter = roleGap(s)?.match ?? null;
-      const roleTargeted = (prev.role?.targets?.[areaId] || 0) > 0;
-      queueMicrotask(() => setOverlay({ type: "gradeup", area: p.name, rank: RANKS[p.grade].name, look: s.profile?.look, gender: s.profile?.gender, roleFrom: rBefore, roleTo: rAfter, roleTargeted }));
+      queueMicrotask(() => setOverlay({ type: "gradeup", area: p.name, rank: RANKS[p.grade].name, look: s.profile?.look, gender: s.profile?.gender }));
       return s;
     });
     setModal(null);
@@ -11119,7 +11049,7 @@ export default function LifeManager() {
       return s;
     });
     setModal({ type: "role" });
-    showToast({ msg: "롤모델 기준 저장 — 근접도는 검증된 등급으로만 계산됩니다" });
+    showToast({ msg: `롤모델 기준 저장 · 단계 ${(rm.stages || []).length}건 · 요구 등급 ${Object.values(rm.targets || {}).filter((v) => v > 0).length}건` });
   };
   // Saves what the user ticked on the verdict sheet: ticked stages replace `role.stages` (the sheet has confirmed), ticked
   // grades update `role.targets` (a requirement, never `areas[].grade`), and the verdict is prepended to `role.verdicts`
@@ -11134,8 +11064,7 @@ export default function LifeManager() {
     const rs = roleStageOf({ ...state, role }, today);
     if (verdict) {
       role.verdicts = [{
-        id: uid(), date: today, ...(Number.isFinite(verdict.probability) ? { probability: verdict.probability } : {}),
-        summary: verdict.summary, basis: verdict.basis, position: verdict.position, gaps: verdict.gaps,
+        id: uid(), date: today, summary: verdict.summary, basis: verdict.basis, position: verdict.position, gaps: verdict.gaps,
         stageK: rs ? rs.k : null, stageN: rs ? rs.n : 0, source: "ai",
       }, ...(role.verdicts || [])].slice(0, ROLE_VERDICTS_MAX);
     }
@@ -11163,7 +11092,7 @@ export default function LifeManager() {
     if (!window.confirm("롤모델·단계·판정 기록을 모두 지워요. 계속할까요?")) return;
     setState((prev) => ({ ...prev, role: null }));
     setModal(null);
-    showToast({ msg: "롤모델 삭제 — 근접도·단계 계산 대상 없음" });
+    showToast({ msg: "롤모델 삭제 — 단계 계산 대상 없음" });
   };
   // The place a condition is changed: a business view with its add modal over it, or the catalogue for a certificate name.
   const goRoleAction = (c) => {

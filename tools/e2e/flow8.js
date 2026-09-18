@@ -1022,15 +1022,16 @@ module.exports = async (h) => {
         localStorage.setItem(k, JSON.stringify(s));
       }, KEY);
       await h.reload();
+      // The visible text carries the stage and the condition count; the quit text lives on the button's `title` (`stageLine(rs)`)
       const stageLine = async () => {
         await closeModal(); await clickTab("프로필"); await sleep(300);
         return page.evaluate(() => {
           const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
-          return b ? b.innerText.replace(/\s+/g, " ").trim() : null;
+          return b ? { text: b.innerText.replace(/\s+/g, " ").trim(), title: b.getAttribute("title") || "" } : null;
         });
       };
       let line = await stageLine();
-      if (!line || !line.includes("단계 1/2") || !line.includes("조건 0/2")) throw new Error("the stage line before the submission: " + line);
+      if (!line || !line.text.includes("단계 1/2") || !line.text.includes("조건 0/2")) throw new Error("the stage line before the submission: " + JSON.stringify(line));
       await openPipeView("공고");
       await h.openTodo("E2E 공고");
       await clickInModalExact("제출");
@@ -1038,7 +1039,7 @@ module.exports = async (h) => {
       notice = after.notices.find((n) => n.title === "E2E 공고");
       if (notice.status !== "submitted" || JSON.stringify(notice.documentIds) !== '["e2e-pipe-doc"]' || notice.createdAt !== today) throw new Error("the notice after the submission: " + JSON.stringify(notice));
       line = await stageLine();
-      if (!line || !line.includes("단계 2/2") || !line.includes("조건 1/2") || !line.includes("전환 조건 미충족 (0/1)")) throw new Error("the stage line after the submission: " + line);
+      if (!line || !line.text.includes("단계 2/2") || !line.text.includes("조건 1/2") || !line.title.includes("전환 조건 미충족 (0/1)")) throw new Error("the stage line after the submission: " + JSON.stringify(line));
 
       await openPipeView("공고");
       await h.openTodo("E2E 공고");

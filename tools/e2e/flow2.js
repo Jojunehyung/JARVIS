@@ -142,7 +142,7 @@ module.exports = async (h) => {
     await sleep(400);
     const inp = await page.$(".fixed.inset-0 input");
     if (inp) { await inp.click(); await inp.type("시니어 하네스 설계자", { delay: 4 }); }
-    // required grades per area must be set for proximity to compute (roleGap is null when the requirement is 0)
+    // required grades per area are set here; the role line under the CV states the stage facts, never a percentage
     const picked = await page.evaluate(() => {
       const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
       if (!ov) return 0;
@@ -161,29 +161,23 @@ module.exports = async (h) => {
     // The save returns to the role screen, which `closeModal` closes after the sub-screen
     await sleep(800); await closeModal();
   });
-  await step("role-model proximity sits under the CV and matches roleGap", async () => {
+  await step("the role line under the CV states no stages and no percentage for a role model without stages", async () => {
     await clickTab("프로필");
     await sleep(300);
-    // The proximity line is the last block on home, and its number must be the one `roleGap` computes from the save.
+    // The role line is the last block on home: a role model without stages names itself and states `단계 없음`, and
+    // nothing on home states a percentage (rule 14 amendment, 2026-09-18).
     const res = await page.evaluate(() => {
       const line = document.querySelector("main")?.lastElementChild;
-      const s = JSON.parse(localStorage.getItem("liferpg-state-v1"));
-      const sq = (s.areas || [])
-        .filter((p) => (s.role?.targets?.[p.id] || 0) > 0)
-        .map((p) => Math.pow(Math.min(1, p.grade / s.role.targets[p.id]), 2));
       return {
         tag: line?.tagName || "",
         text: (line?.innerText || "").replace(/\s+/g, " ").trim(),
-        match: sq.length ? Math.round((sq.reduce((a, b) => a + b, 0) / sq.length) * 100) : null,
+        main: (document.querySelector("main")?.innerText || ""),
       };
     });
-    if (!res.text.includes("근접도")) throw new Error("the line under the CV does not state proximity: " + res.text);
-    if (!res.text.includes("시니어 하네스 설계자")) throw new Error("the proximity line does not name the role model: " + res.text);
-    if (res.tag !== "BUTTON") throw new Error(`the proximity line is a ${res.tag || "missing element"}, so it cannot open direction advice`);
-    if (res.match === null) throw new Error("the save carries no role-model requirement — proximity cannot be checked");
-    const shown = res.text.match(/(\d+)%/);
-    if (!shown) throw new Error("the proximity line states no percentage: " + res.text);
-    if (Number(shown[1]) !== res.match) throw new Error(`the proximity line states ${shown[1]}%, roleGap computes ${res.match}% — ${res.text}`);
+    if (!res.text.includes("시니어 하네스 설계자")) throw new Error("the role line does not name the role model: " + res.text);
+    if (!res.text.endsWith(" · 단계 없음 — AI 판정에서 받거나 세부 수정에서 적어요 ›")) throw new Error("the role line without stages reads: " + res.text);
+    if (res.tag !== "BUTTON") throw new Error(`the role line is a ${res.tag || "missing element"}, so it cannot open the role screen`);
+    if (/\d+%/.test(res.main)) throw new Error("home states a percentage: " + res.main.slice(0, 300));
     // A role model saved without stages has no stage line (v28): the stage count renders only beside stored stages.
     const stageLine = await page.evaluate(() => [...document.querySelectorAll("main button")].some((b) => /^단계\s*\d+\/\d+/.test((b.innerText || "").trim())));
     if (stageLine) throw new Error("a stage line renders for a role model without stages");

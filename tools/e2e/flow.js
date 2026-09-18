@@ -237,8 +237,9 @@ module.exports = async (h) => {
   await step("close catalogue", async () => { await page.keyboard.press("Escape"); await sleep(200); await h.closeModal(); });
 
   // ── Home CV — the records, the grade rows and the promotion gate, the settings sheet
-  // Home is exactly two blocks: the CV and the proximity line. Every count is compared with the save it states.
-  await step("home is one CV with the proximity line under it", async () => {
+  // Home is exactly two blocks: the CV and the role line. Every count is compared with the save it states; no
+  // percentage renders anywhere on home since 2026-09-18 (rule 14 amendment).
+  await step("home is one CV with the role line under it", async () => {
     await clickTab("프로필");
     const res = await page.evaluate(() => {
       const norm = (t) => (t || "").replace(/\s+/g, " ").trim();
@@ -253,12 +254,13 @@ module.exports = async (h) => {
         achievements: (s.areas || []).reduce((n, a) => n + (a.achievements || []).length, 0),
       };
     });
-    if (res.count !== 2) throw new Error(`home has ${res.count} top-level blocks, expected the CV and the proximity line: ` + res.all.slice(0, 200));
+    if (res.count !== 2) throw new Error(`home has ${res.count} top-level blocks, expected the CV and the role line: ` + res.all.slice(0, 200));
+    if (/\d+%/.test(res.all)) throw new Error("home states a percentage: " + res.all.slice(0, 300));
     const want = ["영역 등급", "학력", "경력", "자격", "시험", "포트폴리오", "성취", "프로필", ...res.areas,
       `포트폴리오 ${res.folio}건`, `트로피 ${res.trophies}개 · 검증된 성취 ${res.achievements}건`];
     for (const t of want) if (!res.cv.includes(t)) throw new Error(`the CV does not state "${t}": ` + res.cv);
     if (!res.settings) throw new Error("the CV carries no settings button");
-    if (res.lastTag !== "P" || res.last !== "롤모델 미설정 — 근접도 계산 대상 없음") throw new Error(`the block under the CV is a ${res.lastTag} reading: ${res.last}`);
+    if (res.lastTag !== "P" || res.last !== "롤모델 미설정 — 설정에서 롤모델을 정해요") throw new Error(`the block under the CV is a ${res.lastTag} reading: ${res.last}`);
     for (const t of ["오늘 브리핑", "오늘의 초점", "오늘 할 일", "브리핑 열기", "일지 쓰기", "주간 리뷰", "건 완료"]) {
       if (res.all.includes(t)) throw new Error(`home still carries a removed today surface ("${t}"): ` + res.all.slice(0, 200));
     }
@@ -435,32 +437,39 @@ module.exports = async (h) => {
         await expectText("TOEIC L&R 735");
         // v28 role stages: the demo seeds the nine stages. Three of 14 conditions are met — the upcoming contract,
         // two won contracts and the AI portfolio entry — and the unpaid deposit keeps stage 1 current. Since 2026-09-18
-        // the button is the stage headline (stage 1: `deals_active 1/1` met, `payment_paid 'deposit' 0/1` unmet → 50 %)
-        // with the newest verdict's caption; the condition count and the quit text live on its `title`.
-        const demoToday = await page.evaluate(() => { const t = new Date(); const p = (n) => String(n).padStart(2, "0"); return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`; });
+        // the button is the stage line (stage 1: `deals_active 1/1` met, `payment_paid 'deposit' 0/1` unmet) with the
+        // condition count; the quit text lives on its `title`; no percentage and no caption (rule 14 amendment).
+        const demoDate = (shift) => page.evaluate((d) => { const t = new Date(); t.setDate(t.getDate() + d); const p = (n) => String(n).padStart(2, "0"); return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`; }, shift);
+        const demoToday = await demoDate(0);
+        const demoMinus29 = await demoDate(-29);
         const headline = await page.evaluate(() => {
           const b = [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim()));
           return b ? { text: b.innerText.replace(/\s+/g, " ").trim(), title: b.getAttribute("title") || "" } : null;
         });
-        if (!headline || !headline.text.startsWith("단계 1/9 계약 기반 개발자") || !headline.text.includes("· 진행 50%")) throw new Error("the demo stage headline reads: " + JSON.stringify(headline));
+        if (!headline || !headline.text.startsWith("단계 1/9 계약 기반 개발자") || !headline.text.includes("· 조건 3/14")) throw new Error("the demo stage headline reads: " + JSON.stringify(headline));
         if (headline.title !== "롤모델 1/9단계 · 조건 3/14 · 전환 조건 미충족 (0/1)") throw new Error("the demo stage title reads: " + headline.title);
-        if (!headline.text.includes(`AI 추정 확률 30% · ${demoToday}`)) throw new Error("the demo verdict caption is missing: " + headline.text);
+        if (/\d+%/.test(headline.text)) throw new Error("the demo stage headline states a percentage: " + headline.text);
         // The role screen (2026-09-18): the story, the newest verdict card, the timeline with the current stage's one
-        // unmet condition and its landing button, and the grade gaps folded away until `펼치기 ›`.
+        // unmet condition and its landing button, the stage line, and the grade gaps folded away until `펼치기 ›`.
         await page.evaluate(() => [...document.querySelectorAll("main button")].find((x) => /^단계\s*\d+\/\d+/.test((x.innerText || "").trim())).click());
         await sleep(500);
-        for (const t of ["롤모델", "AI 추정 확률 30% · 단계 1/9", "1단계", "계약 기반 개발자", "진행 50%",
-          "- 입금 확인된 일시금 수 'deposit' 0/1", "계약 목록 ›", "연결된 업무 없음", "전체 6% · 전환 조건 미충족", "2단계", "조건 1개"]) await expectText(t);
+        for (const t of ["롤모델", "단계 1/9", "1단계", "계약 기반 개발자",
+          "- 입금 확인된 일시금 수 'deposit' 0/1", "계약 목록 ›", "연결된 업무 없음", "롤모델 1/9단계 · 조건 3/14 · 전환 조건 미충족 (0/1)", "2단계", "조건 1개"]) await expectText(t);
+        const roleScreenText = () => page.evaluate(() => { const ov = [...document.querySelectorAll(".fixed.inset-0")].pop(); return ov ? ov.innerText : ""; });
+        if (/\d+%/.test(await roleScreenText())) throw new Error("the demo role screen states a percentage: " + (await roleScreenText()).slice(0, 400));
         await clickInModalExact("판정 기록 2건 ›");
-        for (const t of ["확률 20% → 30%", "단계 1 → 1"]) await expectText(t);
+        await expectText(`단계 1 → 1 (${demoMinus29} → ${demoToday})`);
         await clickInModalExact("펼치기 ›");
-        for (const t of ["/ 요구", "칸 하나 = 등급 한 단계"]) await expectText(t);
+        await expectText("/ 요구");
+        if ((await roleScreenText()).includes("칸 하나")) throw new Error("the expanded 영역 등급 section still carries the bar legend");
+        if (await page.evaluate(() => document.querySelector(".fixed.inset-0 div.flex.h-2") !== null)) throw new Error("the expanded grade-gap section still draws a bar");
+        if (/\d+%/.test(await roleScreenText())) throw new Error("the expanded role screen states a percentage: " + (await roleScreenText()).slice(0, 400));
         await closeModal();
         // v27: entering the demo opens nothing, so the daily reader is opened from the CV card's own button.
-        // 2026-09-18: the reader's tenth section states the newest verdict's age, probability and stage.
+        // 2026-09-18: the reader's tenth section states the newest verdict's age and stage.
         await clickText("오늘 읽을 것");
         await sleep(400);
-        for (const t of ["오늘 읽을 것 —", "어제 완료 · ○○물산 월 리포트 양식 회신", `롤모델 판정 · 마지막 ${demoToday} · 0일 지남 · AI 추정 확률 30% · 단계 1/9`]) await expectText(t);
+        for (const t of ["오늘 읽을 것 —", "어제 완료 · ○○물산 월 리포트 양식 회신", `롤모델 판정 · 마지막 ${demoToday} · 0일 지남 · 단계 1/9`]) await expectText(t);
         await closeModal();
       }
     }

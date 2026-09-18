@@ -112,15 +112,15 @@
   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
-  role: { name, targets{areaId: requiredGrade(1-8)},             // proximity is derived by roleGap
+  role: { name, targets{areaId: requiredGrade(1-8)},             // requirement grades; the per-area gap facts are derived (`roleAreas`)
           stages?[{ id, name, conds[{ type, arg?, min }] }],      // role stages (v28, optional): fact conditions evaluated from the save
-                                                                // (`roleStageOf`); the current stage is derived, never stored; proximity
-                                                                // (`roleGap`) is untouched
-          story?, verdicts?[{ id, date, probability?, summary, basis, position, gaps[], stageK, stageN, source("ai") }],
+                                                                // (`roleStageOf`); the current stage is derived, never stored
+          story?, verdicts?[{ id, date, summary, basis, position, gaps[], stageK, stageN, source("ai") }],
                                                                 // story (2026-09-18, optional, ≤ 2,000 chars): the user's own `원하는 모습`,
                                                                 // sent verbatim in the role verdict packet; verdicts (optional, newest first,
-                                                                // ≤ 24): AI-stated, unverified — clipped text and a probability the app never
-                                                                // turns into a grade, payout or proximity; the raw reply is never stored
+                                                                // ≤ 24): AI-stated, unverified — clipped text the app never turns into a grade,
+                                                                // payout or figure; a `probability` written before 2026-09-18 is unread; the raw
+                                                                // reply is never stored
           seenStageK? } | null,                                 // seenStageK (optional): the stage index the completion overlay was last shown
                                                                 // for — a seen-stamp like act.briefingSeen, never read as progress (rule 9)
   ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
@@ -128,7 +128,7 @@
   settings: { bizHoursPerWeek },   // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
   lastTick, dModel
 }
-Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), role proximity (`roleGap`),
+Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), the role-model gap facts (`roleAreas`),
 agenda buckets (`agendaOf`), event occurrences (`occurrencesOf`/`eventsOn`/`upcomingEvents`),
 contract months, totals, margin and phase (`dealEnd`/`dealTotal`/`dealCostTotal`/`marginOf`/`dealPhase`/`monthRevenue`/`billedMonths`),
 business roll-ups (`revenueByMonth`/`bizSummary`), the daily briefing (`buildBriefing`), the assistant packet (`buildAssistantPacket`),
@@ -143,9 +143,8 @@ the meeting-prep rows (`meetingPrepOf`), the follow-up split candidates (`splitF
 reader (`buildReader`, `readerSince`), the track order of every list (`byTrack`, `meetingTrack`), the roadmap's D-day,
 completion and pace (`milestoneWork`, `milestonePace`, `stageOrderNote`), the weekly time sums (`weekMinutes`), the
 payment figures of `bizSummary`, the role stage and every condition value (`roleStageOf`, `condValue`), the review
-facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds, the stage progress
-and journey figures (`stageProgressOf`), the re-assessment line (`roleVerdictDue`) and the role verdict packet
-(`buildRoleVerdictPacket`).
+facts (`weekFacts`), the review packet (`buildReviewPacket`) and the calendar file's new kinds, the re-assessment
+line (`roleVerdictDue`) and the role verdict packet (`buildRoleVerdictPacket`).
 ```
 
 ## Fresh-state defaults (`freshState`)
@@ -396,20 +395,20 @@ const demoState = () => {
   // and the unpaid deposit keeps stage 1 current.
   // The story and two AI-stated verdicts a month apart (2026-09-18; synthetic, unverified by construction), so the
   // advice sheet shows the delta line and the reader's line reads today's date; `seenStageK` matches the current stage so
-  // no overlay fires on demo entry. Stage 1 reads `deals_active 1/1` met and `payment_paid 'deposit' 0/1` unmet →
-  // stage progress 50 %, journey 6 %.
+  // no overlay fires on demo entry. Stage 1 reads `deals_active 1/1` met and `payment_paid 'deposit' 0/1` unmet → the
+  // headline `단계 1/9 계약 기반 개발자 · 조건 3/14`.
   s.role = {
     name: "완성차 1차사 하네스 설계 책임", targets: { [p2.id]: 6, [p3.id]: 4 }, stages: seedStages(),
     story: "2029년까지 직원 20명 규모의 의료 AI 솔루션 회사 대표가 되고 싶어요. 지금은 연구원으로 일하면서 병원 데이터 ETL 계약을 병행하고 있어요.",
     seenStageK: 1,
     verdicts: [
-      { id: uid(), date: today, probability: 30,
+      { id: uid(), date: today,
         summary: "현재 계약 1건·진행 예정 1건으로 반복 매출 근거가 없어요. 병원 세일즈 기록이 없어 5년 내 20명 규모 도달 확률은 낮아요.",
         basis: "국내 SaaS·의료 IT 창업 5년 생존율 약 30% (추정) · 병원 대상 첫 계약까지 평균 9–12개월 (추정)",
         position: "1단계 계약 기반 개발자 — 계약금 미입금",
         gaps: ["병원 리드 5건 이상 접촉 기록 없음", "AI 포트폴리오 1건 — 납품 실적 없음", "국가사업 제출 이력 없음"],
         stageK: 1, stageN: 9, source: "ai" },
-      { id: uid(), date: shiftDay(today, -29), probability: 20,
+      { id: uid(), date: shiftDay(today, -29),
         summary: "계약 1건, 포트폴리오 2건. 병원 세일즈와 반복 매출 근거가 없어요.",
         basis: "동일 업종 5년 생존율 약 30% (추정)",
         position: "1단계 계약 기반 개발자",
@@ -450,19 +449,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1330 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6138 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6138 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6138 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 8263 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 8685 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 10699 | App root |
-| `liferpg-img-${slot}` | 10755 | App root |
-| `liferpg-img-ev-${id}` | 10778 | App root |
-| `liferpg-img-ev-${q.id}` | 10963 | App root |
-| `liferpg-img-ev-${t.id}` | 11827 | App root |
-| `liferpg-img-study-${t.id}-1` | 11827 | App root |
-| `liferpg-img-study-${t.id}-2` | 11827 | App root |
-| `liferpg-img-folio-${f.id}` | 11833 | App root |
+| `liferpg-img-ev-${task.id}` | 6104 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6104 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6104 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 8206 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 8628 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 10632 | App root |
+| `liferpg-img-${slot}` | 10688 | App root |
+| `liferpg-img-ev-${id}` | 10711 | App root |
+| `liferpg-img-ev-${q.id}` | 10893 | App root |
+| `liferpg-img-ev-${t.id}` | 11756 | App root |
+| `liferpg-img-study-${t.id}-1` | 11756 | App root |
+| `liferpg-img-study-${t.id}-2` | 11756 | App root |
+| `liferpg-img-folio-${f.id}` | 11762 | App root |
 
 ## Demo data (`demoState`)
 
