@@ -125,7 +125,9 @@
                                                                 // for — a seen-stamp like act.briefingSeen, never read as progress (rule 9)
   ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
                                               // (scheduleView was retired 2026-09-16 and dropped at v22)
-  settings: { bizHoursPerWeek },   // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
+  settings: { bizHoursPerWeek,     // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
+              workInAi? },         // (2026-09-22, still v28, no migrate block) whether day-job records go into AI packets;
+                                   // absent reads as true, the settings checkbox writes true/false (`workInAiOf`)
   lastTick, dModel
 }
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), the role-model gap facts (`roleAreas`),
@@ -269,8 +271,8 @@ const demoState = () => {
   // Synthetic minutes: made-up companies, no personal names (SECURITY.md), no event link.
   const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20), track: "biz" };
   const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6), track: "biz" };
-  // A day-job project (v28, `track: "work"`): its minutes, follow-up, work item and event stay out of every packet —
-  // synthetic institution, no personal names.
+  // A day-job project (v28, `track: "work"`): its minutes, follow-up, work item and event go into the packets while
+  // `settings.workInAi` is absent (on) and stay out when it is switched off — synthetic institution, no personal names.
   const mpJob = { id: uid(), name: "데이터 프로파일링 — 데모기관", createdAt: shiftDay(today, -15), track: "work" };
   s.meetingProjects = [mpJob, mp2, mp1];
   // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
@@ -319,7 +321,7 @@ const demoState = () => {
     { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2),
       checks: [{ id: uid(), text: "초과분 시간 단가표 회신 여부 확인", done: false, source: "manual" },
         { id: uid(), text: "월 리포트 양식 확정본 지참 — 유지보수 범위 협의 결정 사항", done: false, source: "ai" }], track: "biz" },
-    // The day-job project's meeting today (v28): the prep card states it without the AI button.
+    // The day-job project's meeting today (v28): the prep card offers the AI button unless day-job records are switched off.
     { id: uid(), title: "품질 회의", kind: "appt", date: today, time: "15:00", place: "회의실", projectId: mpJob.id, createdAt: shiftDay(today, -2), track: "work" }];
   // Two document summaries (v27): one on the search project, one with no project — synthetic file names, no personal data.
   s.documents = [
@@ -449,19 +451,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1330 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6104 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6104 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6104 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 8206 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 8628 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 10632 | App root |
-| `liferpg-img-${slot}` | 10688 | App root |
-| `liferpg-img-ev-${id}` | 10711 | App root |
-| `liferpg-img-ev-${q.id}` | 10893 | App root |
-| `liferpg-img-ev-${t.id}` | 11756 | App root |
-| `liferpg-img-study-${t.id}-1` | 11756 | App root |
-| `liferpg-img-study-${t.id}-2` | 11756 | App root |
-| `liferpg-img-folio-${f.id}` | 11762 | App root |
+| `liferpg-img-ev-${task.id}` | 6112 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6112 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6112 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 8227 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 8650 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 10654 | App root |
+| `liferpg-img-${slot}` | 10710 | App root |
+| `liferpg-img-ev-${id}` | 10733 | App root |
+| `liferpg-img-ev-${q.id}` | 10915 | App root |
+| `liferpg-img-ev-${t.id}` | 11783 | App root |
+| `liferpg-img-study-${t.id}-1` | 11783 | App root |
+| `liferpg-img-study-${t.id}-2` | 11783 | App root |
+| `liferpg-img-folio-${f.id}` | 11789 | App root |
 
 ## Demo data (`demoState`)
 

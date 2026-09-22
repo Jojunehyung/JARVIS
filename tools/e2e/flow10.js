@@ -1024,7 +1024,8 @@ module.exports = async (h) => {
     await clickTab("미팅");
     await clickText("프로젝트 추가"); await sleep(400);
     await expectText("새 프로젝트");
-    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    // The track caption shows only while day-job records are switched off (`settings.workInAi` false); this save leaves it on.
+    if ((await h.overlayText()).includes("직장 트랙은 AI 패킷에 실리지 않아요.")) throw new Error("the track caption shows while day-job records go into packets");
     if ((await chipOn("직장")) !== true) throw new Error("a new project does not default to the day-job track");
     await typeInto("프로젝트 이름", BIZ_PROJECT);
     await clickInModalExact("사업");

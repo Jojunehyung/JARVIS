@@ -2244,7 +2244,13 @@ const TRACKS = ["work", "biz", "personal"];                       // a record's 
 const TRACK_LABEL = { work: "직장", biz: "사업", personal: "개인" };
 const TRACK_TONE = { work: "text-zinc-300 border-zinc-600", biz: "text-cyan-300 border-cyan-800", personal: "text-emerald-300 border-emerald-800" };
 const TRACK_OPTIONS = [["work", "직장"], ["biz", "사업"], ["personal", "개인"]]; // the `BizChips` rows of every form
-const PACKET_TRACKS = ["biz", "personal"];                        // tracks a packet may carry; a `work` record never leaves the device
+const PACKET_TRACKS_NO_WORK = ["biz", "personal"];                // the tracks a packet carries when day-job records are switched off
+// Whether day-job records go into AI packets (2026-09-22): the settings switch `settings.workInAi`, on unless it is
+// explicitly false (absent reads as on — no migrate block). `aiHidden`, transcripts and profile identifiers stay out
+// either way.
+const workInAiOf = (state) => state?.settings?.workInAi !== false;
+// The tracks a packet may carry: every track while the switch is on, else business and private only.
+const packetTracks = (state) => (workInAiOf(state) ? TRACKS : PACKET_TRACKS_NO_WORK);
 const trackOf = (rec, fallback = "work") => (TRACKS.includes(rec?.track) ? rec.track : fallback);
 const byTrack = (a, b) => TRACKS.indexOf(trackOf(a)) - TRACKS.indexOf(trackOf(b)); // stable when used with `.slice().sort`
 
@@ -2461,7 +2467,7 @@ const milestoneLine = (state, m, today) => {
   ].join(" · ");
 };
 // A milestone linked to any live day-job record reads as `work`, so a briefing line naming it never reaches a packet
-// (`buildAssistantPacket` keeps only `PACKET_TRACKS`); otherwise it is business.
+// while day-job records are switched off (`buildAssistantPacket` keeps only `packetTracks`); otherwise it is business.
 const milestoneTrack = (state, m) => {
   const linked = [
     ...(m?.dealIds || []).map((id) => (state?.deals || []).find((d) => d.id === id)).filter(Boolean).map((d) => trackOf(d, "biz")),
@@ -3009,7 +3015,7 @@ const buildBriefing = (state, today) => {
         kind: "biz", severity: 2, track: trackOf(d, "biz"), text: `${d.client} ${d.title} — 견적 ${days}일 경과 · ${wonText(dealTotal(d))}`,
       })),
     // Roadmap (v28): open milestones past due or due within 7 days. Each line carries `milestoneTrack`, so a milestone
-    // linked to a day-job record stays out of the daily packet.
+    // linked to a day-job record stays out of the daily packet while day-job records are switched off (`packetTracks`).
     ...(state.milestones || [])
       .filter((m) => m.status !== "done" && m.due && daysBetween(today, m.due) <= 7)
       .slice().sort(milestoneOrder).slice(0, ROADMAP_ALERT_MAX)
@@ -3299,7 +3305,7 @@ const packetSection = (title, lines) => (lines.length ? [`## ${title}`, ...lines
 // v28: only deals on a packet track are stated, and the summary line is computed over those deals alone, so the
 // packet's totals match the lines it lists; the tab's own header still reads every deal.
 const bizPacketLines = (state, today) => {
-  const allowed = { ...state, deals: (state.deals || []).filter((d) => PACKET_TRACKS.includes(trackOf(d, "biz"))) };
+  const allowed = { ...state, deals: (state.deals || []).filter((d) => packetTracks(state).includes(trackOf(d, "biz"))) };
   const biz = bizSummary(allowed, today);
   return [
     `- 이번 달 계약 ${wonText(biz.thisMonth)} · 입금 확인 ${wonText(biz.collected)} · 남은 계약 ${wonText(biz.backlog)} · 견적 대기 ${wonText(biz.pipeline)}`,
@@ -3320,9 +3326,9 @@ const buildAssistantPacket = (state, today) => {
   const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
   const sec = packetSection;
 
-  // v28: a briefing item carrying a track outside PACKET_TRACKS, or marked `packet: false` (leads, notices), stays on the
+  // v28: a briefing item carrying a track outside `packetTracks`, or marked `packet: false` (leads, notices), stays on the
   // device; count lines carry no track.
-  const briefLines = brief.sections.flatMap((s) => s.items.filter((it) => it.severity >= 2 && it.packet !== false && (!it.track || PACKET_TRACKS.includes(it.track)))
+  const briefLines = brief.sections.flatMap((s) => s.items.filter((it) => it.severity >= 2 && it.packet !== false && (!it.track || packetTracks(state).includes(it.track)))
     .map((it) => `- [${s.title}] ${it.text}`)).slice(0, 12);
   /* The CV at the level the user agreed to share: degree, department, months of practice and the most recent
      role. It deliberately carries none of `profile.name`, `profile.birth`, `profile.email`, `profile.phone`,
@@ -3343,7 +3349,7 @@ const buildAssistantPacket = (state, today) => {
   });
   // Schedule facts only: `parseAssistantReply` reads `tasks` and nothing else, so a pasted reply can never
   // create, complete or change an event (rule 7 amendment).
-  const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).filter((o) => PACKET_TRACKS.includes(trackOf(o.ev))).slice(0, 8).map(({ ev, date }) =>
+  const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).filter((o) => packetTracks(state).includes(trackOf(o.ev))).slice(0, 8).map(({ ev, date }) =>
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
   // Contract facts only (`bizPacketLines`), built before the journal trim below so the cap and the trim behaviour
   // stay as they are. `parseAssistantReply` reads `tasks` and nothing else, so a pasted reply can never create a
@@ -3415,7 +3421,7 @@ const parseAssistantReply = (text, state) => {
 // event only when it is on a packet track.
 const packetEventLinkOk = (state, eventId) => {
   const ev = (state.events || []).find((e) => e.id === eventId);
-  return !ev || PACKET_TRACKS.includes(trackOf(ev));
+  return !ev || packetTracks(state).includes(trackOf(ev));
 };
 /* The minutes lines of a packet, shared by the work packet and the prep packet: per meeting its date, project and title,
    the facts the meeting view states, the summary (clipped at `summary`), decisions, follow-up items (`followUps` of them,
@@ -3444,7 +3450,7 @@ const meetingPacketLines = (state, list, today, { summary, progress: progressN, 
     .map((q) => `${q.title} (${q.type === "daily" ? "매일 · 오늘 " : ""}${taskClosedOn(q, today) ? "완료" : "미완료"})`);
   const facts = [
     String(m.attendees || "").trim() && `  참석: ${oneLineText(m.attendees, MEETING_LIMITS.attendees)}`,
-    // v28: a linked day-job event's title stays out of every packet; the line is omitted, not rewritten.
+    // v28: while day-job records are switched off, a linked day-job event's title stays out; the line is omitted, not rewritten.
     m.eventId && packetEventLinkOk(state, m.eventId) && `  일정: ${meetingEventText(state, m)}`,
     linked.length > 0 && `  연결된 할 일: ${linked.join(" · ")}`,
   ].filter(Boolean);
@@ -3476,16 +3482,16 @@ const buildWorkPacket = (state, today) => {
   const taskLines = todoOf(state, today).groups.flatMap((grp) => grp.rows
     .filter((r) => r.kind === "task" && !r.done)
     .map((r) => `- ${grp.label} · ${r.title} · ${(state.goals || []).find((g) => g.id === r.task?.goalId)?.title || "목표 없음"} · 기한 ${r.date || "없음"}`));
-  const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).filter((o) => PACKET_TRACKS.includes(trackOf(o.ev))).map(({ ev, date }) =>
+  const eventLines = upcomingEvents(state, today, PACKET_EVENT_DAYS).filter((o) => packetTracks(state).includes(trackOf(o.ev))).map(({ ev, date }) =>
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
   const bizLines = bizPacketLines(state, today);
-  // v28: a day-job meeting (by `meetingTrack`) never enters the packet, not even its date and title.
-  const meetings = (state.meetings || []).filter((m) => PACKET_TRACKS.includes(meetingTrack(state, m))).sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
+  // v28: while day-job records are switched off, a day-job meeting (by `meetingTrack`) never enters, not even its date and title.
+  const meetings = (state.meetings || []).filter((m) => packetTracks(state).includes(meetingTrack(state, m))).sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
   // Today's carried view (every undone item from earlier days, then today's) plus yesterday's items, deduped by id, by date
   // then `createdAt` — the list `parseWorkReply` dedupes against, so rule 3 of the head covers a carried item too.
   const yesterday = shiftDay(today, -1);
   const recordItems = [...workOn(state, today, today), ...(state.work || []).filter((w) => w.date === yesterday)]
-    .filter((w, i, all) => all.findIndex((x) => x.id === w.id) === i && PACKET_TRACKS.includes(trackOf(w)))
+    .filter((w, i, all) => all.findIndex((x) => x.id === w.id) === i && packetTracks(state).includes(trackOf(w)))
     .sort((a, b) => a.date.localeCompare(b.date) || byCreated(a, b));
   const recordLines = recordItems.map((w) => `- ${w.date} ${w.done ? "완료" : "미완료"}${!w.done && w.date < today ? ` · 이월 ${daysBetween(w.date, today)}일` : ""} ${w.title}${w.note ? ` · 메모: ${oneLineText(w.note, WORK_PACKET_NOTE)}` : ""}${w.done && w.result ? ` · 처리: ${oneLineText(w.result, WORK_PACKET_RESULT)}` : ""}`);
 
@@ -3584,18 +3590,18 @@ const PREP_PACKET_HEAD = [
 const buildPrepPacket = (state, ev, today, date = ev.date) => {
   const project = eventProjectOf(state, ev);
   const head = [`[인생 관리 — 회의 준비 요청 ${today}]`, ...PREP_PACKET_HEAD, ""];
-  // v28 guard: a day-job event states nothing about itself — the card offers no button for it, and this answers the same.
-  if (!PACKET_TRACKS.includes(trackOf(ev))) return [...head, ...packetSection("회의", ["- 직장 트랙 일정 — AI 패킷에 실리지 않아요"])].join("\n");
+  // v28 guard (switch off): a day-job event states nothing about itself — the card offers no button for it, and this answers the same.
+  if (!packetTracks(state).includes(trackOf(ev))) return [...head, ...packetSection("회의", ["- 직장 트랙 일정 — AI 패킷에 실리지 않아요"])].join("\n");
   const eventLine = `- ${date} ${ev.time || "시간 미정"} · ${ev.title}`;
-  // v28: a day-job project (`work` track) never names itself in a packet, so a packet-track event linked to one is stated
+  // v28 (switch off): a day-job project (`work` track) never names itself in a packet, so a packet-track event linked to one is stated
   // like an event with no project — the event line only, and no minutes, documents, tasks or contracts derived from it.
-  if (!project || !PACKET_TRACKS.includes(trackOf(project))) return [...head, ...packetSection("회의", [eventLine])].join("\n");
+  if (!project || !packetTracks(state).includes(trackOf(project))) return [...head, ...packetSection("회의", [eventLine])].join("\n");
   const checkLines = (ev.checks || []).map((c) => `- ${c.text} · ${c.done ? "완료" : "미완료"}`);
-  const meetings = (state.meetings || []).filter((m) => m.projectId === project.id && PACKET_TRACKS.includes(meetingTrack(state, m)))
+  const meetings = (state.meetings || []).filter((m) => m.projectId === project.id && packetTracks(state).includes(meetingTrack(state, m)))
     .sort(meetingOrder).slice(0, PREP_PACKET_MEETINGS);
-  const docs = (state.documents || []).filter((d) => d.projectId === project.id && PACKET_TRACKS.includes(trackOf(d))).sort(docOrder);
+  const docs = (state.documents || []).filter((d) => d.projectId === project.id && packetTracks(state).includes(trackOf(d))).sort(docOrder);
   const biz = bizSummary(state, today);
-  const dealLines = dealsOfProject(state, project).filter((d) => PACKET_TRACKS.includes(trackOf(d, "biz"))).map((d) => [
+  const dealLines = dealsOfProject(state, project).filter((d) => packetTracks(state).includes(trackOf(d, "biz"))).map((d) => [
     `- ${DEAL_PHASE_LABEL[dealPhase(d, biz.month)] ?? DEAL_STATUS[d.status]} · ${d.client} ${d.title} · ${d.startMonth ? `${d.startMonth} ~ ${dealEnd(d) || "미정"}` : "기간 없음"} · 월 ${wonText(d.monthly)}`,
     ...biz.unpaid.filter((u) => u.deal.id === d.id).map((u) => `  미수 ${u.month} ${wonText(u.amount)}`),
   ]);
@@ -3792,9 +3798,9 @@ const condTypeLines = () => ["조건 종류:", ...COND_TYPES.map(([type, label, 
 /* The role verdict packet (`AI에게 판정 묻기`): the user's own story verbatim, the CV line (`cvSummaryOf` — degree · major,
    practice months · latest role title, as every packet states it; never the profile name, birth date, e-mail, phone,
    a school or an employer), the area grades with their requirements, the held certifications and exam bests, record
-   counts (business and private tracks only for deals and milestones — `PACKET_TRACKS` — and counts only: no deal title,
+   counts (deals and milestones on a packet track only — `packetTracks` — and counts only: no deal title,
    client, lead name, notice title, milestone title, project or work item), the stages with their condition values and
-   the last verdict's line. Nothing of a day-job record, a transcript or a meeting enters. When the text exceeds
+   the last verdict's line. No transcript or meeting enters, and while day-job records are switched off no day-job record. When the text exceeds
    ROLE_PACKET_MAX the reductions run one step at a time, rebuilding after each: story 2,000 → 1,000, condition lines
    dropped (stage names stay), story → 500, stage lines → 0. The header, the CV, the grades, the certificates, the
    counts and the last verdict are never dropped. Derived on demand, never stored (rule 9); the last verdict's text
@@ -3814,8 +3820,8 @@ const buildRoleVerdictPacket = (state, today) => {
   ];
   const copy = {
     ...state,
-    deals: (state.deals || []).filter((d) => PACKET_TRACKS.includes(trackOf(d, "biz"))),
-    milestones: (state.milestones || []).filter((m) => PACKET_TRACKS.includes(milestoneTrack(state, m))),
+    deals: (state.deals || []).filter((d) => packetTracks(state).includes(trackOf(d, "biz"))),
+    milestones: (state.milestones || []).filter((m) => packetTracks(state).includes(milestoneTrack(state, m))),
   };
   const month = String(today).slice(0, 7);
   const won = copy.deals.filter((d) => d.status === "won");
@@ -4284,7 +4290,9 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *                                                                 // for — a seen-stamp like act.briefingSeen, never read as progress (rule 9)
  *   ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
  *                                               // (scheduleView was retired 2026-09-16 and dropped at v22)
- *   settings: { bizHoursPerWeek },   // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
+ *   settings: { bizHoursPerWeek,     // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
+ *               workInAi? },         // (2026-09-22, still v28, no migrate block) whether day-job records go into AI packets;
+ *                                    // absent reads as true, the settings checkbox writes true/false (`workInAiOf`)
  *   lastTick, dModel
  * }
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), the role-model gap facts (`roleAreas`),
@@ -4581,8 +4589,8 @@ const demoState = () => {
   // Synthetic minutes: made-up companies, no personal names (SECURITY.md), no event link.
   const mp1 = { id: uid(), name: "○○물산 재고 관리 자동화", note: "월 3개월 계약 — 종료 후 유지보수 논의", createdAt: shiftDay(today, -20), track: "biz" };
   const mp2 = { id: uid(), name: "△△테크 문서 검색 AI", createdAt: shiftDay(today, -6), track: "biz" };
-  // A day-job project (v28, `track: "work"`): its minutes, follow-up, work item and event stay out of every packet —
-  // synthetic institution, no personal names.
+  // A day-job project (v28, `track: "work"`): its minutes, follow-up, work item and event go into the packets while
+  // `settings.workInAi` is absent (on) and stay out when it is switched off — synthetic institution, no personal names.
   const mpJob = { id: uid(), name: "데이터 프로파일링 — 데모기관", createdAt: shiftDay(today, -15), track: "work" };
   s.meetingProjects = [mpJob, mp2, mp1];
   // One demo meeting links two existing demo tasks, so both sides of the link are visible (schema v24).
@@ -4631,7 +4639,7 @@ const demoState = () => {
     { id: uid(), title: "○○물산 주간 점검", kind: "appt", date: shiftDay(today, 1), time: "11:00", place: "온라인", projectId: mp1.id, createdAt: shiftDay(today, -2),
       checks: [{ id: uid(), text: "초과분 시간 단가표 회신 여부 확인", done: false, source: "manual" },
         { id: uid(), text: "월 리포트 양식 확정본 지참 — 유지보수 범위 협의 결정 사항", done: false, source: "ai" }], track: "biz" },
-    // The day-job project's meeting today (v28): the prep card states it without the AI button.
+    // The day-job project's meeting today (v28): the prep card offers the AI button unless day-job records are switched off.
     { id: uid(), title: "품질 회의", kind: "appt", date: today, time: "15:00", place: "회의실", projectId: mpJob.id, createdAt: shiftDay(today, -2), track: "work" }];
   // Two document summaries (v27): one on the search project, one with no project — synthetic file names, no personal data.
   s.documents = [
@@ -5996,7 +6004,7 @@ function BridgeModal({ state, today, initialMode, onClose, onImport, onStoreRepl
     <Modal title={mode === "send" ? "AI에게 보내기" : "AI 답변 붙여넣기"} onClose={onClose}>
       {mode === "send" ? (
         <PacketSendPane packet={packet} taRef={taRef} onCopy={copy} onPaste={() => setMode("paste")}
-          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 직장 트랙 기록은 실리지 않아요." />
+          caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요.${workInAiOf(state) ? "" : " 직장 트랙 기록은 실리지 않아요."}`} />
       ) : !parsed ? (
         <ReplyPastePane reply={reply} setReply={setReply} onCheck={check} />
       ) : (
@@ -7090,7 +7098,7 @@ function StudyVerifyModal({ task, onClose, onDone }) {
    the CV states the counts and this sheet holds every earned item, so nothing earned becomes unreachable (rule 13).
    Both live in the one `modal` slot and write nothing to the save (rule 9). */
 
-function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onExport, onImport, onReset }) {
+function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onSetWorkInAi, onExport, onImport, onReset }) {
   const [hours, setHours] = useState(String(bizHoursOf(state)));
   const [hoursErr, setHoursErr] = useState("");
   // The weekly business budget (v28): a whole number of hours in one week, 0 to 168.
@@ -7122,6 +7130,19 @@ function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onExport, o
           </div>
           {hoursErr && <p className="text-xs text-rose-400 mt-1.5">{hoursErr}</p>}
           <p className="text-xs text-zinc-500 mt-1.5">이번 주 사업 시간은 업무 완료 시간과 시간 기록의 합으로 계산돼요.</p>
+        </div>
+        {/* 2026-09-22: whether day-job records go into AI packets — absent reads as on (`workInAiOf`) */}
+        <div>
+          <SectionLabel tone="text-cyan-400">AI 요청문</SectionLabel>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={workInAiOf(state)} onChange={(e) => onSetWorkInAi(e.target.checked)} className="mt-0.5 shrink-0" />
+            <span className="text-sm text-zinc-200">직장 기록을 AI 요청문에 포함</span>
+          </label>
+          <p className="text-xs text-zinc-500 mt-1.5">
+            {workInAiOf(state)
+              ? "직장 트랙 회의록·업무·일정도 AI 요청문에 실려요. 회사 자료를 보내면 안 되는 날엔 꺼요. 회의록마다 'AI에 보내지 않기'는 그대로 적용돼요."
+              : "직장 트랙 기록은 AI 요청문에 실리지 않아요."}
+          </p>
         </div>
         <div>
           <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
@@ -7844,7 +7865,7 @@ function ScheduleTab({ state, today, onAdd, onEdit, onToggleDone, onSkip, onExpo
 }
 
 /* ── Event modal — one form for add and edit. No goal, no difficulty, no evidence: an event is only a record ── */
-function EventModal({ event, initialDate, projects, onClose, onAdd, onUpdate, onRemove }) {
+function EventModal({ event, initialDate, projects, workInAi, onClose, onAdd, onUpdate, onRemove }) {
   const [title, setTitle] = useState(event?.title || "");
   const [kind, setKind] = useState(event?.kind || "appt");
   const [date, setDate] = useState(event?.date || initialDate || ""); // add mode opened from a calendar day starts on that day
@@ -7932,7 +7953,7 @@ function EventModal({ event, initialDate, projects, onClose, onAdd, onUpdate, on
             </select>
           )}
         </div>
-        <TrackRow value={track} onPick={(t) => { setTrack(t); setTrackTouched(true); }} />
+        <TrackRow value={track} onPick={(t) => { setTrack(t); setTrackTouched(true); }} workInAi={workInAi} />
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
           {event ? "저장" : "등록"}
@@ -8449,12 +8470,13 @@ function BizChips({ options, value, onPick }) {
 }
 
 // The `트랙` chip row of every record form (v28): the day job, the business or private life. One row for six forms.
-function TrackRow({ value, onPick, caption = "직장 트랙은 AI 패킷에 실리지 않아요." }) {
+// The caption shows only while day-job records are switched off (`workInAi` false); on, day-job records go into packets.
+function TrackRow({ value, onPick, workInAi = true }) {
   return (
     <div>
       <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">트랙</div>
       <BizChips options={TRACK_OPTIONS} value={trackOf({ track: value })} onPick={onPick} />
-      {caption && <p className="text-xs text-zinc-600 mt-1.5">{caption}</p>}
+      {!workInAi && <p className="text-xs text-zinc-600 mt-1.5">직장 트랙은 AI 패킷에 실리지 않아요.</p>}
     </div>
   );
 }
@@ -8479,7 +8501,7 @@ function BizFormFoot({ err, edit, onSubmit, onRemove }) {
 }
 
 // `prefill` (v28) seeds a new contract from a lead (`makeDealFromLead`); an existing deal ignores it.
-function DealModal({ deal, prefill, onClose, onAdd, onUpdate, onRemove }) {
+function DealModal({ deal, prefill, workInAi, onClose, onAdd, onUpdate, onRemove }) {
   const seed = deal || prefill;
   const [client, setClient] = useState(seed?.client || "");
   const [title, setTitle] = useState(seed?.title || "");
@@ -8566,7 +8588,7 @@ function DealModal({ deal, prefill, onClose, onAdd, onUpdate, onRemove }) {
             className="w-full mt-1.5 py-2 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">항목 추가</button>
           {pays.length >= DEAL_PAYMENTS_MAX && <p className="text-xs text-zinc-500 mt-1">입금 예정은 12건까지예요.</p>}
         </div>
-        <TrackRow value={track} onPick={setTrack} />
+        <TrackRow value={track} onPick={setTrack} workInAi={workInAi} />
         <BizFormFoot err={err} edit={!!deal} onSubmit={submit} onRemove={() => onRemove(deal.id)} />
       </div>
     </Modal>
@@ -9325,7 +9347,7 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
 
 /* ── Project form. Deleting is offered only for a project without minutes or documents: nothing is lost, so nothing is
    asked. ── */
-function ProjectModal({ project, meetingCount, documentCount, onClose, onAdd, onUpdate, onRemove }) {
+function ProjectModal({ project, meetingCount, documentCount, workInAi, onClose, onAdd, onUpdate, onRemove }) {
   const [name, setName] = useState(project?.name || "");
   const [note, setNote] = useState(project?.note || "");
   const [track, setTrack] = useState(project?.track || "work");
@@ -9343,7 +9365,7 @@ function ProjectModal({ project, meetingCount, documentCount, onClose, onAdd, on
       <div className="space-y-3">
         <BizField value={name} onChange={setName} placeholder="프로젝트 이름 — 예: ○○물산 재고 관리" />
         <BizField value={note} onChange={setNote} placeholder="메모 (선택)" />
-        <TrackRow value={track} onPick={setTrack} />
+        <TrackRow value={track} onPick={setTrack} workInAi={workInAi} />
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
           {project ? "저장" : "등록"}
@@ -9431,7 +9453,7 @@ function DocumentModal({ state, doc, projectId, onClose, onAdd, onUpdate, onRemo
           const p = id ? projects.find((x) => x.id === id) : null;
           if (p && !trackTouched) setTrack(trackOf(p));
         }} />
-        <TrackRow value={track} onPick={(t) => { setTrack(t); setTrackTouched(true); }} />
+        <TrackRow value={track} onPick={(t) => { setTrack(t); setTrackTouched(true); }} workInAi={workInAiOf(state)} />
         <BizField value={title} onChange={setTitle} placeholder="문서 제목 — 예: 요구사항 정의서 v2" />
         <BizField value={source} onChange={setSource} placeholder="출처 (선택) — 파일 이름이나 링크" />
         <MeetingText value={summary} onChange={setSummary} placeholder="문서 요약 — 핵심 내용을 요점으로 적어요" rows={8} cap={DOC_LIMITS.summary} />
@@ -9568,7 +9590,7 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       <div className="space-y-3">
         <ProjectPicker projects={projects} pid={pid} onPick={(id) => { setPid(id); setErr(""); }}
           note="프로젝트 없이 저장돼요 — 미팅 탭의 '프로젝트 없음 · 긴급 메모'에 실려요." />
-        {pid === null && <TrackRow value={track} onPick={setTrack} />}
+        {pid === null && <TrackRow value={track} onPick={setTrack} workInAi={workInAiOf(state)} />}
         <div>
           <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">날짜</div>
           <input type="date" value={date} onChange={(e) => pickDate(e.target.value)}
@@ -10064,8 +10086,8 @@ function MeetingPrepCard({ state, today, onOpenMeeting, onOpenDocument, onAddChe
               <div className="pt-1.5">
                 <EventChecks ev={ev} onAdd={onAddCheck} onToggle={onToggleCheck} onRemove={onRemoveCheck} />
               </div>
-              {/* v28: a day-job event never enters a packet, so its block states that in place of the button */}
-              {PACKET_TRACKS.includes(trackOf(ev))
+              {/* v28: while day-job records are switched off, a day-job event never enters a packet, so its block states that in place of the button */}
+              {packetTracks(state).includes(trackOf(ev))
                 ? <button onClick={() => onAskAi(ev.id, date)} className={`w-full ${border}`}>AI에게 회의 준비 묻기</button>
                 : <span className="block text-xs text-zinc-500">직장 트랙 — AI 패킷에 실리지 않아요</span>}
             </div>
@@ -10266,7 +10288,7 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
             </select>
           </div>
         )}
-        <TrackRow value={track} onPick={setTrack} />
+        <TrackRow value={track} onPick={setTrack} workInAi={workInAiOf(state)} />
         <p className="text-xs text-zinc-600">업무는 기록이에요 — 목표·실행·점수에 반영되지 않아요.</p>
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
@@ -10370,7 +10392,7 @@ function TimeLogModal({ state, today, onClose, onAdd, onRemove }) {
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
           className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
         <BizField value={minutes} onChange={setMinutes} placeholder="분 — 예: 90" num />
-        <TrackRow value={track} onPick={setTrack} />
+        <TrackRow value={track} onPick={setTrack} workInAi={workInAiOf(state)} />
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">기록</button>
         <div className="space-y-1.5">
@@ -10411,13 +10433,13 @@ function PrepBridgeModal({ state, today, eventId, date, onClose, onImport, onToa
   };
   const register = () => setErr(onImport(eventId, result.proposals.filter((x) => ticked[x.key] && !x.reject)) || "");
   let body;
-  if (step === "send" && !PACKET_TRACKS.includes(trackOf(ev))) {
-    // v28: a day-job event has no send pane — the card offers no button for it; this covers any other route in.
+  if (step === "send" && !packetTracks(state).includes(trackOf(ev))) {
+    // v28: with day-job records switched off, a day-job event has no send pane — the card offers no button for it; this covers any other route in.
     body = <p className="text-sm text-zinc-400">직장 트랙 일정 — AI 패킷에 실리지 않아요</p>;
   } else if (step === "send") {
     body = (
       <PacketSendPane packet={packet} taRef={packetRef} onCopy={() => copyPacket(packetRef, packet, onToast)} onPaste={() => setStep("paste")}
-        caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 이 프로젝트의 회의록 요약·후속·진행사항과 문서 요약이 실려요 — 녹취록·이름·연락처·문서 출처는 실리지 않아요. 직장 트랙 문서·계약은 실리지 않아요." />
+        caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 이 프로젝트의 회의록 요약·후속·진행사항과 문서 요약이 실려요 — 녹취록·이름·연락처·문서 출처는 실리지 않아요.${workInAiOf(state) ? "" : " 직장 트랙 문서·계약은 실리지 않아요."}`} />
     );
   } else if (!result) {
     body = <ReplyPastePane reply={reply} setReply={setReply} onCheck={read} />;
@@ -10477,7 +10499,7 @@ function RoleVerdictModal({ state, today, onClose, onImport, onToast }) {
   if (step === "send") {
     body = (
       <PacketSendPane packet={packet} taRef={packetRef} onCopy={() => copyPacket(packetRef, packet, onToast)} onPaste={() => setStep("paste")}
-        caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 원하는 모습에 적은 글은 그대로 실려요 — 이름·생년월일·연락처·학교·회사명·고객사 이름·직장 트랙 기록은 실리지 않아요. 답변은 AI 판단이고 검증되지 않아요." />
+        caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 원하는 모습에 적은 글은 그대로 실려요 — 이름·생년월일·연락처·학교·회사명·고객사 이름${workInAiOf(state) ? "은" : "·직장 트랙 기록은"} 실리지 않아요. 답변은 AI 판단이고 검증되지 않아요.`} />
     );
   } else if (!result) {
     body = <ReplyPastePane reply={reply} setReply={setReply} onCheck={read} />;
@@ -11589,7 +11611,7 @@ export default function LifeManager() {
     return s;
   });
   /* Time log and budget (v28) — records and a setting, never measures (rules 8, 9). `addTimeLog` / `removeTimeLog` write
-     `timeLog` only; `setBizHours` writes `settings` only. */
+     `timeLog` only; `setBizHours` and `setWorkInAi` write `settings` only. */
   const addTimeLog = (next) => {
     const rec = { id: uid(), date: next.date, track: trackOf(next, "biz"), minutes: next.minutes, createdAt: today };
     const refused = recordFits(rec, 0, "시간 기록을");
@@ -11607,6 +11629,11 @@ export default function LifeManager() {
     setState((prev) => ({ ...prev, settings: { ...(prev.settings || {}), bizHoursPerWeek: n } }));
     setModal(null);
     showToast({ msg: `주간 사업 시간을 ${n}시간으로 저장했어요` });
+  };
+  // The settings checkbox: an explicit true/false, the sheet stays open.
+  const setWorkInAi = (on) => {
+    setState((prev) => { const s = structuredClone(prev); s.settings = { ...(s.settings || {}), workInAi: on === true }; return s; });
+    showToast({ msg: on ? "직장 기록 AI 포함 켜짐" : "직장 기록 AI 포함 꺼짐" });
   };
   const removeWork = (id) => {
     const cur = (state.work || []).find((w) => w.id === id);
@@ -11983,11 +12010,11 @@ export default function LifeManager() {
         <RoleVerdictModal state={state} today={today} onClose={() => setModal({ type: "role" })} onImport={importRoleVerdict} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "event" && (
-        <EventModal event={modal.event} initialDate={modal.date} projects={state.meetingProjects || []} onClose={() => setModal(null)}
+        <EventModal event={modal.event} initialDate={modal.date} projects={state.meetingProjects || []} workInAi={workInAiOf(state)} onClose={() => setModal(null)}
           onAdd={addEvent} onUpdate={updateEvent} onRemove={removeEvent} />
       )}
       {modal?.type === "deals" && (
-        <DealModal deal={modal.item} prefill={modal.prefill} onClose={() => setModal(null)}
+        <DealModal deal={modal.item} prefill={modal.prefill} workInAi={workInAiOf(state)} onClose={() => setModal(null)}
           onAdd={(d) => addBiz("deals", d, null, modal.leadId)} onUpdate={(id, next) => updateBiz("deals", id, next)}
           onRemove={(id) => removeBiz("deals", id)} />
       )}
@@ -12018,6 +12045,7 @@ export default function LifeManager() {
         <ProjectModal project={(state.meetingProjects || []).find((p) => p.id === modal.projectId)}
           meetingCount={(state.meetings || []).filter((m) => m.projectId === modal.projectId).length}
           documentCount={(state.documents || []).filter((d) => d.projectId === modal.projectId).length}
+          workInAi={workInAiOf(state)}
           onClose={() => setModal(null)} onAdd={addProject} onUpdate={updateProject} onRemove={removeProject} />
       )}
       {modal?.type === "meeting" && (
@@ -12045,7 +12073,7 @@ export default function LifeManager() {
       )}
       {modal?.type === "workBridge" && (
         <WorkBridgeModal state={state} today={today} build={buildWorkPacket} title="오늘 업무 만들기"
-          caption="아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요. 직장 트랙 기록은 실리지 않아요."
+          caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요.${workInAiOf(state) ? "" : " 직장 트랙 기록은 실리지 않아요."}`}
           importDate={today} importTrack={null} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "reviewBridge" && (
@@ -12088,7 +12116,7 @@ export default function LifeManager() {
           after the next onboarding or demo entry. The reset itself still asks nothing (TD-26). */}
       {modal?.type === "settings" && (
         <SettingsModal state={state} onClose={() => setModal(null)}
-          onRoleModel={() => setModal({ type: "role" })} onSetBizHours={setBizHours}
+          onRoleModel={() => setModal({ type: "role" })} onSetBizHours={setBizHours} onSetWorkInAi={setWorkInAi}
           onExport={exportBackup} onImport={askImport}
           onReset={() => { setModal(null); resetAll(); }} />
       )}

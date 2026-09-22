@@ -166,7 +166,8 @@ module.exports = async (h) => {
     }, "재고 관리 자동화 도구");
     if (!tag || !/text-cyan-300/.test(tag)) throw new Error("the contract row does not carry the business tag: " + JSON.stringify(tag));
     await openAdd("계약 추가");
-    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    // The track caption shows only while day-job records are switched off (`settings.workInAi` false); this save leaves it on.
+    if ((await h.overlayText()).includes("직장 트랙은 AI 패킷에 실리지 않아요.")) throw new Error("the track caption shows while day-job records go into packets");
     const on = await page.evaluate(() => {
       const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
       const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "사업");

@@ -1144,7 +1144,8 @@ module.exports = async (h) => {
     // The sheet's chips round-trip the field.
     const trackOfItem = async (id) => ((await readState()).work || []).find((w) => w.id === id)?.track;
     await openTodo("E2E 직장 업무");
-    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    // The track caption shows only while day-job records are switched off (`settings.workInAi` false); this save leaves it on.
+    if ((await h.overlayText()).includes("직장 트랙은 AI 패킷에 실리지 않아요.")) throw new Error("the track caption shows while day-job records go into packets");
     if ((await chipOn("직장")) !== true) throw new Error("the sheet does not open on the item's track");
     await clickInModalExact("개인");
     await clickInModalExact("저장");
@@ -1203,7 +1204,9 @@ module.exports = async (h) => {
     await h.reload();
   });
 
-  await step("no day-job record enters the work packet, the daily packet or a prep packet", async () => {
+  /* 2026-09-22: day-job records go into the packets unless the settings switch `settings.workInAi` is false. The first
+     half plants the switch off and keeps every v28 exclusion assertion; the second half removes it (absent reads as on). */
+  await step("with day-job records switched off none enters a packet; with the switch absent they do", async () => {
     const WORK_SENTINEL = "E2E-WORK-TRACK-SENTINEL-51aa";
     const JOB = { project: "e2e-job-proj", meeting: "e2e-job-mtg", work: "e2e-job-work", event: "e2e-job-ev", deal: "e2e-job-deal", mixed: "e2e-job-ev-biz" };
     const MIXED_TITLE = "E2E 사업 혼합 일정";
@@ -1221,6 +1224,7 @@ module.exports = async (h) => {
         { id: ids.mixed, title: "E2E 사업 혼합 일정", kind: "appt", date: d, time: "18:00", projectId: ids.project, createdAt: d, track: "biz" }];
       st.deals = [...(st.deals || []).filter((x) => x.id !== ids.deal), { id: ids.deal, client: "E2E 직장고객", title: "E2E 직장 계약 " + s + "-deal", status: "won",
         monthly: 1000000, months: 2, startMonth: d.slice(0, 7), paidMonths: [], createdAt: d, track: "work" }];
+      st.settings = { ...(st.settings || {}), workInAi: false };
       localStorage.setItem(k, JSON.stringify(st));
     }, KEY, JOB, JOB_PROJECT, WORK_SENTINEL, today);
     await h.reload();
@@ -1288,7 +1292,30 @@ module.exports = async (h) => {
     await closeModal();
     if (!txt.includes(WORK_SENTINEL + "-meeting")) throw new Error("the flipped project's meeting is not in the work packet");
     if (txt.includes(WORK_SENTINEL + "-item") || txt.includes(WORK_SENTINEL + "-deal") || txt.includes(WORK_SENTINEL + "-event")) throw new Error("a record still on the day-job track reached the work packet");
-    // Leave the save as flow4 expects it: every plant gone.
+    // Second half: the project back on the day-job track and the switch absent (on) — the day-job meeting, work item and
+    // event go into the work packet, and the prep card offers the ask button for the day-job event.
+    await page.evaluate((k, ids) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetingProjects = (st.meetingProjects || []).map((p) => (p.id === ids.project ? { ...p, track: "work" } : p));
+      if (st.settings) delete st.settings.workInAi;
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, JOB);
+    await h.reload();
+    await openWorkBridge();
+    if ((await overlayText()).includes("직장 트랙 기록은 실리지 않아요.")) throw new Error("the work bridge still says day-job records stay out");
+    txt = await packetText();
+    await closeModal();
+    for (const t of [`[${JOB_PROJECT}] E2E 직장 회의`, WORK_SENTINEL + "-meeting", WORK_SENTINEL + "-item", WORK_SENTINEL + "-event"]) {
+      if (!txt.includes(t)) throw new Error(`with the switch absent the work packet lacks "${t}"`);
+    }
+    await clickTab("업무");
+    const onBlock = await page.evaluate((title) => {
+      const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("오늘 회의 준비"));
+      const div = sec && [...sec.querySelectorAll(".bg-zinc-950.rounded-xl")].find((b) => (b.innerText || "").includes(title));
+      return div ? { text: div.innerText.replace(/s+/g, " ").trim(), ask: [...div.querySelectorAll("button")].some((b) => (b.innerText || "").trim() === "AI에게 회의 준비 묻기") } : null;
+    }, WORK_SENTINEL + "-event");
+    if (!onBlock || !onBlock.ask || onBlock.text.includes("직장 트랙 — AI 패킷에 실리지 않아요")) throw new Error("the day-job prep block with the switch absent: " + JSON.stringify(onBlock));
+    // Leave the save as flow4 expects it: every plant gone, the switch absent.
     await page.evaluate((k, ids) => {
       const st = JSON.parse(localStorage.getItem(k));
       st.meetingProjects = (st.meetingProjects || []).filter((p) => p.id !== ids.project);
@@ -1453,6 +1480,56 @@ module.exports = async (h) => {
     } finally {
       await closeModal();
       await resetTime(keep.log, keep.settings);
+      await h.reload();
+    }
+  });
+
+  /* 2026-09-22: the settings switch `직장 기록을 AI 요청문에 포함` writes `settings.workInAi` only (explicit true/false)
+     and its caption follows it. Written under the standing instruction; not run. */
+  await step("the day-job AI switch writes settings.workInAi only and its caption follows", async () => {
+    const ON_CAPTION = "직장 트랙 회의록·업무·일정도 AI 요청문에 실려요. 회사 자료를 보내면 안 되는 날엔 꺼요. 회의록마다 'AI에 보내지 않기'는 그대로 적용돼요.";
+    const OFF_CAPTION = "직장 트랙 기록은 AI 요청문에 실리지 않아요.";
+    const saved = await readState();
+    const keep = saved.settings || { bizHoursPerWeek: 20 };
+    // The switch's checkbox state, or null when the row is missing.
+    const switchOn = () => page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const l = ov && [...ov.querySelectorAll("label")].find((x) => (x.innerText || "").trim() === "직장 기록을 AI 요청문에 포함");
+      const i = l && l.querySelector('input[type="checkbox"]');
+      return i ? i.checked : null;
+    });
+    const toggle = () => page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const l = ov && [...ov.querySelectorAll("label")].find((x) => (x.innerText || "").trim() === "직장 기록을 AI 요청문에 포함");
+      const i = l && l.querySelector('input[type="checkbox"]');
+      if (!i) return false;
+      i.click(); return true;
+    });
+    try {
+      await resetTime(saved.timeLog || [], (({ workInAi, ...rest }) => rest)(keep));
+      await h.reload();
+      await h.openSettings();
+      await expectText("AI 요청문");
+      if ((await switchOn()) !== true) throw new Error("the switch does not read on while settings.workInAi is absent");
+      if (!(await overlayText()).includes(ON_CAPTION)) throw new Error("the on caption is missing");
+      let before = await readState();
+      if (!(await toggle())) throw new Error("no day-job AI checkbox in the settings sheet");
+      await sleep(300);
+      await expectText("직장 기록 AI 포함 꺼짐");
+      let after = await readState();
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["settings"]) || after.settings.workInAi !== false
+        || after.settings.bizHoursPerWeek !== before.settings.bizHoursPerWeek) throw new Error("switching off: " + JSON.stringify(after.settings));
+      if ((await switchOn()) !== false || !(await overlayText()).includes(OFF_CAPTION) || (await overlayText()).includes(ON_CAPTION)) throw new Error("the off caption does not follow the switch");
+      before = after;
+      await toggle();
+      await sleep(300);
+      await expectText("직장 기록 AI 포함 켜짐");
+      after = await readState();
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["settings"]) || after.settings.workInAi !== true) throw new Error("switching on: " + JSON.stringify(after.settings));
+      if ((await switchOn()) !== true || !(await overlayText()).includes(ON_CAPTION)) throw new Error("the on caption does not come back");
+    } finally {
+      await closeModal();
+      await resetTime(saved.timeLog || [], keep);
       await h.reload();
     }
   });

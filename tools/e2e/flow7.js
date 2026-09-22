@@ -312,7 +312,8 @@ module.exports = async (h) => {
     await h.reload();
     await showDay(await dstrIn(0));
     await openEventModal();
-    await expectText("직장 트랙은 AI 패킷에 실리지 않아요.");
+    // The track caption shows only while day-job records are switched off (`settings.workInAi` false); this save leaves it on.
+    if ((await h.overlayText()).includes("직장 트랙은 AI 패킷에 실리지 않아요.")) throw new Error("the track caption shows while day-job records go into packets");
     if ((await chipOn("직장")) !== true) throw new Error("a new event does not default to the day-job track");
     await typeInto("일정 이름", TITLE);
     await page.select(PICKER, "pT");
