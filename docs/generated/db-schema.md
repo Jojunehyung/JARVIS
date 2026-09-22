@@ -321,10 +321,11 @@ const demoState = () => {
       summary: "프로파일링 결과 검토 — 결측 컬럼 12개 확인, 코드값 불일치 3개 테이블.", decisions: "결측 처리 기준은 다음 회의에서 확정",
       createdAt: shiftDay(today, -2), taskIds: [], progress: [], aiHidden: false, followUps: [fuJob] },
     // A training record (2026-09-22) on the day-job project: the same fields under the `교육` labels. Older than the
-    // project's meeting, so the meeting stays the project's last minutes.
+    // project's meeting, so the meeting stays the project's last minutes. Reference only: no follow-up, progress or task
+    // link, and its `기억할 점` states a point to keep, not a to-do.
     { id: uid(), projectId: mpJob.id, kind: "training", date: shiftDay(today, -4), title: "데이터 품질 지표 교육", attendees: "강사: 데모기관 품질팀",
       summary: "품질 지표 6종 — 완전성·유효성·일관성·정확성·유일성·적시성.\n지표마다 측정 쿼리와 허용 기준을 둬요.",
-      decisions: "결측률은 컬럼 단위로 산출", actions: "주간 품질 점검에 컬럼별 결측률 표 추가",
+      decisions: "결측률은 컬럼 단위로 산출", actions: "완전성은 결측률, 유효성은 코드값 위반율로 측정해요",
       createdAt: shiftDay(today, -4), taskIds: [], progress: [], aiHidden: false, followUps: [] },
   ];
   // One demo event names its meeting project (schema v26), so the prep card has a project-linked event tomorrow. It is
@@ -464,19 +465,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1330 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6450 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6450 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6450 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 8600 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 9023 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 11157 | App root |
-| `liferpg-img-${slot}` | 11230 | App root |
-| `liferpg-img-ev-${id}` | 11253 | App root |
-| `liferpg-img-ev-${q.id}` | 11435 | App root |
-| `liferpg-img-ev-${t.id}` | 12317 | App root |
-| `liferpg-img-study-${t.id}-1` | 12317 | App root |
-| `liferpg-img-study-${t.id}-2` | 12317 | App root |
-| `liferpg-img-folio-${f.id}` | 12323 | App root |
+| `liferpg-img-ev-${task.id}` | 6454 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6454 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6454 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 8604 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 9027 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 11191 | App root |
+| `liferpg-img-${slot}` | 11264 | App root |
+| `liferpg-img-ev-${id}` | 11287 | App root |
+| `liferpg-img-ev-${q.id}` | 11469 | App root |
+| `liferpg-img-ev-${t.id}` | 12353 | App root |
+| `liferpg-img-study-${t.id}-1` | 12353 | App root |
+| `liferpg-img-study-${t.id}-2` | 12353 | App root |
+| `liferpg-img-folio-${f.id}` | 12359 | App root |
 
 ## Demo data (`demoState`)
 

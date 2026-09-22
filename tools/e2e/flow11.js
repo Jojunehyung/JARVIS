@@ -1761,7 +1761,8 @@ module.exports = async (h) => {
   /* 2026-09-22 — training records and the issue list (Phase 3). A training record is a meeting record with
      `kind: "training"` and other labels; the issue list derives four sections and only opens existing sheets. Written
      under the standing instruction; not run. The first step saves the two records the later steps read; the last one
-     removes them. */
+     removes them. Amended the same day: a training record is reference only — no follow-up items, task links or
+     progress, never in the work packet, never a to-do (still written, not run). */
   const TR_TITLE = "E2E 교육 기록", CMP_TITLE = "E2E 교육 비교 회의";
   const recordByTitle = async (title) => ((await readState()).meetings || []).find((m) => m.title === title);
   // The open sheet's placeholders, so a relabel is read off the fields themselves.
@@ -1818,18 +1819,27 @@ module.exports = async (h) => {
     }) : null;
   }, key, group);
 
-  await step("a training record is saved from the form with its own labels, listed with the training marker, and viewed with its training labels", async () => {
+  // The controls a training form hides and the sections a training view hides (reference only).
+  const MEETING_ONLY_FORM = ["할 일 연결", "후속 항목", "항목 추가", "확인할 것 가져오기"];
+  const MEETING_ONLY_VIEW = ["후속 항목", "진행사항이 없어요.", "연결된 할 일"];
+  const SWITCH_NOTE = "교육으로 바꾸면 후속 항목·연결된 할 일은 목록에서 빠지고 기록만 남아요.";
+
+  await step("a training record is saved from a form without follow-up items, task links or check import, listed with the training marker, and viewed with its content only", async () => {
     await plantMeeting();
     await openMeetingFormOnProject();
     const meetingHints = await placeholders();
     for (const t of ["회의 이름 — 예: 2차 요구사항 회의", "회의 요약 — 논의한 내용을 요점으로 적어요", "결정 사항 (선택)", "후속 조치 (선택)"]) {
       if (!meetingHints.includes(t)) throw new Error(`the meeting form lacks the placeholder "${t}": ` + JSON.stringify(meetingHints));
     }
+    for (const t of ["할 일 연결", "후속 항목", "항목 추가"]) if (!(await overlayText()).includes(t)) throw new Error(`the meeting form lacks "${t}"`);
     await clickInModalExact("교육");
     const trainingHints = await placeholders();
-    for (const t of ["교육 이름 — 예: 데이터 품질 지표 교육", "강사·주최 (선택) — 예: ○○협회", "배운 것 — 핵심 내용을 요점으로 적어요", "핵심 정리 (선택)", "적용할 것 (선택)"]) {
+    for (const t of ["교육 이름 — 예: 데이터 품질 지표 교육", "강사·주최 (선택) — 예: ○○협회", "배운 것 — 핵심 내용을 요점으로 적어요", "핵심 정리 (선택)", "기억할 점 (선택)"]) {
       if (!trainingHints.includes(t)) throw new Error(`the training form lacks the placeholder "${t}": ` + JSON.stringify(trainingHints));
     }
+    if (trainingHints.includes("적용할 것 (선택)") || trainingHints.includes("할 일 검색")) throw new Error("the training form keeps a meeting-only field: " + JSON.stringify(trainingHints));
+    const trainingForm = await overlayText();
+    for (const t of [...MEETING_ONLY_FORM, SWITCH_NOTE]) if (trainingForm.includes(t)) throw new Error(`a new training form states "${t}"`);
     await clickInModalExact("등록");
     if ((await modalError()) !== "교육 이름을 입력해 주세요.") throw new Error("the training form's empty-title refusal: " + (await modalError()));
     await saveMeetingForm("교육 이름 — 예: 데이터 품질 지표 교육", "배운 것 — 핵심 내용을 요점으로 적어요", TR_TITLE, "E2E 배운 것 첫 줄\nE2E 배운 것 둘째 줄");
@@ -1837,6 +1847,7 @@ module.exports = async (h) => {
     await saveMeetingForm("회의 이름 — 예: 2차 요구사항 회의", "회의 요약 — 논의한 내용을 요점으로 적어요", CMP_TITLE, "E2E 비교 회의 요약");
     const tr = await recordByTitle(TR_TITLE), cmp = await recordByTitle(CMP_TITLE);
     if (!tr || tr.kind !== "training") throw new Error("the training record: " + JSON.stringify(tr));
+    if (JSON.stringify([tr.followUps, tr.taskIds, tr.progress]) !== "[[],[],[]]") throw new Error("a new training record carries items: " + JSON.stringify(tr));
     if (!cmp || "kind" in cmp) throw new Error("a meeting-kind record carries a kind key: " + JSON.stringify(cmp));
     const keysOf = (m) => Object.keys(m).filter((k) => k !== "kind").sort().join(",");
     if (keysOf(tr) !== keysOf(cmp)) throw new Error(`the two records differ in shape: ${keysOf(tr)} vs ${keysOf(cmp)}`);
@@ -1848,32 +1859,70 @@ module.exports = async (h) => {
     await openTodo(TR_TITLE);
     const view = await overlayText();
     if (!view.startsWith(`교육 · ${TR_TITLE}`)) throw new Error("the training view's title: " + view.slice(0, 80));
-    for (const t of ["강사·주최", "배운 것", "핵심 정리", "적용할 것"]) if (!view.includes(t)) throw new Error(`the training view lacks "${t}"`);
-    if (view.includes("참석자")) throw new Error("the training view names the attendees label");
+    for (const t of ["강사·주최", "배운 것", "핵심 정리", "기억할 점", "녹취록", "수정"]) if (!view.includes(t)) throw new Error(`the training view lacks "${t}"`);
+    if (view.includes("참석자") || view.includes("적용할 것")) throw new Error("the training view names a meeting or retired label");
+    for (const t of MEETING_ONLY_VIEW) if (view.includes(t)) throw new Error(`the training view states "${t}"`);
+    const progressBox = await page.evaluate(() => !![...document.querySelectorAll(".fixed.inset-0 textarea")].find((e) => (e.getAttribute("placeholder") || "").startsWith("진행사항 추가")));
+    if (progressBox) throw new Error("the training view offers a progress entry");
     await closeModal();
+    // Switching an existing meeting to training states what happens to its items; nothing is written until saved.
+    const before = await readState();
+    await openTodo(CMP_TITLE);
+    await clickInModalExact("수정");
+    await sleep(300);
+    if ((await overlayText()).includes(SWITCH_NOTE)) throw new Error("the meeting form states the switch note before 교육 is picked");
+    await clickInModalExact("교육");
+    const switched = await overlayText();
+    if (!switched.includes(SWITCH_NOTE)) throw new Error("the switch note is missing: " + switched.slice(0, 160));
+    for (const t of MEETING_ONLY_FORM) if (switched.split(SWITCH_NOTE).join("").includes(t)) throw new Error(`the switched form states "${t}"`);
+    await clickInModalExact("회의");
+    if ((await overlayText()).includes(SWITCH_NOTE)) throw new Error("the switch note stays after 회의 is picked again");
+    await closeModal();
+    if (JSON.stringify(before.meetings) !== JSON.stringify((await readState()).meetings)) throw new Error("switching the kind chip wrote a record");
   });
 
-  await step("the work packet states a training record with its kind in the head line and its own body labels, and the prep card ignores it as the last meeting", async () => {
+  await step("the work packet omits a training record, the prep packet keeps it with its own labels and its keep line, and the prep card ignores it as the last meeting", async () => {
     const [today, d1] = [await dstrIn(0), await dstrIn(-1)];
     const EV = { id: "e2e-train-ev", title: "E2E 교육 준비 일정" };
+    const KEEP = "E2E 기억할 점 내용";
     try {
-      // The comparison meeting moves one day back, so the training record is strictly the project's newest record.
-      await page.evaluate((k, cmp, d, ev, pid, t) => {
+      // The comparison meeting moves one day back, so the training record is strictly the project's newest record; the
+      // training record gains a `기억할 점` text.
+      await page.evaluate((k, cmp, tr, keep, d, ev, pid, t) => {
         const st = JSON.parse(localStorage.getItem(k));
         st.meetings.find((m) => m.title === cmp).date = d;
+        st.meetings.find((m) => m.title === tr).actions = keep;
         st.events = [...(st.events || []), { id: ev.id, title: ev.title, kind: "appt", date: t, time: "09:00", projectId: pid, createdAt: t, track: "biz" }];
         localStorage.setItem(k, JSON.stringify(st));
-      }, KEY, CMP_TITLE, d1, EV, PROJECT_ID, today);
+      }, KEY, CMP_TITLE, TR_TITLE, KEEP, d1, EV, PROJECT_ID, today);
       await h.reload();
       await openWorkBridge();
+      const work = (await packetText()).split("\n");
+      const leaked = work.filter((l) => l.includes(TR_TITLE) || l.includes(KEEP) || l.includes("E2E 배운 것"));
+      if (leaked.length) throw new Error("the work packet states the training record: " + leaked.join(" | "));
+      if (!work.includes(`- ${d1} [${PROJECT}] ${CMP_TITLE}`)) throw new Error("the meeting-kind head line changed shape");
+      await closeModal();
+      // The prep packet of the planted event: the training record stays as content under its own labels.
+      await clickTab("업무");
+      const asked = await page.evaluate((title) => {
+        const sec = [...document.querySelectorAll("main section")].find((x) => (x.innerText || "").trim().startsWith("오늘 회의 준비"));
+        const div = sec && [...sec.querySelectorAll(".bg-zinc-950.rounded-xl")].find((b) => (b.innerText || "").includes(title));
+        const b = div && [...div.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "AI에게 회의 준비 묻기");
+        if (!b) return false;
+        b.click(); return true;
+      }, EV.title);
+      if (!asked) throw new Error("the planted event's prep block has no ask button");
+      await sleep(400);
+      await expectText("AI에게 회의 준비 묻기");
       const lines = (await packetText()).split("\n");
       const at = lines.findIndex((l) => l.endsWith(`] 교육 · ${TR_TITLE}`));
-      if (at < 0 || !lines[at].startsWith(`- ${today} [${PROJECT}] `)) throw new Error("the packet's training head line: " + lines.filter((l) => l.includes(TR_TITLE)).join(" | "));
+      if (at < 0 || !lines[at].startsWith(`- ${today} [${PROJECT}] `)) throw new Error("the prep packet's training head line: " + lines.filter((l) => l.includes(TR_TITLE)).join(" | "));
       const end = lines.findIndex((l, i) => i > at && !l.startsWith("  "));
       const body = lines.slice(at + 1, end < 0 ? undefined : end);
       if (!body.some((l) => l.startsWith("  배운 것: E2E 배운 것 첫 줄"))) throw new Error("the training body lacks its learned line: " + body.join(" | "));
-      if (body.some((l) => l.startsWith("  요약: "))) throw new Error("the training body states a summary label: " + body.join(" | "));
-      if (!lines.includes(`- ${d1} [${PROJECT}] ${CMP_TITLE}`)) throw new Error("the meeting-kind head line changed shape");
+      if (!body.includes(`  기억할 점: ${KEEP}`)) throw new Error("the training body lacks its keep line: " + body.join(" | "));
+      if (body.some((l) => /^  (요약|적용할 것|후속|진행) /.test(l) || l.startsWith("  요약:") || l.startsWith("  적용할 것:"))) throw new Error("the training body states a meeting line: " + body.join(" | "));
+      if (!lines.includes(`- ${d1} [${PROJECT}] ${CMP_TITLE}`)) throw new Error("the prep packet's meeting-kind head line changed shape");
       await closeModal();
       await clickTab("업무");
       const block = await page.evaluate((title) => {
@@ -1885,6 +1934,50 @@ module.exports = async (h) => {
     } finally {
       await closeModal();
       await page.evaluate((k, id) => { const s = JSON.parse(localStorage.getItem(k)); s.events = (s.events || []).filter((e) => e.id !== id); localStorage.setItem(k, JSON.stringify(s)); }, KEY, EV.id);
+      await h.reload();
+    }
+  });
+
+  await step("a training record's stored follow-ups are no issue-list to-do and no row marker, and saving the record changes no work item and keeps its items", async () => {
+    const d1p = await dstrIn(1);
+    const today = await dstrIn(0);
+    const FU = { id: "e2e-train-fu", text: "E2E 교육 저장된 후속", mine: true, due: d1p, done: false };
+    // Not mine, linked to a live undone work item: a reconcile would delete that item, so it proves none runs.
+    const LINKED = { id: "e2e-train-w", date: today, title: "E2E 교육 연결 업무", done: false, source: "manual", createdAt: today, track: "biz" };
+    const FU2 = { id: "e2e-train-fu2", text: "E2E 교육 타인 후속", mine: false, done: false, workId: LINKED.id };
+    const saved = await readState();
+    const keep = { meetings: saved.meetings, work: saved.work };
+    try {
+      // A save from before the amendment may hold follow-ups on a training record; plant a mine item with no work item
+      // and a linked one owned by someone else.
+      await page.evaluate((k, tr, fus, w) => {
+        const st = JSON.parse(localStorage.getItem(k));
+        st.meetings.find((m) => m.title === tr).followUps = fus;
+        st.work = [...(st.work || []), w];
+        localStorage.setItem(k, JSON.stringify(st));
+      }, KEY, TR_TITLE, [FU, FU2], LINKED);
+      await h.reload();
+      const before = await readState();
+      await openIssues();
+      const todo = await page.evaluate(() => [...document.querySelectorAll(".fixed.inset-0")].pop()?.querySelector('[data-issue-section="todo"]')?.innerText || "");
+      if (todo.includes(FU.text)) throw new Error("the issue list lists the training follow-up as a to-do: " + todo.slice(0, 200));
+      await closeModal();
+      await clickTab("미팅");
+      const row = (await workRows()).find((r) => r.title === TR_TITLE);
+      if (!row || row.marker !== "교육") throw new Error("the training row's marker: " + JSON.stringify(row));
+      await openTodo(TR_TITLE);
+      await clickInModalExact("수정");
+      await sleep(300);
+      await clickInModalExact("저장");
+      await sleep(500);
+      const after = await readState();
+      if (JSON.stringify(after.work) !== JSON.stringify(before.work)) throw new Error("saving the training record changed the work items: " + JSON.stringify((after.work || []).map((w) => w.title)));
+      const tr = (after.meetings || []).find((m) => m.title === TR_TITLE);
+      if (JSON.stringify(tr.followUps) !== JSON.stringify([FU, FU2])) throw new Error("the training record's stored follow-ups changed: " + JSON.stringify(tr.followUps));
+      if (tr.kind !== "training") throw new Error("the saved record lost its kind");
+    } finally {
+      await closeModal();
+      await page.evaluate((k, v) => { const s = JSON.parse(localStorage.getItem(k)); Object.assign(s, v); localStorage.setItem(k, JSON.stringify(s)); }, KEY, keep);
       await h.reload();
     }
   });

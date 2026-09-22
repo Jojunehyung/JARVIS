@@ -90,7 +90,7 @@ const ICS_NAMES = [
   "dstr", "shiftDay", "daysBetween", "EVENT_KIND_LABEL", "EVENT_HORIZON_DAYS", "MAX_OCC", "occurrencesOf",
   "ICS_RANGE_DAYS", "ICS_REMIND_DEFAULT", "ICS_APPT_LEAD_MIN", "ICS_APPT_MINUTES", "ICS_DIGEST_MINUTES", "ICS_LINE_OCTETS",
   "ICS_SEQ_EPOCH", "ICS_UID_HOST", "ICS_MILESTONE_LEAD_DAYS", "ICS_CHECK_LEAD_DAYS", "PAYMENT_KIND", "noticeOpen", "icsText", "icsFold", "icsDate", "icsLocal", "icsAddMinutes", "icsUtcStamp", "icsDuration",
-  "icsUid", "calendarExportOf", "buildIcs",
+  "icsUid", "isTraining", "followUpsOf", "calendarExportOf", "buildIcs",
 ];
 const lift = (n) => { const b = S.grabBlock(n, src); if (!b) throw new Error(`smoke: ${n} is not a top-level declaration in the app source`); return b.text; };
 const ICS = new Function(ICS_NAMES.map(lift).join("\n") + "\nreturn { buildIcs, calendarExportOf, icsFold, icsText, icsAddMinutes, ICS_RANGE_DAYS, MAX_OCC, occurrencesOf };")();
@@ -233,6 +233,14 @@ ok(ICS.icsText("a\\b;c,d\ne") === "a\\\\b\\;c\\,d\\ne", `icsText escaping: ${JSO
 // (i) the longest range cannot outrun the occurrence iteration stop
 ok(Math.max(...ICS.ICS_RANGE_DAYS) <= ICS.MAX_OCC, `range: ${Math.max(...ICS.ICS_RANGE_DAYS)} days exceeds MAX_OCC ${ICS.MAX_OCC}`);
 
+// (i2) a training record is reference only: its stored follow-ups write no calendar entry (2026-09-22)
+{
+  const train = { ...RICH.meetings[0], id: "tr1", kind: "training", title: "품질 교육" };
+  const uids = (st) => veventsOf(ICS.buildIcs(st, "2026-09-14", { days: 90, now: NOW }).text).map((b) => lineValue(b, "UID")).filter((u) => u.startsWith("followup-"));
+  const withMeeting = uids(RICH), withTraining = uids({ ...RICH, meetings: [...RICH.meetings, train] });
+  ok(withMeeting.length === 1 && withTraining.join() === withMeeting.join(), `training follow-ups: ${withMeeting.join()} vs ${withTraining.join()}`);
+}
+
 // (j) nothing to include still makes a complete calendar
 {
   const out = ICS.buildIcs(mkState({}), "2026-09-14", { days: 90, now: NOW });
@@ -335,7 +343,7 @@ ok(Math.max(...ICS.ICS_RANGE_DAYS) <= ICS.MAX_OCC, `range: ${Math.max(...ICS.ICS
   const sel = ICS.calendarExportOf({ events: RICH.events.slice(0, 4), tasks: RICH.tasks, goals: RICH.goals }, "2026-09-14", 90);
   ok(["followup", "check", "milestone", "payment", "notice"].every((k) => sel.counts[k] === 0) && sel.entries.length >= 6, `legacy state: ${JSON.stringify(sel.counts)}`);
 }
-console.log("calendar file: 18 check groups");
+console.log("calendar file: 19 check groups");
 
 // 6) since-mode work packet — `workSinceOf` selects what changed after the last AI work refresh (2026-09-22)
 {
@@ -344,7 +352,7 @@ console.log("calendar file: 18 check groups");
   // `meetingTrack` is a three-line expression that grabBlock cannot close on its own; cut it at its first `;`.
   const liftExpr = (name) => { const t = lift(name).split("\n"); return t.slice(0, t.findIndex((l) => /;\s*(\/\/.*)?$/.test(l)) + 1).join("\n"); };
   const SINCE = new Function([
-    ...["TRACKS", "PACKET_TRACKS_NO_WORK", "workInAiOf", "packetTracks", "trackOf", "meetingOrder", "docOrder"].map(lift),
+    ...["TRACKS", "PACKET_TRACKS_NO_WORK", "workInAiOf", "packetTracks", "trackOf", "meetingOrder", "docOrder", "isTraining"].map(lift),
     liftExpr("meetingTrack"), lift("workSinceOf"),
   ].join("\n") + "\nreturn { workSinceOf };")();
   const since = "2026-09-15";
@@ -377,6 +385,11 @@ console.log("calendar file: 18 check groups");
   check(!off.recent.some((m) => m.id === "memo") && off.counts.meetings === 2, `workInAi false: ${JSON.stringify(off.recent.map((m) => m.id))}`);
   const early = SINCE.workSinceOf(state, "2026-01-01");
   check(early.recent.length === state.meetings.length && early.older.length === 0, `early stamp: recent ${early.recent.length}, older ${early.older.length}`);
+  // a training record never enters, recent or older, and adds nothing to the counts (reference only, 2026-09-22)
+  const withTraining = { ...state, meetings: [...state.meetings,
+    mt("T1", "2026-09-17", { kind: "training" }),
+    mt("T2", "2026-09-01", { kind: "training", progress: [{ id: "t1", date: "2026-09-18", text: "t" }], followUps: [{ id: "tf", text: "tf", mine: true, done: false }] })] };
+  check(JSON.stringify(SINCE.workSinceOf(withTraining, since)) === JSON.stringify(sel), "training records change nothing");
   console.log(`since-mode packet: ${n} checks`);
 }
 
@@ -455,7 +468,8 @@ console.log("calendar file: 18 check groups");
 }
 
 // 8) training records and the issue list — the `교육` labels, `lastMeetingOf` (a training record is never a project's
-// last meeting while a meeting-kind record exists) and `issueListOf`'s four sections (2026-09-22). The goal tasks come
+// last meeting while a meeting-kind record exists) and `issueListOf`'s four sections (2026-09-22); a training record is
+// reference only, so its stored follow-ups reach neither `할 일` nor a marker (`followUpsOf`). The goal tasks come
 // from `agendaOf` directly, so `todoOf` (and its business helpers) need not be lifted. `demoState` is not lifted (it
 // calls `uid`/`dstr` and spans the whole seed); the E2E covers the demo.
 {
@@ -464,7 +478,7 @@ console.log("calendar file: 18 check groups");
   const liftExpr = (name) => { const t = lift(name).split("\n"); return t.slice(0, t.findIndex((l) => /;\s*(\/\/.*)?$/.test(l)) + 1).join("\n"); };
   const ISSUE = new Function([
     ...["dstr", "shiftDay", "daysBetween", "mondayOf", "MAX_OCC", "occurrencesOf", "eventsOn", "upcomingEvents", "EVENT_KIND_LABEL",
-      "TRACKS", "TRACK_LABEL", "trackOf", "meetingOrder", "MEETING_KIND", "isTraining", "MEETING_FIELD_LABEL", "meetingLabels",
+      "TRACKS", "TRACK_LABEL", "trackOf", "meetingOrder", "MEETING_KIND", "isTraining", "followUpsOf", "MEETING_FIELD_LABEL", "meetingLabels",
       "kindPrefix", "lastMeetingOf", "oneLineText", "byCreated", "workOn", "agendaOf", "TODO_GROUPS",
       "ISSUE_WORK_ROWS", "ISSUE_EVENT_DAYS", "ISSUE_EVENT_ROWS", "ISSUE_TRAINING_ROWS", "ISSUE_PREV_MEETINGS", "ISSUE_FOLLOWUPS",
       "ISSUE_DECISION_CLIP", "ISSUE_SUMMARY_CLIP", "ISSUE_LEARNED_CLIP", "ISSUE_PROJECT_TRACKS"].map(lift),
@@ -475,7 +489,7 @@ console.log("calendar file: 18 check groups");
   // (a) labels: absent and "meeting" read as a meeting; "training" relabels
   check(ISSUE.meetingLabels({}) === ISSUE.MEETING_FIELD_LABEL.meeting && ISSUE.meetingLabels({ kind: "meeting" }) === ISSUE.MEETING_FIELD_LABEL.meeting, "absent and meeting kinds read the meeting labels");
   const tl = ISSUE.meetingLabels({ kind: "training" });
-  check(tl.summary === "배운 것" && tl.decisions === "핵심 정리" && tl.actions === "적용할 것" && tl.attendees === "강사·주최", `training labels ${JSON.stringify(tl)}`);
+  check(tl.summary === "배운 것" && tl.decisions === "핵심 정리" && tl.actions === "기억할 점" && tl.packetActions === "기억할 점" && tl.attendees === "강사·주최", `training labels ${JSON.stringify(tl)}`);
 
   // (b) lastMeetingOf: a newer training record never displaces a meeting; alone, the newest training record stands in
   const rec = (id, projectId, date, extra = {}) => ({ id, projectId, date, title: id, summary: `${id} 요약`, createdAt: date, taskIds: [], progress: [], followUps: [], ...extra });
@@ -515,8 +529,8 @@ console.log("calendar file: 18 check groups");
   check(todo.groups.map((g) => g.track).join(",") === "work,biz", `todo groups ${todo.groups.map((g) => g.label).join(",")}`);
   const jobRows = todo.groups.find((g) => g.track === "work").rows;
   check(jobRows[0].lead === "이월 2일" && jobRows[0].id === "w1" && jobRows[1].lead === "오늘", `the carried item leads the day-job group: ${JSON.stringify(jobRows.map((r) => r.lead))}`);
-  check(jobRows.some((r) => r.kind === "followUp" && r.text === "job-train · 지표 표 추가" && r.lead === "기한 2026-09-25")
-    && todo.groups.find((g) => g.track === "biz").rows.some((r) => r.text === "biz-meet · 견적 회신" && r.lead === "후속"), "follow-up rows carry `{meeting} · {text}`");
+  check(todo.groups.find((g) => g.track === "biz").rows.some((r) => r.kind === "followUp" && r.text === "biz-meet · 견적 회신" && r.lead === "후속"), "follow-up rows carry `{meeting} · {text}`");
+  check(!jobRows.some((r) => r.kind === "followUp") && jobRows.length === 2, `a training record's stored mine follow-up is no to-do: ${JSON.stringify(jobRows.map((r) => r.text))}`);
   const ev = sec("events");
   check(ev.rows.length === 2 && ev.rows[0].marker === "확인할 것 1/2" && ev.rows[0].lead === "09/23 10:00" && ev.rows[1].text === "마감 · 제출", `events ${JSON.stringify(ev.rows.map((r) => [r.lead, r.text, r.marker]))}`);
   const tr = sec("training");
@@ -526,6 +540,11 @@ console.log("calendar file: 18 check groups");
   const job = pg.find((g) => g.track === "work").rows[0];
   check(job.latest.meetingId === "job-meet" && job.latest.decisions === "기준 확정", `the day-job project's latest is the meeting, not the newer training record: ${job.latest.meetingId}`);
   check(job.previous.map((x) => x.title).join("|") === "교육 · job-train|job-old", `previous rows ${JSON.stringify(job.previous.map((x) => x.title))}`);
+  check(job.previous[0].followUpsText === "", `a training row states no follow-up marker: ${job.previous[0].followUpsText}`);
+  // a training record standing in for a project without meetings lends no follow-up lines
+  const standIn = ISSUE.issueListOf({ ...state, meetings: state.meetings.filter((m) => m.id !== "job-meet" && m.id !== "job-old") }, today);
+  const lone = standIn.sections.find((s) => s.key === "projects").groups.find((g) => g.track === "work").rows[0].latest;
+  check(lone.meetingId === "job-train" && lone.marker === "" && lone.followUps.length === 0 && lone.followUpMore === 0, `training stand-in ${JSON.stringify(lone)}`);
   const memoGroup = pg[pg.length - 1];
   check(memoGroup.track === null && memoGroup.rows[0].latest.meetingId === "memo" && memoGroup.rows[0].previous.length === 0, "the memo group is last with no previous rows");
   console.log(`issue list: ${n} checks`);

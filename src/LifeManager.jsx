@@ -2943,7 +2943,7 @@ const buildBriefing = (state, today) => {
   const prepTodayRows = prep.filter((r) => r.date === today);
   const prepToday = prepTodayRows.length;
   const prepTomorrow = prep.length - prepToday;
-  const overdueFollowUps = (state.meetings || []).flatMap((m) => m.followUps || []).filter((f) => !f.done && f.due && f.due < today);
+  const overdueFollowUps = (state.meetings || []).flatMap((m) => followUpsOf(m)).filter((f) => !f.done && f.due && f.due < today);
   const prepItems = [{
     kind: "prep", severity: prep.length > 0 ? 2 : 1, action: { type: "work" },
     text: `오늘 회의 준비 ${prepToday}건 · ${trackCountText(prepTodayRows.map((r) => r.ev))}${prepTomorrow > 0 ? ` · 내일 ${prepTomorrow}건` : ""}`,
@@ -3196,7 +3196,7 @@ const issueListOf = (state, today) => {
   const projects = state.meetingProjects || [];
   const projectName = (id) => projects.find((p) => p.id === id)?.name || "프로젝트 없음";
   const capped = (rows, n) => ({ rows: rows.slice(0, n), more: Math.max(0, rows.length - n) });
-  const followUpsText = (m) => { const f = m.followUps || []; return f.length ? `후속 ${f.filter((x) => !x.done).length}/${f.length}` : ""; };
+  const followUpsText = (m) => { const f = followUpsOf(m); return f.length ? `후속 ${f.filter((x) => !x.done).length}/${f.length}` : ""; };
 
   /* 1. `할 일` — carried work (oldest first), today's open work, the goal tasks open today, then open mine follow-ups
      that no listed work item mirrors */
@@ -3209,7 +3209,7 @@ const issueListOf = (state, today) => {
       lead: w.date < today ? `이월 ${daysBetween(w.date, today)}일` : "오늘" })),
     ...[...agenda.overdue.map((q) => [q, "overdue"]), ...[...agenda.dueToday, ...agenda.daily].map((q) => [q, "today"])]
       .map(([q, g]) => ({ kind: "task", id: q.id, track: "personal", lead: groupLabel[g], text: q.title })),
-    ...meetings.flatMap((m) => (m.followUps || []).filter((f) => f.mine && !f.done && !(f.workId && listed.has(f.workId)))
+    ...meetings.flatMap((m) => followUpsOf(m).filter((f) => f.mine && !f.done && !(f.workId && listed.has(f.workId)))
       .map((f) => ({ kind: "followUp", meetingId: m.id, track: meetingTrack(state, m), lead: f.due ? `기한 ${f.due}` : "후속", text: `${m.title} · ${f.text}` }))),
   ];
   const todoGroups = TRACKS.map((t) => ({ track: t, label: TRACK_LABEL[t], all: todoRows.filter((r) => r.track === t) }))
@@ -3233,7 +3233,7 @@ const issueListOf = (state, today) => {
   const entryOf = (name, projectId, withPrevious) => {
     const m = lastMeetingOf(meetings, projectId);
     if (!m) return null;
-    const open = (m.followUps || []).filter((f) => !f.done);
+    const open = followUpsOf(m).filter((f) => !f.done);
     const fus = [...open.filter((f) => f.mine), ...open.filter((f) => !f.mine)];
     return {
       projectId, name,
@@ -3335,7 +3335,7 @@ const buildReader = (state, today) => {
   const overdueFus = [];
   const mineFus = [];
   for (const m of meetings) {
-    for (const f of m.followUps || []) {
+    for (const f of followUpsOf(m)) {
       if (f.done) continue;
       const track = meetingTrack(state, m);
       if (f.due && f.due < today) overdueFus.push({ track, text: `${m.title} · ${f.text} · 기한 ${f.due} (${ddayStr(f.due)})` });
@@ -3595,9 +3595,11 @@ const meetingPacketLines = (state, list, today, { summary, progress: progressN, 
   // free-text `후속` line stays only for a meeting with text and no items — with items it would state them twice.
   // `openOnly` (the prep packet) lists the open items only, and the head counts those; the free-text line still follows
   // whether the meeting has items at all.
-  const all = m.followUps || [];
+  // A training record (reference only) states no follow-up, progress or linked-task line, so its `기억할 점` always shows.
+  const training = isTraining(m);
+  const all = followUpsOf(m);
   const fus = openOnly ? all.filter((f) => !f.done) : all;
-  // A training record (2026-09-22) states the same fields as `배운 것` / `핵심 정리` / `적용할 것`.
+  // A training record (2026-09-22) states the same fields as `배운 것` / `핵심 정리` / `기억할 점`.
   const L = meetingLabels(m);
   const body = [[L.packetSummary, m.summary, summary], [L.packetDecisions, m.decisions, WORK_PACKET_CLIP], ...(all.length ? [] : [[L.packetActions, m.actions, WORK_PACKET_CLIP]])]
     .filter(([, text]) => String(text || "").trim())
@@ -3605,11 +3607,11 @@ const meetingPacketLines = (state, list, today, { summary, progress: progressN, 
   const followUps = fus.length === 0 ? [] : [`  후속 ${fus.length}건:`,
     ...[...fus.filter((f) => !f.done), ...fus.filter((f) => f.done)].slice(0, followUpN)
       .map((f) => `  - ${f.mine ? "내 담당" : "타인"} · ${f.due ? `기한 ${f.due}` : "기한 없음"} · ${f.done ? "완료" : "미완료"} · ${oneLineText(f.text, MEETING_LIMITS.followUp)}`)];
-  const progress = (m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, progressN)
+  const progress = (training ? [] : m.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, progressN)
     .map((e) => `  진행 ${e.date}: ${oneLineText(e.text, WORK_PACKET_CLIP)}`);
   // What the meeting view states besides the minutes (added 2026-09-17 — the packet had left them out): attendees,
   // the linked schedule entry and every linked task with its state, read live like `MeetingViewModal`.
-  const linked = (m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
+  const linked = (training ? [] : m.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
     .map((q) => `${q.title} (${q.type === "daily" ? "매일 · 오늘 " : ""}${taskClosedOn(q, today) ? "완료" : "미완료"})`);
   const facts = [
     String(m.attendees || "").trim() && `  참석: ${oneLineText(m.attendees, MEETING_LIMITS.attendees)}`,
@@ -3628,7 +3630,8 @@ const meetingPacketLines = (state, list, today, { summary, progress: progressN, 
    listed); `docs` = the documents added on or after `since`. `counts.progress` covers every non-hidden meeting. Pure. */
 const workSinceOf = (state, since) => {
   const tracks = packetTracks(state);
-  const allowed = (state.meetings || []).filter((m) => tracks.includes(meetingTrack(state, m)));
+  // A training record never enters the work packet (2026-09-22) — the assistant must not turn it into work items.
+  const allowed = (state.meetings || []).filter((m) => !isTraining(m) && tracks.includes(meetingTrack(state, m)));
   const isRecent = (m) => m.date >= since || (m.createdAt || "") >= since;
   const recent = allowed.filter(isRecent).sort(meetingOrder);
   const newProgress = (m) => (m.progress || []).filter((e) => e.date >= since).sort((a, b) => b.date.localeCompare(a.date));
@@ -3678,7 +3681,7 @@ const buildWorkPacket = (state, today, { since = null } = {}) => {
   // v28: while day-job records are switched off, a day-job meeting (by `meetingTrack`) never enters, not even its date and title.
   const sinceSel = since ? workSinceOf(state, since) : null;
   const meetings = sinceSel ? sinceSel.recent.slice(0, WORK_PACKET_MEETINGS)
-    : (state.meetings || []).filter((m) => packetTracks(state).includes(meetingTrack(state, m))).sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
+    : (state.meetings || []).filter((m) => !isTraining(m) && packetTracks(state).includes(meetingTrack(state, m))).sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
   // Since-mode only: older meetings' post-stamp progress (newest first across meetings, then meeting order), then their
   // open mine follow-ups in meeting order; the documents added after the stamp with their project's name.
   const olderProgress = sinceSel ? sinceSel.older.flatMap(({ m, progress }) => progress.map((e) => ({ m, e })))
@@ -3835,7 +3838,7 @@ const buildPrepPacket = (state, ev, today, date = ev.date) => {
   const build = () => {
     const shown = meetings.slice(0, k.meetings);
     // Tasks linked by the meetings in the packet, deduped; a hidden meeting's links stay out with its body.
-    const taskIds = [...new Set(shown.filter((m) => !m.aiHidden).flatMap((m) => m.taskIds || []))];
+    const taskIds = [...new Set(shown.filter((m) => !m.aiHidden && !isTraining(m)).flatMap((m) => m.taskIds || []))];
     const taskLines = taskIds.map((id) => (state.tasks || []).find((q) => q.id === id))
       .filter((q) => q && !taskClosedOn(q, today)).slice(0, k.tasks)
       .map((q) => `- ${q.title} · ${(state.goals || []).find((g) => g.id === q.goalId)?.title || "목표 없음"} · 기한 ${q.due || "없음"}`);
@@ -4322,7 +4325,7 @@ const calendarExportOf = (state, today, days) => {
 
   // v28: a meeting's open follow-ups with a due date — the text and the meeting title only, never the minutes.
   for (const m of state.meetings || []) {
-    for (const f of m.followUps || []) {
+    for (const f of followUpsOf(m)) {
       if (f.done || !f.due) continue;
       if (f.due < today) { skipped.followups += 1; continue; }
       if (f.due > end) continue;
@@ -4865,10 +4868,11 @@ const demoState = () => {
       summary: "프로파일링 결과 검토 — 결측 컬럼 12개 확인, 코드값 불일치 3개 테이블.", decisions: "결측 처리 기준은 다음 회의에서 확정",
       createdAt: shiftDay(today, -2), taskIds: [], progress: [], aiHidden: false, followUps: [fuJob] },
     // A training record (2026-09-22) on the day-job project: the same fields under the `교육` labels. Older than the
-    // project's meeting, so the meeting stays the project's last minutes.
+    // project's meeting, so the meeting stays the project's last minutes. Reference only: no follow-up, progress or task
+    // link, and its `기억할 점` states a point to keep, not a to-do.
     { id: uid(), projectId: mpJob.id, kind: "training", date: shiftDay(today, -4), title: "데이터 품질 지표 교육", attendees: "강사: 데모기관 품질팀",
       summary: "품질 지표 6종 — 완전성·유효성·일관성·정확성·유일성·적시성.\n지표마다 측정 쿼리와 허용 기준을 둬요.",
-      decisions: "결측률은 컬럼 단위로 산출", actions: "주간 품질 점검에 컬럼별 결측률 표 추가",
+      decisions: "결측률은 컬럼 단위로 산출", actions: "완전성은 결측률, 유효성은 코드값 위반율로 측정해요",
       createdAt: shiftDay(today, -4), taskIds: [], progress: [], aiHidden: false, followUps: [] },
   ];
   // One demo event names its meeting project (schema v26), so the prep card has a project-linked event tomorrow. It is
@@ -9443,10 +9447,14 @@ const meetingOrder = (a, b) => b.date.localeCompare(a.date) || (b.createdAt || "
 const MEETING_KIND = { meeting: "회의", training: "교육" };
 const MEETING_KIND_OPTIONS = [["meeting", "회의"], ["training", "교육"]];
 const isTraining = (m) => m?.kind === "training";
+// A training record is reference only (2026-09-22): the follow-ups, task links and progress a record saved before that
+// day may carry stay stored untouched, but no to-do surface, count, packet or calendar entry reads them — every such
+// reader goes through `followUpsOf` (a meeting-kind record answers its own list, so its output is unchanged).
+const followUpsOf = (m) => (isTraining(m) ? [] : m?.followUps || []);
 // The field labels per kind: the form and the view (`attendees`…`actions`) and the packet body lines (`packet*`).
 const MEETING_FIELD_LABEL = {
   meeting: { attendees: "참석자", summary: "회의 요약", decisions: "결정 사항", actions: "후속 조치", packetSummary: "요약", packetDecisions: "결정", packetActions: "후속" },
-  training: { attendees: "강사·주최", summary: "배운 것", decisions: "핵심 정리", actions: "적용할 것", packetSummary: "배운 것", packetDecisions: "핵심 정리", packetActions: "적용할 것" },
+  training: { attendees: "강사·주최", summary: "배운 것", decisions: "핵심 정리", actions: "기억할 점", packetSummary: "배운 것", packetDecisions: "핵심 정리", packetActions: "기억할 점" },
 };
 const meetingLabels = (m) => MEETING_FIELD_LABEL[isTraining(m) ? "training" : "meeting"];
 // `교육 · ` before a training record's title in a list line; nothing before a meeting's.
@@ -9578,26 +9586,29 @@ const meetingPrepOf = (state, today) => {
     const project = eventProjectOf(state, ev);
     if (!project) return [];
     const last = lastMeetingOf(state.meetings, project.id);
-    const fus = (last?.followUps || []).filter((f) => !f.done);
+    // A training record standing in as the last minutes lends its content only — no follow-up, progress or task line.
+    const training = isTraining(last);
+    const fus = followUpsOf(last).filter((f) => !f.done);
     return [{
       ev, date, project, last,
       followUps: [...fus.filter((f) => f.mine), ...fus.filter((f) => !f.mine)],
-      progress: (last?.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, PREP_PROGRESS),
-      tasks: (last?.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
+      progress: (training ? [] : last?.progress || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, PREP_PROGRESS),
+      tasks: (training ? [] : last?.taskIds || []).map((id) => (state.tasks || []).find((q) => q.id === id)).filter(Boolean)
         .map((q) => ({ q, closed: taskClosedOn(q, today) })),
       docs: documents.filter((d) => d.projectId === project.id).sort(docOrder),
     }];
   });
 };
 
-// A minutes row's marker: `진행 {n}건` and `후속 {open}/{total}`, each only when its total is above zero. Derived (rule 9).
+// A minutes row's marker: `진행 {n}건` and `후속 {open}/{total}`, each only when its total is above zero — never for a
+// training record, which is reference only. Derived (rule 9).
 // `lead` (v28), when given, is stated first — a memo's track label; a training record's `교육` precedes it.
 const meetingRowMarker = (m, lead = "") => {
-  const fus = m.followUps || [];
+  const fus = followUpsOf(m);
   const parts = [
     isTraining(m) ? MEETING_KIND.training : "",
     lead,
-    m.progress?.length ? `진행 ${m.progress.length}건` : "",
+    !isTraining(m) && m.progress?.length ? `진행 ${m.progress.length}건` : "",
     fus.length ? `후속 ${fus.filter((f) => !f.done).length}/${fus.length}` : "",
   ].filter(Boolean);
   return parts.length ? <span className="text-xs text-zinc-500 shrink-0">{parts.join(" · ")}</span> : null;
@@ -9876,7 +9887,7 @@ const MEETING_FORM_TEXT = {
   training: {
     title: "교육 이름 — 예: 데이터 품질 지표 교육", attendees: "강사·주최 (선택) — 예: ○○협회", summary: "배운 것 — 핵심 내용을 요점으로 적어요",
     noTitle: "교육 이름을 입력해 주세요.", noSummary: "배운 것을 입력해 주세요.",
-    names: { title: "교육 이름은", attendees: "강사·주최는", summary: "배운 것은", decisions: "핵심 정리는", actions: "적용할 것은", transcript: "녹취록은" },
+    names: { title: "교육 이름은", attendees: "강사·주최는", summary: "배운 것은", decisions: "핵심 정리는", actions: "기억할 점은", transcript: "녹취록은" },
   },
 };
 function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpdate, onRemove }) {
@@ -9884,6 +9895,8 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
   const [kind, setKind] = useState(isTraining(meeting) ? "training" : "meeting");
   const hint = MEETING_FORM_TEXT[kind];
   const labels = MEETING_FIELD_LABEL[kind];
+  // A training record is reference only (2026-09-22): the form offers no task links, follow-up items or check import.
+  const training = kind === "training";
   const [pid, setPid] = useState(meeting?.projectId || projectId || null);
   const [date, setDate] = useState(meeting?.date || today);
   const [title, setTitle] = useState(meeting?.title || "");
@@ -9964,7 +9977,7 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       if (v[k].length > MEETING_LIMITS[k]) { setErr(`${names[k]} ${MEETING_LIMITS[k]}자까지예요 — 지금 ${v[k].length}자예요.`); return; }
     }
     // Follow-up rows: trimmed; an empty row is dropped; the position in the refusal is the row as shown (1-based).
-    const over = followUps.findIndex((r) => r.text.trim().length > MEETING_LIMITS.followUp);
+    const over = training ? -1 : followUps.findIndex((r) => r.text.trim().length > MEETING_LIMITS.followUp);
     if (over >= 0) {
       setErr(`후속 항목은 ${MEETING_LIMITS.followUp}자까지예요 — ${over + 1}번째 항목이 지금 ${followUps[over].text.trim().length}자예요.`);
       return;
@@ -9983,13 +9996,15 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       // Only the ends are trimmed; the interior is byte-identical to the paste. An all-whitespace transcript is not written.
       ...(v.transcript ? { transcript: v.transcript } : {}),
       ...(eventId ? { eventId } : {}),
-      // Linking stores ids only and never changes a task (rules 1, 9, 18).
-      taskIds: taskIds.filter((id) => (state.tasks || []).some((q) => q.id === id)).slice(0, MEETING_LIMITS.tasks),
+      // Linking stores ids only and never changes a task (rules 1, 9, 18). A training record writes back what it
+      // already stores, untouched (nothing stored is deleted); a new one writes an empty list.
+      taskIds: training ? meeting?.taskIds || [] : taskIds.filter((id) => (state.tasks || []).some((q) => q.id === id)).slice(0, MEETING_LIMITS.tasks),
       // The form never edits progress entries (the view owns them); the flag is always written as a boolean (v25).
       progress: meeting?.progress || [],
       aiHidden,
-      // Always an array (v26); the root reconciles the mirrored work items when it writes the record.
-      followUps: fuRows,
+      // Always an array (v26); the root reconciles the mirrored work items when it writes the record — never for a
+      // training record, whose stored items (and their `workId`s) are written back unchanged.
+      followUps: training ? meeting?.followUps || [] : fuRows,
       ...(pid === null ? { track } : {}),
     };
     const refused = meeting ? onUpdate(meeting.id, next) : onAdd(next);
@@ -10002,6 +10017,9 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
         <div>
           <SectionLabel>종류</SectionLabel>
           <BizChips options={MEETING_KIND_OPTIONS} value={kind} onPick={(k) => { setKind(k); setErr(""); }} />
+          {training && meeting && !isTraining(meeting) && (
+            <p className="text-xs text-zinc-400 mt-1.5">교육으로 바꾸면 후속 항목·연결된 할 일은 목록에서 빠지고 기록만 남아요.</p>
+          )}
         </div>
         <ProjectPicker projects={projects} pid={pid} onPick={(id) => { setPid(id); setErr(""); }}
           note="프로젝트 없이 저장돼요 — 미팅 탭의 '프로젝트 없음 · 긴급 메모'에 실려요." />
@@ -10012,42 +10030,44 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
             className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm font-mono" />
         </div>
         {/* Directly under the date, above the long text fields: the link picker is the part of the form the user
-            reaches for first, and at the bottom it sat below the fold on a phone (reported 2026-09-16). */}
-        <div>
-          <div className="flex items-baseline justify-between gap-2 mb-1.5">
-            <div className="text-xs font-bold tracking-widest text-zinc-500">할 일 연결</div>
-            <span className="text-xs font-mono text-zinc-500 shrink-0">{taskIds.length} / {MEETING_LIMITS.tasks}</span>
+            reaches for first, and at the bottom it sat below the fold on a phone (reported 2026-09-16). Not for training. */}
+        {!training && (
+          <div>
+            <div className="flex items-baseline justify-between gap-2 mb-1.5">
+              <div className="text-xs font-bold tracking-widest text-zinc-500">할 일 연결</div>
+              <span className="text-xs font-mono text-zinc-500 shrink-0">{taskIds.length} / {MEETING_LIMITS.tasks}</span>
+            </div>
+            {candidates.length === 0 && taskRows.shown.length === 0 ? (
+              <p className="text-xs text-zinc-500">연결할 할 일이 없어요.</p>
+            ) : (
+              <>
+                <input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="할 일 검색"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm" />
+                <div className="space-y-1 mt-1.5">
+                  {taskRows.shown.map(({ q, lead, done }) => {
+                    const on = taskIds.includes(q.id);
+                    return (
+                      <button key={q.id} role="checkbox" aria-checked={on} onClick={() => toggleTask(q.id)} disabled={!on && atCap}
+                        className={`w-full text-left flex items-center gap-2 rounded-xl px-2.5 py-2 border disabled:opacity-30 ${
+                          on ? "border-cyan-700 bg-zinc-950" : "border-zinc-800 bg-zinc-950"}`}>
+                        <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? "bg-cyan-400 border-cyan-300 text-zinc-950" : "border-zinc-600"}`}>
+                          {on && <Check size={12} />}
+                        </span>
+                        {/* rose-300, not rose-400: inside a form rose-400 is reserved for the one validation line */}
+                        <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-0.5 bg-zinc-900 shrink-0 ${lead.tone.replace("text-rose-400", "text-rose-300")}`}>{lead.text}</span>
+                        <span className={`flex-1 min-w-0 text-sm truncate ${done ? "line-through text-zinc-500" : ""}`}>{q.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {taskRows.shown.length === 0 && <p className="text-xs text-zinc-500 mt-1.5">검색 결과가 없어요.</p>}
+                {taskRows.more > 0 && <p className="text-xs text-zinc-500 mt-1.5">할 일 {taskRows.more}건 더 있음 — 검색어로 좁혀요</p>}
+                {atCap && <p className="text-xs text-zinc-400 mt-1.5">할 일은 {MEETING_LIMITS.tasks}개까지 연결돼요.</p>}
+              </>
+            )}
+            <p className="text-xs text-zinc-600 mt-1.5">연결은 기록이에요 — 할 일의 상태·점수·목표는 바뀌지 않아요.</p>
           </div>
-          {candidates.length === 0 && taskRows.shown.length === 0 ? (
-            <p className="text-xs text-zinc-500">연결할 할 일이 없어요.</p>
-          ) : (
-            <>
-              <input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="할 일 검색"
-                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm" />
-              <div className="space-y-1 mt-1.5">
-                {taskRows.shown.map(({ q, lead, done }) => {
-                  const on = taskIds.includes(q.id);
-                  return (
-                    <button key={q.id} role="checkbox" aria-checked={on} onClick={() => toggleTask(q.id)} disabled={!on && atCap}
-                      className={`w-full text-left flex items-center gap-2 rounded-xl px-2.5 py-2 border disabled:opacity-30 ${
-                        on ? "border-cyan-700 bg-zinc-950" : "border-zinc-800 bg-zinc-950"}`}>
-                      <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? "bg-cyan-400 border-cyan-300 text-zinc-950" : "border-zinc-600"}`}>
-                        {on && <Check size={12} />}
-                      </span>
-                      {/* rose-300, not rose-400: inside a form rose-400 is reserved for the one validation line */}
-                      <span className={`font-mono text-xs font-bold border rounded-lg px-1.5 py-0.5 bg-zinc-900 shrink-0 ${lead.tone.replace("text-rose-400", "text-rose-300")}`}>{lead.text}</span>
-                      <span className={`flex-1 min-w-0 text-sm truncate ${done ? "line-through text-zinc-500" : ""}`}>{q.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {taskRows.shown.length === 0 && <p className="text-xs text-zinc-500 mt-1.5">검색 결과가 없어요.</p>}
-              {taskRows.more > 0 && <p className="text-xs text-zinc-500 mt-1.5">할 일 {taskRows.more}건 더 있음 — 검색어로 좁혀요</p>}
-              {atCap && <p className="text-xs text-zinc-400 mt-1.5">할 일은 {MEETING_LIMITS.tasks}개까지 연결돼요.</p>}
-            </>
-          )}
-          <p className="text-xs text-zinc-600 mt-1.5">연결은 기록이에요 — 할 일의 상태·점수·목표는 바뀌지 않아요.</p>
-        </div>
+        )}
         <BizField value={title} onChange={setTitle} placeholder={hint.title} />
         <BizField value={attendees} onChange={setAttendees} placeholder={hint.attendees} />
         {transcriptOpen ? (
@@ -10061,45 +10081,47 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
         <MeetingText value={summary} onChange={setSummary} placeholder={hint.summary} rows={8} cap={MEETING_LIMITS.summary} />
         <MeetingText value={decisions} onChange={setDecisions} placeholder={`${labels.decisions} (선택)`} rows={3} cap={MEETING_LIMITS.decisions} />
         <MeetingText value={actions} onChange={setActions} placeholder={`${labels.actions} (선택)`} rows={3} cap={MEETING_LIMITS.actions} />
-        {/* Follow-up items (v26): two lines per row, so the text, the owner chip and the due date fit 390 px */}
-        <div>
-          <div className="flex items-baseline justify-between gap-2 mb-1.5">
-            <div className="text-xs font-bold tracking-widest text-zinc-500">후속 항목</div>
-            <span className="text-xs font-mono text-zinc-500 shrink-0">{followUps.length} / {MEETING_FOLLOWUPS_MAX}</span>
+        {/* Follow-up items (v26): two lines per row, so the text, the owner chip and the due date fit 390 px. Not for training. */}
+        {!training && (
+          <div>
+            <div className="flex items-baseline justify-between gap-2 mb-1.5">
+              <div className="text-xs font-bold tracking-widest text-zinc-500">후속 항목</div>
+              <span className="text-xs font-mono text-zinc-500 shrink-0">{followUps.length} / {MEETING_FOLLOWUPS_MAX}</span>
+            </div>
+            {followUps.length > 0 && (
+              <div className="space-y-1.5 mb-1.5">
+                {followUps.map((r) => (
+                  <div key={r.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <input value={r.text} onChange={(e) => editFollowUp(r.id, { text: e.target.value })} placeholder="후속 항목 — 예: 견적서 송부"
+                        className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
+                      <button aria-label="후속 항목 삭제" onClick={() => setFollowUps((cur) => cur.filter((x) => x.id !== r.id))}
+                        className="text-zinc-500 shrink-0 active:opacity-70"><X size={14} /></button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="shrink-0"><Chip on={!!r.mine} onClick={() => editFollowUp(r.id, { mine: !r.mine })}>내 담당</Chip></div>
+                      <input type="date" aria-label="후속 기한" value={r.due || ""} onChange={(e) => editFollowUp(r.id, { due: e.target.value })}
+                        className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-sm font-mono" />
+                      {r.done && <span className="text-xs font-mono text-emerald-400 shrink-0">완료</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setFollowUps((cur) => (cur.length >= MEETING_FOLLOWUPS_MAX ? cur : [...cur, { id: uid(), text: "", mine: false, done: false }]))}
+              disabled={fuAtCap}
+              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">항목 추가</button>
+            {linkedChecks.length > 0 && (
+              <div className="mt-1.5">
+                <button onClick={pullChecks}
+                  className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">확인할 것 가져오기 ({linkedChecks.length}건)</button>
+                {pulled && <p className="text-xs text-zinc-400 mt-1.5">{pulled}</p>}
+              </div>
+            )}
+            {fuAtCap && <p className="text-xs text-zinc-400 mt-1.5">후속 항목은 {MEETING_FOLLOWUPS_MAX}건까지예요.</p>}
+            <p className="text-xs text-zinc-600 mt-1.5">내 담당을 켜면 업무 탭에 등록돼요 — 회의 날짜가 지났으면 오늘 업무로요.</p>
           </div>
-          {followUps.length > 0 && (
-            <div className="space-y-1.5 mb-1.5">
-              {followUps.map((r) => (
-                <div key={r.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <input value={r.text} onChange={(e) => editFollowUp(r.id, { text: e.target.value })} placeholder="후속 항목 — 예: 견적서 송부"
-                      className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-2 text-sm" />
-                    <button aria-label="후속 항목 삭제" onClick={() => setFollowUps((cur) => cur.filter((x) => x.id !== r.id))}
-                      className="text-zinc-500 shrink-0 active:opacity-70"><X size={14} /></button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="shrink-0"><Chip on={!!r.mine} onClick={() => editFollowUp(r.id, { mine: !r.mine })}>내 담당</Chip></div>
-                    <input type="date" aria-label="후속 기한" value={r.due || ""} onChange={(e) => editFollowUp(r.id, { due: e.target.value })}
-                      className="flex-1 w-0 bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-sm font-mono" />
-                    {r.done && <span className="text-xs font-mono text-emerald-400 shrink-0">완료</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <button onClick={() => setFollowUps((cur) => (cur.length >= MEETING_FOLLOWUPS_MAX ? cur : [...cur, { id: uid(), text: "", mine: false, done: false }]))}
-            disabled={fuAtCap}
-            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">항목 추가</button>
-          {linkedChecks.length > 0 && (
-            <div className="mt-1.5">
-              <button onClick={pullChecks}
-                className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">확인할 것 가져오기 ({linkedChecks.length}건)</button>
-              {pulled && <p className="text-xs text-zinc-400 mt-1.5">{pulled}</p>}
-            </div>
-          )}
-          {fuAtCap && <p className="text-xs text-zinc-400 mt-1.5">후속 항목은 {MEETING_FOLLOWUPS_MAX}건까지예요.</p>}
-          <p className="text-xs text-zinc-600 mt-1.5">내 담당을 켜면 업무 탭에 등록돼요 — 회의 날짜가 지났으면 오늘 업무로요.</p>
-        </div>
+        )}
         <div>
           <div className="text-xs font-bold tracking-widest text-zinc-500 mb-1.5">일정 연결 (선택)</div>
           {dayEvents.length === 0 ? (
@@ -10197,7 +10219,8 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
     if (!window.confirm("녹취록만 지워요. 요약·결정·후속·진행사항은 남아요. 계속할까요?")) return;
     onClearTranscript(m.id);
   };
-  const labels = meetingLabels(m); // a training record's view reads `강사·주최` / `배운 것` / `핵심 정리` / `적용할 것`
+  const labels = meetingLabels(m); // a training record's view reads `강사·주최` / `배운 것` / `핵심 정리` / `기억할 점`
+  const training = isTraining(m);
   const block = (label, text) => (
     <div>
       <SectionLabel>{label}</SectionLabel>
@@ -10237,110 +10260,116 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
         {block(labels.packetSummary, m.summary)}
         {block(labels.decisions, m.decisions)}
         {block(labels.actions, m.actions)}
-        <div>
-          <div className="flex items-baseline justify-between gap-2">
-            <div className="flex items-baseline gap-2 min-w-0">
-              <SectionLabel>후속 항목</SectionLabel>
-              <span className="text-xs font-mono text-zinc-500 shrink-0">{fuOpen}/{fus.length}</span>
-            </div>
-            {String(m.actions || "").trim() && (
-              <button onClick={openSplit}
-                className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">항목으로 나누기</button>
-            )}
-          </div>
-          {split && (
-            <div className="border border-cyan-800 rounded-xl p-3 space-y-2 mb-2 mt-1">
-              <div className="text-sm font-bold">{labels.actions}에서 항목 나누기 — {split.length}건</div>
-              {split.length === 0 ? (
-                <p className="text-xs text-zinc-500">나눌 항목이 없어요.</p>
+        {/* The follow-up items, the progress log and the task links — a meeting's only; a training record is reference
+            only (2026-09-22), so anything a record saved before that day carries stays stored but unshown. */}
+        {!training && (
+          <>
+            <div>
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <SectionLabel>후속 항목</SectionLabel>
+                  <span className="text-xs font-mono text-zinc-500 shrink-0">{fuOpen}/{fus.length}</span>
+                </div>
+                {String(m.actions || "").trim() && (
+                  <button onClick={openSplit}
+                    className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">항목으로 나누기</button>
+                )}
+              </div>
+              {split && (
+                <div className="border border-cyan-800 rounded-xl p-3 space-y-2 mb-2 mt-1">
+                  <div className="text-sm font-bold">{labels.actions}에서 항목 나누기 — {split.length}건</div>
+                  {split.length === 0 ? (
+                    <p className="text-xs text-zinc-500">나눌 항목이 없어요.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {split.map((c, i) => (
+                        <div key={i} className={`flex items-center gap-2 bg-zinc-950 rounded-xl px-2.5 py-2 ${c.blocked ? "opacity-50" : ""}`}>
+                          <input type="checkbox" checked={c.on} disabled={c.blocked} onChange={(e) => editSplit(i, { on: e.target.checked })} className="shrink-0" />
+                          <span className="flex-1 min-w-0 text-sm break-words">
+                            {c.text}{c.dup && <span className="ml-1.5 text-xs text-zinc-500 whitespace-nowrap">이미 있어요</span>}
+                          </span>
+                          <div className="shrink-0"><Chip on={c.mine} disabled={c.blocked} onClick={() => editSplit(i, { mine: !c.mine })}>내 담당</Chip></div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {split.some((c) => c.blocked) && (
+                    <p className="text-xs text-zinc-400">후속 항목은 {MEETING_FOLLOWUPS_MAX}건까지예요 — {fuRoom}건만 추가할 수 있어요.</p>
+                  )}
+                  {splitErr && <p className="text-xs text-rose-400">{splitErr}</p>}
+                  <div className="flex gap-1.5">
+                    <button onClick={appendSplit} disabled={!ticked.length}
+                      className="flex-1 py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm disabled:opacity-30 active:translate-y-0.5">추가</button>
+                    <button onClick={() => { setSplit(null); setSplitErr(""); }}
+                      className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">취소</button>
+                  </div>
+                </div>
+              )}
+              {fus.length === 0 ? (
+                <p className="text-sm text-zinc-500">후속 항목이 없어요.</p>
               ) : (
                 <div className="space-y-1.5">
-                  {split.map((c, i) => (
-                    <div key={i} className={`flex items-center gap-2 bg-zinc-950 rounded-xl px-2.5 py-2 ${c.blocked ? "opacity-50" : ""}`}>
-                      <input type="checkbox" checked={c.on} disabled={c.blocked} onChange={(e) => editSplit(i, { on: e.target.checked })} className="shrink-0" />
-                      <span className="flex-1 min-w-0 text-sm break-words">
-                        {c.text}{c.dup && <span className="ml-1.5 text-xs text-zinc-500 whitespace-nowrap">이미 있어요</span>}
-                      </span>
-                      <div className="shrink-0"><Chip on={c.mine} disabled={c.blocked} onClick={() => editSplit(i, { mine: !c.mine })}>내 담당</Chip></div>
+                  {fus.map((fu) => {
+                    const late = fu.due && fu.due < today && !fu.done;
+                    const work = fuWorkText(fu);
+                    return (
+                      <div key={fu.id} className="bg-zinc-950 rounded-xl px-3 py-2 flex items-start gap-2">
+                        <input type="checkbox" aria-label="후속 완료" checked={fu.done === true} onChange={() => onToggleFollowUp(m.id, fu.id)} className="mt-1 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm break-words ${fu.done ? "line-through text-zinc-500" : "text-zinc-200"}`}>{fu.text}</p>
+                          <p className="text-xs font-mono text-zinc-500">
+                            <span className={fu.mine ? "text-cyan-300" : "text-zinc-500"}>{fu.mine ? "내 담당" : "타인"}</span>
+                            {" · "}<span className={late ? "text-rose-400" : ""}>{fu.due ? `기한 ${fu.due}` : "기한 없음"}</span>
+                            {work && <>{" · "}{work}</>}
+                          </p>
+                        </div>
+                        <div className="shrink-0"><Chip on={!!fu.mine} onClick={() => onSetFollowUpMine(m.id, fu.id, !fu.mine)}>내 담당</Chip></div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="flex items-baseline justify-between gap-2">
+                <SectionLabel>진행사항</SectionLabel>
+                <span className="text-xs font-mono text-zinc-500 shrink-0">{progress.length}건</span>
+              </div>
+              {progress.length === 0 ? (
+                <p className="text-sm text-zinc-500">진행사항이 없어요.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {progress.map((e) => (
+                    <div key={e.id} className="flex items-start gap-2 bg-zinc-950 rounded-xl px-3 py-2">
+                      <span className="font-mono text-xs text-zinc-500 shrink-0 leading-5">{e.date}</span>
+                      <p className="flex-1 min-w-0 whitespace-pre-wrap break-words text-sm text-zinc-200">{e.text}</p>
+                      <button aria-label="진행사항 삭제" onClick={() => removeEntry(e.id)} className="text-zinc-500 shrink-0 mt-0.5 active:opacity-70"><X size={14} /></button>
                     </div>
                   ))}
                 </div>
               )}
-              {split.some((c) => c.blocked) && (
-                <p className="text-xs text-zinc-400">후속 항목은 {MEETING_FOLLOWUPS_MAX}건까지예요 — {fuRoom}건만 추가할 수 있어요.</p>
-              )}
-              {splitErr && <p className="text-xs text-rose-400">{splitErr}</p>}
-              <div className="flex gap-1.5">
-                <button onClick={appendSplit} disabled={!ticked.length}
-                  className="flex-1 py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm disabled:opacity-30 active:translate-y-0.5">추가</button>
-                <button onClick={() => { setSplit(null); setSplitErr(""); }}
-                  className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">취소</button>
+              <div className="mt-2 space-y-2">
+                <MeetingText value={entry} onChange={setEntry} placeholder="진행사항 추가 — 이 회의 뒤에 이어간 업무를 적어요" rows={2} cap={MEETING_LIMITS.progress} />
+                {err && <p className="text-xs text-rose-400">{err}</p>}
+                <button onClick={addEntry} className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">추가</button>
               </div>
             </div>
-          )}
-          {fus.length === 0 ? (
-            <p className="text-sm text-zinc-500">후속 항목이 없어요.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {fus.map((fu) => {
-                const late = fu.due && fu.due < today && !fu.done;
-                const work = fuWorkText(fu);
-                return (
-                  <div key={fu.id} className="bg-zinc-950 rounded-xl px-3 py-2 flex items-start gap-2">
-                    <input type="checkbox" aria-label="후속 완료" checked={fu.done === true} onChange={() => onToggleFollowUp(m.id, fu.id)} className="mt-1 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm break-words ${fu.done ? "line-through text-zinc-500" : "text-zinc-200"}`}>{fu.text}</p>
-                      <p className="text-xs font-mono text-zinc-500">
-                        <span className={fu.mine ? "text-cyan-300" : "text-zinc-500"}>{fu.mine ? "내 담당" : "타인"}</span>
-                        {" · "}<span className={late ? "text-rose-400" : ""}>{fu.due ? `기한 ${fu.due}` : "기한 없음"}</span>
-                        {work && <>{" · "}{work}</>}
-                      </p>
-                    </div>
-                    <div className="shrink-0"><Chip on={!!fu.mine} onClick={() => onSetFollowUpMine(m.id, fu.id, !fu.mine)}>내 담당</Chip></div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div>
-          <div className="flex items-baseline justify-between gap-2">
-            <SectionLabel>진행사항</SectionLabel>
-            <span className="text-xs font-mono text-zinc-500 shrink-0">{progress.length}건</span>
-          </div>
-          {progress.length === 0 ? (
-            <p className="text-sm text-zinc-500">진행사항이 없어요.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {progress.map((e) => (
-                <div key={e.id} className="flex items-start gap-2 bg-zinc-950 rounded-xl px-3 py-2">
-                  <span className="font-mono text-xs text-zinc-500 shrink-0 leading-5">{e.date}</span>
-                  <p className="flex-1 min-w-0 whitespace-pre-wrap break-words text-sm text-zinc-200">{e.text}</p>
-                  <button aria-label="진행사항 삭제" onClick={() => removeEntry(e.id)} className="text-zinc-500 shrink-0 mt-0.5 active:opacity-70"><X size={14} /></button>
+            <div>
+              <SectionLabel>연결된 할 일</SectionLabel>
+              {linked.length === 0 && missing === 0 ? (
+                <p className="text-sm text-zinc-500">연결된 할 일이 없어요.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {linked.map((q) => (
+                    <TodoRow key={q.id} lead={linkedTaskLead(q, today)} title={q.title} done={taskClosedOn(q, today)}
+                      onOpen={() => onOpenTask(q.id)} />
+                  ))}
                 </div>
-              ))}
+              )}
+              {missing > 0 && <p className="text-xs text-zinc-500 mt-1.5">삭제된 할 일 {missing}건</p>}
             </div>
-          )}
-          <div className="mt-2 space-y-2">
-            <MeetingText value={entry} onChange={setEntry} placeholder="진행사항 추가 — 이 회의 뒤에 이어간 업무를 적어요" rows={2} cap={MEETING_LIMITS.progress} />
-            {err && <p className="text-xs text-rose-400">{err}</p>}
-            <button onClick={addEntry} className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">추가</button>
-          </div>
-        </div>
-        <div>
-          <SectionLabel>연결된 할 일</SectionLabel>
-          {linked.length === 0 && missing === 0 ? (
-            <p className="text-sm text-zinc-500">연결된 할 일이 없어요.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {linked.map((q) => (
-                <TodoRow key={q.id} lead={linkedTaskLead(q, today)} title={q.title} done={taskClosedOn(q, today)}
-                  onOpen={() => onOpenTask(q.id)} />
-              ))}
-            </div>
-          )}
-          {missing > 0 && <p className="text-xs text-zinc-500 mt-1.5">삭제된 할 일 {missing}건</p>}
-        </div>
+          </>
+        )}
         <button onClick={() => onEdit(m.id)}
           className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">수정</button>
       </div>
@@ -10471,17 +10500,22 @@ function MeetingPrepCard({ state, today, onOpenMeeting, onOpenDocument, onAddChe
               {last && (
                 <>
                   <span className={line}>{`${meetingLabels(last).packetDecisions}: ${oneLineText(last.decisions, PREP_DECISION_CLIP) || "없음"}`}</span>
-                  <span className={head}>후속 <span className="font-mono">{row.followUps.length}</span>건</span>
-                  {row.followUps.slice(0, PREP_FOLLOWUPS).map((f) => (
-                    <span key={f.id} className={line}>
-                      {`${f.mine ? "내 담당" : "타인"} · ${f.text} · 기한 ${f.due || "없음"} · 업무 ${workState(f)}`}</span>
-                  ))}
-                  {hidden > 0 && <span className="block text-xs font-mono text-zinc-500">{hidden}건 더</span>}
-                  <span className={head}>진행</span>
-                  {row.progress.length === 0 ? <span className="block text-xs text-zinc-500">진행사항 없음</span>
-                    : row.progress.map((e) => (
-                      <span key={e.id} className={line}><span className="font-mono">{e.date}</span> {oneLineText(e.text, 100)}</span>
-                    ))}
+                  {/* A training record standing in is reference only: no follow-up or progress block (its rows are empty) */}
+                  {!isTraining(last) && (
+                    <>
+                      <span className={head}>후속 <span className="font-mono">{row.followUps.length}</span>건</span>
+                      {row.followUps.slice(0, PREP_FOLLOWUPS).map((f) => (
+                        <span key={f.id} className={line}>
+                          {`${f.mine ? "내 담당" : "타인"} · ${f.text} · 기한 ${f.due || "없음"} · 업무 ${workState(f)}`}</span>
+                      ))}
+                      {hidden > 0 && <span className="block text-xs font-mono text-zinc-500">{hidden}건 더</span>}
+                      <span className={head}>진행</span>
+                      {row.progress.length === 0 ? <span className="block text-xs text-zinc-500">진행사항 없음</span>
+                        : row.progress.map((e) => (
+                          <span key={e.id} className={line}><span className="font-mono">{e.date}</span> {oneLineText(e.text, 100)}</span>
+                        ))}
+                    </>
+                  )}
                   {row.tasks.length > 0 && (
                     <>
                       <span className={head}>할 일</span>
@@ -11797,7 +11831,9 @@ export default function LifeManager() {
     const cur = state.work || [];
     // v28: a memo moved into a project stops carrying its own track; a project meeting never stores one.
     if (rec.projectId != null) delete rec.track;
-    const { work, meeting } = reconcileFollowUps(cur, rec, prev, today, meetingTrack(state, rec));
+    // A training record is reference only (2026-09-22): no reconcile runs, so no work item is created, changed or removed
+    // and its stored follow-ups (with their `workId`s) are written back exactly as given.
+    const { work, meeting } = isTraining(rec) ? { work: cur, meeting: rec } : reconcileFollowUps(cur, rec, prev, today, meetingTrack(state, rec));
     const created = work.filter((w) => !cur.some((x) => x.id === w.id));
     const removed = cur.filter((x) => !work.some((w) => w.id === x.id)).length;
     const refused = recordFits([meeting, ...created], prev ? JSON.stringify(prev).length : 0, "회의록을");
