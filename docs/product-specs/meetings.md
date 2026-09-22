@@ -23,8 +23,11 @@ A record of what was said, never a task and never an appointment:
 ```
 meetingProjects: [{ id, name, note?, track("work"|"biz"|"personal"), createdAt }]
 meetings: [{ id, projectId(string | null), date("YYYY-MM-DD"), title, attendees?, summary, decisions?, actions?, transcript?, eventId?, createdAt, taskIds[],
-             progress[], aiHidden, followUps[{ id, text, mine, due?, done, workId? }], track?("work"|"biz"|"personal") }]
+             progress[], aiHidden, followUps[{ id, text, mine, due?, done, workId? }], track?("work"|"biz"|"personal"), kind?("meeting"|"training") }]
 ```
+`kind?` (2026-09-22, still v28, no migration) is written **only** for a training record — see
+[Training records (`교육`)](#training-records-교육-2026-09-22) below; absent reads as `"meeting"`, so an existing
+save's meeting-kind records are unchanged.
 `track` on a project (schema v28) is a stored field with `TrackRow` chips in `ProjectModal`, default `work`,
 backfilled `work` on every existing project. `track?` on a meeting is written **only for a memo**
 (`projectId == null`) — a project meeting inherits its project's track (`meetingTrack`, below) and never stores
@@ -123,6 +126,62 @@ no per-record "send to AI anyway" override ([TD-73](../exec-plans/tech-debt-trac
 - **Order.** Every surface that lists mixed-track records — the reader, the briefing, the work tab — orders
   `직장` first, then `사업`, then `개인`: the day job's items must not slip, so they lead; see
   [daily-work.md](daily-work.md), [daily-reader.md](daily-reader.md), [daily-briefing.md](daily-briefing.md).
+
+## Training records (`교육`, 2026-09-22)
+
+A meeting record may be a **training record** — the same fields, the same progress log, follow-ups, transcript,
+task links and `AI에 보내지 않기` flag, only the field labels and a couple of list-line prefixes differ. There is
+no second data shape: `kind?: "meeting" | "training"` is the only new key, written only when `"training"`, so a
+meeting-kind record's save is byte-identical to before this change.
+
+```js
+const MEETING_KIND = { meeting: "회의", training: "교육" };
+const MEETING_KIND_OPTIONS = [["meeting", "회의"], ["training", "교육"]];
+const isTraining = (m) => m?.kind === "training";
+const MEETING_FIELD_LABEL = {
+  meeting:  { attendees: "참석자",   summary: "회의 요약", decisions: "결정 사항", actions: "후속 조치",
+              packetSummary: "요약", packetDecisions: "결정", packetActions: "후속" },
+  training: { attendees: "강사·주최", summary: "배운 것",   decisions: "핵심 정리", actions: "적용할 것",
+              packetSummary: "배운 것", packetDecisions: "핵심 정리", packetActions: "적용할 것" },
+};
+const meetingLabels = (m) => MEETING_FIELD_LABEL[isTraining(m) ? "training" : "meeting"];
+const kindPrefix = (m) => (isTraining(m) ? "교육 · " : "");
+```
+
+- **The form (`MeetingModal`)**: a `종류` `BizChips` row (`MEETING_KIND_OPTIONS`) at the top, above the project
+  picker; `MEETING_FORM_TEXT[kind]` relabels the title placeholder (`교육 이름 — 예: 데이터 품질 지표 교육`),
+  the attendees placeholder (`강사·주최 (선택) — 예: ○○협회`), the summary placeholder (`배운 것 — 핵심 내용을
+  요점으로 적어요`), and the refusal messages (`교육 이름을 입력해 주세요.`, `배운 것을 입력해 주세요.`, and the
+  `{field}은/는 …자까지예요` names — `교육 이름은`/`강사·주최는`/`배운 것은`/`핵심 정리는`/`적용할 것은`). On
+  save, the record writes `kind` only when `"training"` — a meeting-kind save carries no `kind` key at all.
+  Everything else in the form (the follow-up editor, `확인할 것 가져오기`, the transcript block, task links,
+  `AI에 보내지 않기`, the project picker's `없음 (긴급 메모)` chip, the memo `TrackRow`) is unchanged.
+- **The view (`MeetingViewModal`)**: the title is prefixed `교육 · ` for a training record; the `참석자` fact
+  reads `강사·주최`; the `요약`/`결정 사항`/`후속 조치` blocks read `배운 것`/`핵심 정리`/`적용할 것`; the
+  follow-up split panel's heading becomes `적용할 것에서 항목 나누기` for a training record. Follow-up items,
+  progress, the transcript block, `AI 전송` and every other row are unchanged.
+- **The list row (`MeetingsTab`)**: `meetingRowMarker(m, lead)` prefixes `교육` as the first part (before `lead`
+  and `진행 {n}건`) for a training record — a marker addition, not a different lead chip; the row's lead chip is
+  still the date, on every row.
+- **`meetingPacketLines`** (the work and prep packets): the head line becomes `- {date} [{project}] 교육 ·
+  {title}` (a hidden training record: `- {date} 교육 · {title}` then `내용 비공개 (AI에 보내지 않기)`) — the
+  kind sits **after** the project bracket, so the existing `- {date} [{project}] ` prefix every packet assertion
+  matches is unchanged. The body labels follow the kind (`meetingLabels(m).packetSummary`/`packetDecisions`):
+  `배운 것:` / `핵심 정리:` in place of `요약:` / `결정:`. `workLinkLabel` (a work item's `연결` fact) reads
+  `회의록 · {date} 교육 · {title}` for a linked training record. The daily reader's `최근 7일 결정 사항` row
+  reads `교육 · {date} {title}` with the same `핵심 정리`/`decisions` text as its sub-line — a fact is a fact,
+  and the row's own title text is otherwise unchanged.
+- **`lastMeetingOf(meetings, projectId)`** (beside `meetingOrder`): the newest **meeting-kind** record by
+  `meetingOrder`, or, only when the project has no meeting-kind record at all, the newest record of any kind. A
+  training record is **never** a project's `마지막 회의` while a meeting-kind record exists — for the
+  meeting-prep card (`MeetingPrepCard`), `meetingPrepOf`, the work packet's implicit "last" (there isn't one —
+  the work packet lists every recent meeting, training included, in date order) and the [issue list](issue-list.md)'s
+  `프로젝트별 최신 회의록` section. Everywhere a **list** of a project's meetings is printed — the work packet's
+  `최근 회의록`, the prep packet, the meetings tab, the reader's `since` section, since-mode's `older` section —
+  training records are included in date order alongside meeting-kind records; only the single "last meeting"
+  fact treats them differently.
+- **`recordFits`, `commitMeeting`, `reconcileFollowUps`, `followUpWorkItem`** and every root handler are
+  unchanged — a training record is a meeting record, budgeted, reconciled and stored exactly the same way.
 
 ## Caps and the storage arithmetic
 `MEETING_LIMITS = { title: 40, attendees: 80, summary: 10000, decisions: 1000, actions: 1000, tasks: 10, progress: 300, followUp: 200, transcript: 30000 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17, and to 10000 / 1000 / 1000 on 2026-09-18; `progress` is new at schema v25, `followUp` at schema v26, `transcript` (2026-09-17, optional field, no migration) is `녹취록은` — placed last among the field caps, so the refusal order is title, attendees, summary, decisions, actions, then transcript, before the follow-up-row cap),
@@ -519,6 +578,13 @@ move to `프로젝트 3개 · 회의록 5건 · 문서 2건`, and the `미팅` s
 see [demo-data.md](../design-docs/demo-data.md) for the day-job additions' effect on every other tab's demo
 figures.
 
+**A training record (2026-09-22).** `mpJob` also carries one `kind: "training"` record, `데이터 품질 지표
+교육` (`attendees: "강사: 데모기관 품질팀"`, dated 4 days back — older than `주간 품질 점검`'s 2 days back, so
+the meeting-kind record stays `mpJob`'s `lastMeetingOf`), moving the demo counts to `프로젝트 3개 · 회의록 6건 ·
+문서 2건`. Its row marker leads with `교육`, its work-packet head line reads `- {date} [데이터 프로파일링 —
+데모기관] 교육 · 데이터 품질 지표 교육` with a `배운 것:` body line, and it is the one row the demo's
+[`이슈 목록`](../product-specs/issue-list.md) `교육` section lists.
+
 ## Meeting-prep rows (`meetingPrepOf`, schema v26)
 
 `meetingPrepOf(state, today)` (pure, derived at render — [Rule 9](../design-docs/core-beliefs.md#rule-9)) feeds
@@ -593,4 +659,11 @@ prep packet, a pasted prep reply, and `확인할 것 가져오기`. **Tracks (v2
 `flow10.js` adds a step registering a project with the `사업` chip (`track: "biz"`, the section head's tag), a
 meeting on it storing no `track` key, and a memo whose track chips render only while `없음 (긴급 메모)` is
 chosen — picking `개인` and registering stores `track: "personal"`, and moving the memo into the project drops
-the key. See [tools/e2e/README.md](../../tools/e2e/README.md).
+the key.
+
+**Training records (2026-09-22, written, not run):** one `flow11.js` step covers the form's `교육` chip
+switching every placeholder and refusal, a saved training record carrying `kind: "training"` while a
+meeting-kind record saved the same way carries no `kind` key, the list row's `교육`-led marker, the view's
+`교육 · {title}` title with the relabelled facts and blocks, the work packet's `교육 · ` head line and `배운
+것:` body label, and the meeting-prep card naming the project's older meeting-kind record, not the newer
+training record, as `마지막 회의`. See [tools/e2e/README.md](../../tools/e2e/README.md).

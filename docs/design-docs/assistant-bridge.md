@@ -150,7 +150,7 @@ By the user's own decision, reversing the 2026-09-16 default that the packet nev
 | `## 열린 할 일` | open task rows from `todoOf(state, today)`, in its own group order: `- {group label} · {title} · {goal title \| 목표 없음} · 기한 {due \| 없음}` | `WORK_PACKET_TASKS` (10) |
 | `## 다가오는 일정 ({PACKET_EVENT_DAYS}일)` | the same event-line shape as the daily packet | `WORK_PACKET_EVENTS` (8) |
 | `## 사업 (계약·매출)` | `bizPacketLines(state, today)` | `PACKET_BIZ_LINES` (6) |
-| `## 최근 회의록 ({n}건)` | newest meetings by `meetingOrder`. Visible: `- {date} [{project name \| 프로젝트 없음}] {title}` — a project-less urgent memo (2026-09-17, `projectId: null`) prints `[프로젝트 없음]` through the same fallback, unchanged — then what the meeting view states besides the minutes — `  참석: {attendees}` (when recorded), `  일정: {meetingEventText}` (when an event is linked) and `  연결된 할 일: {title} ({매일 · 오늘 }완료\|미완료) · …` for every linked task that still exists (all three added 2026-09-17; until then the packet left them out) — then `  요약:` / `  결정:` lines (each present only when the field is non-empty, newline-joined with `" / "`; a clipped text ends in `…`), then, when the meeting has follow-up items (schema v26), `  후속 {n}건:` followed by one `  - {내 담당\|타인} · {기한 YYYY-MM-DD\|기한 없음} · {완료\|미완료} · {text}` line per item (open first, then done, so a trim drops the done ones first) — the raw `  후속: {actions}` line appears **only** when the meeting has free text but no items, so nothing is stated twice — then `  진행 {date}: {text}` for the newest progress entries. Hidden (`aiHidden`): `- {date} {title}` then `  내용 비공개 (AI에 보내지 않기)` and nothing else — no project name either | `WORK_PACKET_MEETINGS` (10 meetings; 6 until 2026-09-17) × `WORK_PACKET_PROGRESS` (5 entries) × `WORK_PACKET_FOLLOWUPS` (30 follow-up items); summary up to `WORK_PACKET_SUMMARY` (5,000 — the whole field), decisions/follow-ups/progress text up to `WORK_PACKET_CLIP` (600) / `MEETING_LIMITS.followUp` (200) — the whole field. Until 2026-09-17 these were 200 and 100 with 3 entries, which cut every meeting's content |
+| `## 최근 회의록 ({n}건)` | newest meetings by `meetingOrder`. Visible: `- {date} [{project name \| 프로젝트 없음}] {title}` — a project-less urgent memo (2026-09-17, `projectId: null`) prints `[프로젝트 없음]` through the same fallback, unchanged; a [training record](../product-specs/meetings.md#training-records-교육-2026-09-22) (2026-09-22) inserts `교육 · ` after the project bracket and reads `배운 것:`/`핵심 정리:` in place of `요약:`/`결정:` — then what the meeting view states besides the minutes — `  참석: {attendees}` (when recorded), `  일정: {meetingEventText}` (when an event is linked) and `  연결된 할 일: {title} ({매일 · 오늘 }완료\|미완료) · …` for every linked task that still exists (all three added 2026-09-17; until then the packet left them out) — then `  요약:` / `  결정:` lines (each present only when the field is non-empty, newline-joined with `" / "`; a clipped text ends in `…`), then, when the meeting has follow-up items (schema v26), `  후속 {n}건:` followed by one `  - {내 담당\|타인} · {기한 YYYY-MM-DD\|기한 없음} · {완료\|미완료} · {text}` line per item (open first, then done, so a trim drops the done ones first) — the raw `  후속: {actions}` line appears **only** when the meeting has free text but no items, so nothing is stated twice — then `  진행 {date}: {text}` for the newest progress entries. Hidden (`aiHidden`): `- {date} {title}` then `  내용 비공개 (AI에 보내지 않기)` and nothing else — no project name either | `WORK_PACKET_MEETINGS` (10 meetings; 6 until 2026-09-17) × `WORK_PACKET_PROGRESS` (5 entries) × `WORK_PACKET_FOLLOWUPS` (30 follow-up items); summary up to `WORK_PACKET_SUMMARY` (5,000 — the whole field), decisions/follow-ups/progress text up to `WORK_PACKET_CLIP` (600) / `MEETING_LIMITS.followUp` (200) — the whole field. Until 2026-09-17 these were 200 and 100 with 3 entries, which cut every meeting's content |
 | `## 업무 기록 (이월·어제·오늘)` | every undone item carried into today (`workOn(state, today, today)`) plus yesterday's items, deduped by id, date then `createdAt` ascending: `- {date} {완료\|미완료}{ · 이월 {n}일}{title}{ · 메모: note}{ · 처리: result}` (the `이월` fragment only on an undone carried item; `처리` only on a done item with a result, up to `WORK_PACKET_RESULT` = 300 chars, added 2026-09-17; note up to `WORK_PACKET_NOTE`, 200 — the whole field; 60 until 2026-09-17; heading widened from `어제·오늘` at schema v26) | `WORK_PACKET_RECORDS` (20) |
 
 `WORK_PACKET_HEAD` states the role, five numbered rules (facts only, `해요체`; never judge or change a score/grade/payout/difficulty; propose only today's work items, with no count limit (`건수 제한 없이`; `최대 8건` until 2026-09-17), title ≤ 60 / note ≤ 200, never create a task/event/contract/meeting, never re-propose a title already in `업무 기록` — a carried item is in that section too, so rule 3 already covers it, and `parseWorkReply`'s own dedupe (below) reads the same `workOn` call and refuses it a second time; name the goal/meeting/project a proposal is based on in `link.title`, verbatim, or omit `link`; and, since 2026-09-22, one added sentence: `각 항목의 track에 직장·사업·개인 중 하나를 적어요 — 근거가 된 기록의 트랙을 따라요.` (state the item's track, following the track of whatever record grounds it); close with a ≤ 5-line analysis then one JSON block, `"work": []` when there is nothing to propose) and the reply template
@@ -194,6 +194,57 @@ baseline of the demo work packet). The prep packet (below) calls it with `openOn
 **open** (`!done`) follow-ups under the `후속 {n}건:` head, so the head's own count states how many are open
 rather than the total — the transcript stays unread either way (the comment marking that omission moved with the
 function).
+
+## Since-mode — the incremental work packet (2026-09-22)
+
+Every `오늘 업무 만들기` packet used to restate the ten newest meetings whole, so a user who refreshes daily
+pasted the same minutes every day. `act.workRefreshedAt?` (an optional date, a **user-action stamp** like
+`act.briefingSeen`, never read as progress — [Rule 9](core-beliefs.md#rule-9)) is written by `importWork` only
+when called from the work bridge (`stamp: true`) with at least one proposal ticked; the review bridge never
+stamps, since its proposals are next week's business items, not a refresh of today
+([daily-work.md](../product-specs/daily-work.md)).
+
+With a stamp, `WorkBridgeModal`'s `workBridge` render (never the review bridge) shows two chips above the packet
+textarea, `지난 갱신 이후` (preselected) and `전체`; picking one calls `buildWorkPacket(state, today, { since })`
+with or without `since = act.workRefreshedAt`. **Without `since`, output is byte-identical to before this
+change** — verified against 54 packet builds (the demo, the demo with `settings.workInAi: false`, and a heavy
+save, each with and without a planted stamp, across every one of the five bridge packets).
+
+`workSinceOf(state, since)` (pure, module level, directly above `buildWorkPacket`) splits the packet-track
+meetings:
+- `recent` — dated **or created** on or after `since` (`>=`, so a meeting written on the stamp day after the
+  refresh is not lost), uncapped, `meetingOrder`; the builder caps the printed list at `WORK_PACKET_MEETINGS`
+  (10) as usual.
+- `older` — every other non-hidden meeting with at least one progress entry dated on or after `since`, or at
+  least one open `mine` follow-up (follow-ups carry no date, so every open one qualifies), each carrying its
+  qualifying `progress` (newest first) and `followUps`.
+- `docs` — documents `addedAt >= since` on a packet track.
+- `counts` — `{ meetings: recent.length, progress, docs: docs.length }`; `progress` counts every qualifying
+  progress entry across non-hidden meetings, recent and older together.
+
+Since-mode changes the packet in four places, none of them touching goals, open tasks, schedule, contracts or
+the `업무 기록` records section (current state, not history, and unchanged in since-mode):
+1. A line right after the packet's opening bracket, before the head: `마지막 갱신 {since} · 그 뒤 회의록 {n}건 ·
+   진행사항 {n}건 · 문서 {n}건`.
+2. `workPacketHead(since)` — the head is `WORK_PACKET_HEAD` unchanged when `since` is falsy, else a copy whose
+   rule 3 line gains one trailing sentence: ` '지난 갱신 이후' 기록을 우선 반영해요.`
+3. `## 최근 회의록`'s title becomes `({n}건 · {since} 이후)` and its list holds only `recent`.
+4. Two sections follow it: `## 이전 회의록의 새 기록` (per older meeting, in meeting order, its qualifying
+   progress lines `- {title} · 진행 {date}: {clipped text}`, flattened across meetings and sorted newest first,
+   capped `WORK_PACKET_OLDER_PROGRESS` (30) overall, then its open `mine` follow-up lines `- {title} · 후속 내
+   담당 미완료: {clipped text}`, capped `WORK_PACKET_OLDER_FOLLOWUPS` (20) overall) and `## 문서 ({since} 이후)`
+   (per document, `- {addedAt} [{project name | 프로젝트 없음}] {title}` then `  요약: {clipped summary}` —
+   never `source` — capped `WORK_PACKET_DOCS` (10), clip `WORK_PACKET_DOC_CLIP` (300)).
+
+**Trim order** gains two steps before the last, inserted after the work-records step: drop `## 문서` entirely (a
+dropped section keeps its heading with `- 없음`, so the AI still knows the section exists), then drop `##
+이전 회의록의 새 기록` entirely — documents before the older-meeting section, since a progress entry is closer to
+an action than a document summary. `WORK_PACKET_MAX` (20,000) is unchanged; measured on a heavy save (30
+meetings × 30 follow-ups, 3,000-char summaries, 100 post-stamp progress entries, 20 post-stamp documents):
+19,195 chars with the stamp three days back (reductions fired: summary clip 10,000 → 1,500, then meetings 7 →
+2 — the older section's 30 progress + 20 follow-up lines and the 10 documents survive intact), 19,224 ten days
+back, 15,766 thirty-one days back (summary clip, then meetings 35 → 10 → 4). The demo with a stamp three days
+back measures 3,363 chars (the full packet: 2,997).
 
 ## The third packet — `AI에게 회의 준비 묻기` (`buildPrepPacket` / `parsePrepReply`, 2026-09-17, the [Rule 7](core-beliefs.md#rule-7) amendment "second of the day")
 

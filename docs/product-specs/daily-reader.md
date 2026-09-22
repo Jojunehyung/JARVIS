@@ -56,7 +56,7 @@ empty section holds the one item `{ text: "없음" }`; `more` is the count of it
 | `prep` | `오늘·내일 회의 준비` | one block per `meetingPrepOf` row: `{오늘\|내일} {time \| 시간 미정} · {event title} · {project name}`, then `확인할 것 {open}/{total}` and one `- {text}` per open check, `결정: {clipped decisions \| 없음}` or `이전 회의록 없음`, one `후속 · {내 담당\|타인} · {text} · 기한 {due \| 없음}` per open follow-up, and `문서: {titles joined " · "}{ · {k}건 더}` or `문서 없음` | `{ type: "work" }` |
 | `work` | `오늘 업무` | every open item from `workOn(state, today, today)` (`{title}{ · 이월 {n}일}`, a `메모:` sub-line when noted), then every item done **yesterday** (`어제 완료 · {title}`, a `처리:` sub-line when it has a result) | `{ type: "work" }` |
 | `followups` | `기한 지남 후속 · 내 담당 미완료 후속` | across every meeting: overdue undone follow-ups first (`{meeting title} · {text} · 기한 {due} ({D-day})`), then the user's own undated/future open follow-ups not already listed (`{meeting title} · {text} · 기한 {due \| 없음}`) | `{ type: "meetings" }` |
-| `decisions` | `최근 7일 결정 사항` | meetings dated within `READER_DECISION_DAYS` with a non-empty `decisions` field, newest first (`{date} {title}`, the decisions text clipped as a sub-line) | `{ type: "meetings" }` |
+| `decisions` | `최근 7일 결정 사항` | meetings dated within `READER_DECISION_DAYS` with a non-empty `decisions` field, newest first (`{kindPrefix}{date} {title}`, the decisions text clipped as a sub-line — a training record's row is prefixed `교육 · ` and its sub-line is its `핵심 정리` text, since a fact is a fact regardless of the record's kind) | `{ type: "meetings" }` |
 | `since` | `{since} 이후 새로 들어온 것` | meetings created since `since` (`회의록 · {date} {title} · {project \| 프로젝트 없음}`), then documents added since `since` (`문서 · {title} · {project \| 프로젝트 없음}`), then progress entries dated since `since` (`진행 · {meeting title} · {clipped text}`) | `{ type: "meetings" }` |
 | `biz` | `계약·입금 미확인` | `buildBriefing(state, today)`'s own `biz` section items, restated verbatim (including its closing totals line, which is never `없음`) so the two screens cannot disagree | `{ type: "biz" }` |
 | `goals` | `뒤처진 목표 페이스` | the briefing's `goals` items filtered to `severity === 3` (a goal behind pace or past its deadline); `없음` otherwise | `{ type: "goals" }` |
@@ -117,8 +117,9 @@ the briefing use the same order, so no screen ever reorders the user's day diffe
 the section title (`SectionLabel tone="text-zinc-400"`) and a button `›` (`aria-label="{title} 열기"`) →
 `onAction(section.action)`; then each item's `text` (`text-zinc-500` when it reads `없음`, `text-zinc-300`
 otherwise) and its `sub` lines indented; `{more}건 더` (mono) when `more > 0`. Footer: a full-width border button
-`브리핑 ›` → `onAction({ type: "briefing" })`, then a cyan `닫기` → `onClose`. No checkbox, no toggle, no input
-anywhere in this modal — by the user's own decision.
+`이슈 목록 ›` (2026-09-22) → `onAction({ type: "issues" })` directly above `브리핑 ›` → `onAction({ type:
+"briefing" })`, then a cyan `닫기` → `onClose`. No checkbox, no toggle, no input anywhere in this modal — by the
+user's own decision.
 
 ## When it opens
 
@@ -129,6 +130,11 @@ anywhere in this modal — by the user's own decision.
   prop, root wires `() => setModal({ type: "reader" })`).
 - From the **briefing's own footer**, a button `오늘 읽을 것 ›` above `AI에게 보내기` (`onAction({ type:
   "reader" })`) — so the two screens are reachable from each other.
+- From **`?open=reader`** in the page's URL (2026-09-22) — the same boot param the
+  [`확인 필요 notification`](notifications.md) uses for `?open=issues`; `OPEN_PARAM_TYPES = ["issues", "reader"]` opens the
+  named screen at boot regardless of `act.briefingSeen`, then strips the query with `history.replaceState`, so a
+  reload does not reopen it. A worker `postMessage({ open: "reader" })` (a tap on a cached pre-2026-09-22
+  notification) opens it the same way through a `navigator.serviceWorker` `message` listener.
 
 ## Relation to the briefing
 

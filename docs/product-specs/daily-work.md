@@ -248,7 +248,7 @@ Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `ar
 | `toggleWork(id, next?)` | flips `done`; writes whatever the sheet sends (`title`/`note`/`result`/`minutes`/`track`/`link`) in the same update, so a result or minutes typed before completing is kept; when the item mirrors a follow-up, sets that follow-up's `done` to match; runs `syncTimeLog` (v28) in the same update — no streak, no trophy, no KR | `완료로 표시했어요` / `완료를 취소했어요` |
 | `removeWork(id)` | confirmed by name, then calls the shared `dropWork(new Set([id]))`, which filters `work` and (v28) removes the matching `timeLog` entry; a mirrored item's follow-up loses its `workId` (`mine`/`done` kept) | `업무를 삭제했어요` |
 | `removeWorkMany(ids)` | one confirmation `업무 {n}건을 삭제해요. 계속할까요?`, then `dropWork(ids)` the same way for every id; answers `true` when it deleted, so the tab leaves select mode | `업무 {n}건을 삭제했어요` |
-| `importWork(list, date = today)` (from the AI bridge, below) | registers every ticked proposal as `source: "ai"`, `done: false` records dated `date`, each taking the `track` picked on its confirm row (2026-09-22 — `trackOf(p, "biz")`; the sheet always sends one, so the fallback is defensive only); the raw reply is never stored | `AI 제안 업무 {n}건 등록`, plus ` · {date}` when `date` is not today |
+| `importWork(list, date = today, { stamp = false } = {})` (from the AI bridge, below) | registers every ticked proposal as `source: "ai"`, `done: false` records dated `date`, each taking the `track` picked on its confirm row (2026-09-22 — `trackOf(p, "biz")`; the sheet always sends one, so the fallback is defensive only); when `stamp && made.length` (2026-09-22, a second `setState` after the work write) also sets `act.workRefreshedAt = today` — the work bridge's `onImport` passes `stamp: true`, the review bridge's does not (its proposals are next week's, not a refresh of today); the raw reply is never stored | `AI 제안 업무 {n}건 등록`, plus ` · {date}` when `date` is not today |
 
 `moveWorkToToday` and its `onMove` wiring are gone (carry-forward is derived, above).
 
@@ -301,6 +301,57 @@ before the user ticks and confirms; the raw reply is not stored anywhere
 (`- {date} [프로젝트 없음] {title}` — `buildWorkPacket`'s existing `?.name || "프로젝트 없음"` fallback needed no
 change), stated with its summary, decisions, follow-ups and progress exactly like a project's meeting; its
 `transcript` is never read by `meetingLines` — the packet states named fields only ([SECURITY.md](../SECURITY.md)).
+
+## The incremental packet — `act.workRefreshedAt` and since-mode (2026-09-22)
+
+Every `오늘 업무 만들기` packet used to restate the ten newest meetings whole, so a user who refreshes daily
+pasted the same minutes every day. `act.workRefreshedAt?` — an optional `YYYY-MM-DD` string, absent in
+`freshState`/`demoState`, no migration, schema stays v28 — is a **user-action stamp**, like `act.briefingSeen`:
+it names the day the work bridge last registered at least one AI proposal, and it is never read as progress
+([Rule 9](../design-docs/core-beliefs.md#rule-9)). It is written only by `importWork` when called from the work
+bridge with `stamp: true` and at least one proposal ticked (above) — a refused import, an empty tick list, or a
+registration from the review bridge writes no stamp.
+
+**The send pane.** With `act.workRefreshedAt` set, `WorkBridgeModal` (the `workBridge` render only — the review
+bridge never shows this) offers two chips above the packet textarea, `지난 갱신 이후` (preselected) and `전체`.
+`지난 갱신 이후` calls `buildWorkPacket(state, today, { since: act.workRefreshedAt })`; `전체` calls it with no
+`since`, giving the byte-identical full packet. The caption gains one sentence naming the mode: ` 지난 갱신
+{since} 이후의 회의록·진행사항·문서만 실려요.` / ` 전체 회의록이 실려요 · 마지막 갱신 {since}.` Without a stamp
+(or from the review bridge) nothing renders and the caption is unchanged.
+
+**`buildWorkPacket(state, today, { since } = {})`.** Without `since`, output is byte-identical to before this
+change. With it, `workSinceOf(state, since)` (pure, module level) splits the packet-track meetings into:
+- `recent` — meetings dated **or created** on or after `since` (`>=`, so a meeting written on the stamp day after
+  the refresh is not lost), uncapped, `meetingOrder`; the builder still caps the printed list at
+  `WORK_PACKET_MEETINGS` (10).
+- `older` — every other non-hidden meeting that has at least one progress entry dated on or after `since`, or at
+  least one open `mine` follow-up (follow-ups carry no date, so every open one qualifies).
+- `docs` — documents `addedAt >= since`.
+- `counts` — `{ meetings: recent.length, progress, docs: docs.length }`, `progress` counting every qualifying
+  progress entry of a non-hidden meeting (recent and older together).
+
+The since-mode packet then differs from the full one in four places: a line right after the title,
+`마지막 갱신 {since} · 그 뒤 회의록 {n}건 · 진행사항 {n}건 · 문서 {n}건`; head rule 3 gains one sentence
+(`workPacketHead(since)`: `'지난 갱신 이후' 기록을 우선 반영해요.`); `최근 회의록`'s title states
+`({n}건 · {since} 이후)` and lists only `recent`; and two sections follow it — `이전 회의록의 새 기록` (an
+older meeting's qualifying progress lines, newest first across meetings, capped `WORK_PACKET_OLDER_PROGRESS`
+(30), then its open `mine` follow-up lines, capped `WORK_PACKET_OLDER_FOLLOWUPS` (20)) and `문서 ({since} 이후)`
+(each document's `{addedAt} [{project | 프로젝트 없음}] {title}` line plus a `요약:` line clipped at
+`WORK_PACKET_DOC_CLIP` (300) — never `source`, capped `WORK_PACKET_DOCS` (10)). Goals, open tasks, schedule,
+contracts and the `업무 기록` records section are current state, not history, and are unchanged in since-mode.
+
+**Trim order** gains two steps before the last, inserted after the work-records step: drop `## 문서` entirely,
+then drop `## 이전 회의록의 새 기록` entirely (a dropped section keeps its `## ` heading with `- 없음`, so the AI
+still knows the section exists) — documents go before the older-meeting section because a progress entry is
+closer to an action than a document summary. `WORK_PACKET_MAX` (20,000) is unchanged.
+
+Without a stamp, `buildWorkPacket`'s output for the demo save, the demo with `settings.workInAi: false`, and a
+heavy save is byte-identical to before this change (54 of 54 compared). Measured with a stamp: the demo three
+days back gives 3,363 chars (full 2,997); a heavy save (30 meetings × 30 follow-ups, 3,000-char summaries, 100
+post-stamp progress entries, 20 post-stamp documents) trims to 19,195 chars with the stamp three days back
+(summary clip, then meetings 7 → 2), 19,224 ten days back, 15,766 thirty-one days back. See
+[assistant-bridge.md](../design-docs/assistant-bridge.md#since-mode-the-incremental-work-packet-2026-09-22) for
+the exact section headings and the full trim order.
 
 ## Backup and migration (schema v26)
 
@@ -384,6 +435,16 @@ registers and asserts the stored items carry `personal`, `work`, `biz`. With `se
 an unlinked proposal's row preselects `사업` instead. The review bridge's own confirm row (asserted in
 `flow5.js`, where that bridge's step already lives) preselects `사업`. See
 [tools/e2e/README.md](../../tools/e2e/README.md) for the running step count.
+
+**The incremental packet (2026-09-22, written under the same standing instruction):** three more `flow11.js`
+steps — registering a proposal from the work bridge stamps `act.workRefreshedAt` with today, changing `act` and
+`work` only, `act.briefingSeen` unmoved; with a stamp planted three days back the send pane preselects `지난 갱신
+이후`, the packet's line 2 states the `마지막 갱신 …` counts, only post-stamp meetings appear under `최근
+회의록`, a pre-stamp meeting's post-stamp progress and open mine follow-up appear only under `이전 회의록의 새
+기록`, a post-stamp document is listed without its `source`, and `전체` gives the byte-identical full packet with
+the pre-stamp meeting's own line restored; the review bridge shows no scope chip even with a stamp planted and
+never writes one on registration. See [tools/e2e/README.md](../../tools/e2e/README.md) for the running step
+count.
 
 ## What a work item never does
 

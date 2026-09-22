@@ -23,6 +23,32 @@ Life Manager is a local-only, single-user web app with no backend, no accounts, 
   item, memo and deal also carries a `track` (`직장`/`사업`/`개인`) — see "Tracks" below. All of it sits in the
   same unencrypted `liferpg-state-v1` key, with no separate handling.
 
+## The `확인 필요` notification (2026-09-22)
+
+`settings.checkNotify` (optional, absent = off) is the only new state field; the notification's own text is
+never stored in `state` — it is derived at render (`checkSummaryOf`/`checkNotificationOf`) and mirrored into one
+Cache API entry, `life-check` (request `./__check-summary`), so the service worker — which cannot read
+`localStorage` — can re-show it on Chrome's own Periodic Background Sync. The entry holds `{ title, body,
+counts, ts }`: meeting and work item **titles** (from the carried-work and missing-minutes lists), never a
+summary, a decision, a transcript or a profile identifier. It is rebuilt on every open, deleted when the switch
+is turned off, and may be evicted by the browser at any time with no consequence
+([Rule 9](design-docs/core-beliefs.md#rule-9)) — the app rebuilds it on the next open regardless. See
+[product-specs/notifications.md](product-specs/notifications.md).
+
+**Data in transit: still none.** The notification is entirely local — no push server, no subscription, no
+network request of any kind. Periodic Background Sync wakes the service worker on Chrome's own internal
+schedule; it makes no request of its own, it only reads the Cache API entry the page already wrote and calls
+`showNotification`. **Android may show the notification's title and body on the lock screen** while the phone is
+locked — the settings caption states this explicitly before the switch is turned on
+(`Android는 잠금 화면에 제목이 보일 수 있어요.`). The notification's `data.open` value (`"issues"`) and the tap
+routing it drives are the only other facts it carries; tapping it opens the on-device
+[`이슈 목록`](product-specs/issue-list.md) screen, itself making no network call.
+
+- Since 2026-09-22: `meetings[].kind?` (`"training"`, absent = a meeting) reuses every meeting field under
+  different labels — a training record carries no field a meeting record does not already carry, so it adds no
+  new sensitivity of its own, only a different set of labels on the same unencrypted key. `act.workRefreshedAt?`
+  (a date) is a user-action stamp, not free text.
+
 ## Tracks — the day-job switch (2026-09-22)
 
 Every project, document, event, work item and deal carries a `track` (a project meeting derives its own from
@@ -57,7 +83,7 @@ None by the app. The production build makes no fetch/XHR; fonts and icons are bu
 The assistant bridge carries **five** packets, all text, all copy/paste only, all making no network call ([Rule 7](design-docs/core-beliefs.md#rule-7)):
 
 - **The daily check-in** (`AI에게 보내기`, `buildAssistantPacket`): goals, open tasks, the last seven journal entries, the last weekly review, the streak and the role-model's stage line (`단계 k/n · 조건 c/m`, or `단계 없음`/미설정 — no percentage since the [Rule 14](design-docs/core-beliefs.md#rule-14) amendment of 2026-09-18), and, since schema v21, one `## 이력` line stating degree, department/field, total months of practice and the most recent role — into a textarea and the clipboard; never photos. It never carries a meeting or a work item: `buildAssistantPacket` does not read `meetingProjects`, `meetings` or `work` ([product-specs/meetings.md](product-specs/meetings.md)). The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score.
-- **`오늘 업무 만들기`** (`buildWorkPacket`, schema v25, 2026-09-17): the same goals/tasks/schedule/business facts, plus what the daily packet never carries — the newest meeting minutes (summary, decisions) and their progress entries, and every undone work item carried into today plus yesterday's and today's own items, so the assistant does not repeat a proposal. Since schema v26 (2026-09-17), each visible meeting's follow-up items are also stated in full — owner flag, due date, done state and text, one line per item (open ones first). This is the user's own decision, reversing the 2026-09-16 default that the packet never reads a meeting: **every meeting is included by default**, except one flagged `aiHidden` (a per-meeting checkbox in `MeetingModal`, `AI에 보내지 않기`), whose line states only its date and title — no summary, decisions, follow-ups, progress, or project name (unchanged by v26). A project-less urgent memo (2026-09-17) is included the same way, printing `[프로젝트 없음]` in place of a project name. The reply's `work` array is read by `parseWorkReply`; each proposal becomes a work item, `source: "ai"`, only once the user ticks it in the confirm view. The raw reply is never stored (unlike the daily packet's `journal[].ai`).
+- **`오늘 업무 만들기`** (`buildWorkPacket`, schema v25, 2026-09-17): the same goals/tasks/schedule/business facts, plus what the daily packet never carries — the newest meeting minutes (summary, decisions) and their progress entries, and every undone work item carried into today plus yesterday's and today's own items, so the assistant does not repeat a proposal. Since schema v26 (2026-09-17), each visible meeting's follow-up items are also stated in full — owner flag, due date, done state and text, one line per item (open ones first). This is the user's own decision, reversing the 2026-09-16 default that the packet never reads a meeting: **every meeting is included by default**, except one flagged `aiHidden` (a per-meeting checkbox in `MeetingModal`, `AI에 보내지 않기`), whose line states only its date and title — no summary, decisions, follow-ups, progress, or project name (unchanged by v26). A project-less urgent memo (2026-09-17) is included the same way, printing `[프로젝트 없음]` in place of a project name. The reply's `work` array is read by `parseWorkReply`; each proposal becomes a work item, `source: "ai"`, only once the user ticks it in the confirm view. The raw reply is never stored (unlike the daily packet's `journal[].ai`). Since 2026-09-22, once `act.workRefreshedAt` exists the send pane offers a `지난 갱신 이후` chip that carries **less**, not more, than the default: only meetings, progress and documents dated on or after the stamp, plus older meetings' qualifying progress/follow-up lines — the same exclusions (no `transcript`, no profile identifier, `aiHidden` honoured) apply in both modes; `전체` restores the byte-identical full packet. A training record (2026-09-22) states the same fields as a meeting under different labels and is subject to the identical exclusions.
 - **`AI에게 회의 준비 묻기`** (`buildPrepPacket`, schema v27, 2026-09-17): built for one schedule event that belongs to a meeting project — the event line, the project's newest meetings (a hidden one contributing date and title only), the project's document title and summary (never `source`), the open tasks those meetings link, the contracts of the same client when derivable, and the event's existing checks so they are not re-proposed. **Never** the profile identifiers, a transcript, an event's `place`/`note`, or a document's `source`. While the day-job switch (above) is off, a document or a contract on the `직장` track is filtered out even when the event's own track is on a packet track, and an event on the `직장` track produces only `## 회의` with the line `직장 트랙 일정 — AI 패킷에 실리지 않아요` in place of everything else; while the switch is on (the default), a day-job event's project, meetings, documents and contracts are stated the same way a business-track event's are. The reply's `checks` array is read by `parsePrepReply`; each proposal becomes a check item, `source: "ai"`, only once ticked. The raw reply is never stored. See [design-docs/assistant-bridge.md](design-docs/assistant-bridge.md) (the third packet) and `tools/e2e/flow11.js` for the proof that the exclusions hold in both states of the switch.
 - **`주간 회고`** (`buildReviewPacket`, schema v28, 2026-09-18): opened from `ReviewModal`'s `AI에게 회고 묻기 ›`
   button, enabled only once the current week's review is saved, so it always reads the **stored** review, never

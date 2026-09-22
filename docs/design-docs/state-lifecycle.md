@@ -92,6 +92,23 @@ The `readyRef` guard exists so the persist effect cannot overwrite a real save w
 | `v < 27` | (2026-09-17) documents and pre-meeting checks: adds empty `documents: []`. Events gain an optional `checks[]` that nothing here backfills, the same shape of change as `projectId` at v26. A document is a record, never a task — no payout, trophy, goal or streak field is added anywhere else ([Rule 1](core-beliefs.md#rule-1), [Rule 18](core-beliefs.md#rule-18)); every existing field and key passes through untouched |
 | `v < 28` | (2026-09-17/18) tracks, roadmap, time budget, payment lines, role stages, pipeline, notices: `stamp(list, t) = (s[list] \|\| []).map(r => ({ ...r, track: TRACKS.includes(r.track) ? r.track : t }))` — `meetingProjects`, `documents`, `events` and `work` stamped `"work"` unless already carrying a valid track; `deals` stamped `"biz"`; `meetings` gains a memo-only `track: "work"` (`m.projectId == null && !TRACKS.includes(m.track)`) and a project meeting gets none. Adds four empty arrays (`milestones`, `timeLog`, `leads`, `notices`) and `settings.bizHoursPerWeek` (kept if already a finite number, else 20). `deals[].payments`, `role.stages` and `work[].minutes` stay optional with **no backfill**. Nothing here pays P, creates a trophy, moves a goal, a grade or the role model's gap facts; every value above is a record or a rewrite of an existing field's default, never a derived number ([Rule 1](core-beliefs.md#rule-1), [Rule 9](core-beliefs.md#rule-9), [Rule 18](core-beliefs.md#rule-18)) |
 
+**2026-09-22 additions (the incremental work packet, the `확인 필요` notification, `교육` meeting records) —
+schema stays v28, no migration block, no `v` bump.** Three more optional fields, each tolerated by every reader
+the same shape as the v26 `meetings[].transcript`/`events[].projectId` change (no backfill, since the handler
+that writes the key always writes it): `act.workRefreshedAt?` (a `YYYY-MM-DD` string) — a user-action stamp like
+`act.briefingSeen`, written only by `importWork` when called from the work bridge with `stamp: true` and at
+least one proposal ticked; never read as progress, only as a `since` cursor for the incremental work packet
+([../product-specs/daily-work.md](../product-specs/daily-work.md#the-incremental-packet--actworkrefreshedat-and-since-mode-2026-09-22)).
+`settings.checkNotify?` (boolean) — absent reads as **off**; the `확인 필요` notification switch, written only
+by the root's `setCheckNotify` handler ([../product-specs/notifications.md](../product-specs/notifications.md));
+the notification's own rendered text is never stored in `state` — it lives only in a Cache API entry the
+service worker reads. `meetings[].kind?` (`"meeting"` | `"training"`) — absent reads as `"meeting"`; written
+only for a training record, so an existing meeting-kind record's save is byte-identical
+([../product-specs/meetings.md](../product-specs/meetings.md#training-records-교육-2026-09-22)). Every value any
+of the three touches (the since-mode packet's sections, the notification's three facts, `lastMeetingOf`'s
+meeting/training distinction) is computed at render and stored nowhere else
+([Rule 9](core-beliefs.md#rule-9)).
+
 **2026-09-18 additions (role story, verdicts, stage progress) — schema stays v28, no migration block, no `v`
 bump.** `role` gains three more optional fields, tolerated by every reader exactly the same shape as `role.stages`
 above and the v26 `meetings[].transcript`/`events[].projectId` change (no backfill, since the form or handler
