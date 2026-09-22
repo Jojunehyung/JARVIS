@@ -380,5 +380,79 @@ console.log("calendar file: 18 check groups");
   console.log(`since-mode packet: ${n} checks`);
 }
 
+// 7) check summary — the `확인 필요` notification's three facts and its text, and the service worker's copy of its literals (2026-09-22)
+{
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `check summary: ${msg}`); };
+  const CHECK = new Function([
+    ...["dstr", "shiftDay", "daysBetween", "MAX_OCC", "occurrencesOf", "meetingOrder", "byCreated", "workOn", "eventProjectOf",
+      "CHECK_MINUTES_DAYS", "CHECK_LIST_MAX", "CHECK_TAG", "CHECK_CACHE", "CHECK_CACHE_REQ", "CHECK_STALE_MS", "OPEN_PARAM_TYPES",
+      "checkSummaryOf", "checkNotificationOf"].map(lift),
+  ].join("\n") + "\nreturn { checkSummaryOf, checkNotificationOf, CHECK_TAG, CHECK_CACHE, CHECK_CACHE_REQ, CHECK_STALE_MS, OPEN_PARAM_TYPES };")();
+  const today = "2026-09-22";
+  const sum = (st) => CHECK.checkSummaryOf({ work: [], events: [], meetings: [], meetingProjects: [{ id: "P", name: "프로젝트" }], ...st }, today);
+  const text = (st) => CHECK.checkNotificationOf(sum(st));
+  const madeToday = { id: "w0", date: today, title: "오늘 것", done: false, createdAt: today };
+
+  // (a) not refreshed: both reasons in order, then one, then none; the AI refresh date is appended as a fact
+  check(sum({ act: { briefingSeen: "2026-09-21" } }).notRefreshed === "오늘 만든 업무 없음 · 오늘 읽을 것 안 봄", `both reasons: ${sum({ act: { briefingSeen: "2026-09-21" } }).notRefreshed}`);
+  check(sum({ work: [madeToday], act: { briefingSeen: "2026-09-21" } }).notRefreshed === "오늘 읽을 것 안 봄", "a work item created today leaves the reader reason only");
+  check(sum({ work: [madeToday], act: { briefingSeen: today } }).notRefreshed === null, "a work item created today and the reader seen today is refreshed");
+  const line1 = (text({ act: { briefingSeen: "2026-09-21", workRefreshedAt: "2026-09-20" } })?.body || "").split("\n")[0];
+  check(line1 === "오늘 할 일 미갱신 · 오늘 만든 업무 없음 · 오늘 읽을 것 안 봄 · AI 갱신 2026-09-20", `AI refresh suffix: ${line1}`);
+
+  // (b) project appointments without minutes, last 14 days, newest first
+  const appt = (id, date, extra = {}) => ({ id, kind: "appt", title: id, date, projectId: "P", ...extra });
+  const minutesState = {
+    work: [madeToday], act: { briefingSeen: today },
+    events: [
+      appt("현장 미팅", "2026-09-19"),
+      appt("연결된 회의", "2026-09-19"),
+      appt("개인 약속", "2026-09-19", { projectId: null }),
+      appt("오래된 미팅", "2026-09-06"),
+      { id: "마감", kind: "due", title: "마감", date: "2026-09-19", projectId: "P" },
+      appt("주간 회의", "2026-09-20", { projectId: null }),
+      appt("정기 점검", "2026-09-02", { repeat: { freq: "weekly" } }),
+    ],
+    meetings: [
+      { id: "m1", projectId: "P", title: "연결된 회의", date: "2026-09-19", eventId: "연결된 회의", createdAt: "2026-09-19" },
+      { id: "m2", projectId: "P", title: "주간 회의", date: "2026-08-23", createdAt: "2026-08-23" },
+    ],
+  };
+  const mm = sum(minutesState).minutesMissing.map((r) => `${r.date} ${r.title}`);
+  check(JSON.stringify(mm) === JSON.stringify(["2026-09-20 주간 회의", "2026-09-19 현장 미팅", "2026-09-16 정기 점검", "2026-09-09 정기 점검"]), `minutes missing: ${JSON.stringify(mm)}`);
+  check(!mm.some((r) => r.includes("연결된 회의")), "an occurrence with linked minutes is not listed");
+  check(text(minutesState)?.body === "회의록 없는 지난 일정 4건: 9/20 주간 회의 · 9/19 현장 미팅 · 9/16 정기 점검 외 1건", `minutes line: ${text(minutesState)?.body}`);
+  const five = { work: [madeToday], act: { briefingSeen: today }, events: [1, 2, 3, 4, 5].map((d) => appt(`일정${d}`, `2026-09-${String(22 - d).padStart(2, "0")}`)) };
+  check(/^회의록 없는 지난 일정 5건: 9\/21 일정1 · 9\/20 일정2 · 9\/19 일정3 외 2건$/.test(text(five)?.body || ""), `five rows: ${text(five)?.body}`);
+
+  // (c) carried work in the work tab's order; a done item is not carried
+  const w = (id, d, done = false) => ({ id, title: id, date: `2026-09-${String(22 - d).padStart(2, "0")}`, done, createdAt: "2026-09-01" });
+  const carriedState = { work: [w("a", 4), w("b", 1), w("c", 2), w("d", 3), w("e", 5, true)], act: { briefingSeen: today } };
+  const cs = sum(carriedState);
+  check(cs.carried.map((x) => x.title).join(" ") === "a d c b", `carried order: ${cs.carried.map((x) => x.title).join(" ")}`);
+  const ct = text(carriedState);
+  check(ct?.body.split("\n").pop() === "이월 업무 4건: a · d · c 외 1건", `carried line: ${ct?.body}`);
+  check(ct?.title === "인생 관리 — 확인 필요 2가지" && cs.counts.total === 2, `title ${ct?.title}`);
+  check(text({ work: [...carriedState.work, madeToday], act: { briefingSeen: today } })?.title === "인생 관리 — 확인 필요 1가지", "one line, one thing");
+  check(JSON.stringify(ct?.counts) === '{"notRefreshed":1,"minutes":0,"carried":4}', `counts ${JSON.stringify(ct?.counts)}`);
+
+  // (d) nothing to state → no notification
+  const quiet = sum({ work: [madeToday], act: { briefingSeen: today } });
+  check(quiet.counts.total === 0 && CHECK.checkNotificationOf(quiet) === null, `empty: total ${quiet.counts.total}`);
+
+  // (e) the service worker repeats the app's literals, keeps the summary cache on activate and never reloads a client
+  const sw = require("./gen-sw.js").swSource("x", [], []);
+  const swConst = (name) => { const m = sw.match(new RegExp(`const ${name} = (.+);`)); return m ? new Function(`return ${m[1]};`)() : undefined; };
+  check(swConst("CHECK_CACHE") === CHECK.CHECK_CACHE && swConst("CHECK_TAG") === CHECK.CHECK_TAG && swConst("CHECK_REQ") === CHECK.CHECK_CACHE_REQ
+    && swConst("CHECK_STALE_MS") === CHECK.CHECK_STALE_MS, "the worker's CHECK_* literals equal the app's");
+  check((sw.match(/"life-check"/g) || []).length === 2 && sw.includes('"./__check-summary"'), "the worker names the cache and the tag once each");
+  check(sw.includes('addEventListener("periodicsync"') && sw.includes('addEventListener("notificationclick"'), "the worker handles periodicsync and notificationclick");
+  check(sw.includes("k !== CHECK_CACHE"), "activate keeps the summary cache");
+  check(sw.includes('open: "issues"') && sw.includes('"./?open=issues"') && CHECK.OPEN_PARAM_TYPES.includes("issues"), "a tap names the issue list, which the app routes");
+  check(!sw.includes("location.reload") && !sw.includes("controllerchange") && !/\.navigate\(/.test(sw), "the worker reloads no client");
+  console.log(`check summary: ${n} checks`);
+}
+
 console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");
 process.exit(fail ? 1 : 0);

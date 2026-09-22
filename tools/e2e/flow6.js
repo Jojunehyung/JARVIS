@@ -60,7 +60,13 @@ module.exports = async (h) => {
     const fresh = await ctx.newPage();
     // Polling, not an event: `controllerchange` fires inside the page, and a reload from the pre-fix
     // build destroys the execution context mid-evaluate, which must not read as a passing step.
-    const until = async (ms, fn) => {
+    // Every check step ends here: the save it started from, no permission override, a fresh load.
+  const restore = async (saved) => {
+    await writeState(saved);
+    await page.browser().defaultBrowserContext().clearPermissionOverrides();
+    await h.reload();
+  };
+  const until = async (ms, fn) => {
       const t0 = Date.now();
       while (Date.now() - t0 < ms) { try { if (await fn()) return true; } catch {} await sleep(250); }
       return false;
@@ -87,6 +93,136 @@ module.exports = async (h) => {
       if (navs !== 0) throw new Error(`the page reloaded itself ${navs} time(s) when a new worker took over`);
     } finally {
       await ctx.close();
+    }
+  });
+
+  // ── The local check notification (2026-09-22). Headless Chrome cannot show an OS notification reliably, so these steps
+  // assert what the app writes for the worker — the `life-check` cache entry — and the routing of a tap (`?open=`).
+  // Written under the standing instruction that the suite is not run: every step parses, none has been executed.
+  const KEY = "liferpg-state-v1";
+  const readState = () => page.evaluate((k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, KEY);
+  const writeState = (st) => page.evaluate((k, s) => localStorage.setItem(k, JSON.stringify(s)), KEY, st);
+  const dstrIn = (delta) => page.evaluate((d) => {
+    const t = new Date(); t.setHours(12, 0, 0, 0); t.setDate(t.getDate() + d);
+    const pad = (n) => String(n).padStart(2, "0");
+    return [t.getFullYear(), pad(t.getMonth() + 1), pad(t.getDate())].join("-");
+  }, delta);
+  // The top-level keys whose JSON differs, `lastTick` excepted.
+  const changedKeys = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter((k) => k !== "lastTick" && JSON.stringify(a[k]) !== JSON.stringify(b[k])).sort();
+  const origin = () => new URL(page.url()).origin;
+  const checkEntry = () => page.evaluate(async () => {
+    try { const r = await (await caches.open("life-check")).match("./__check-summary"); return r ? await r.json() : null; } catch { return null; }
+  });
+  // The settings sheet's check-notification row: its checkbox state, and a click on it.
+  const checkBox = (click = false) => page.evaluate((c) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const label = ov && [...ov.querySelectorAll("label")].find((l) => (l.innerText || "").trim() === "확인 필요 알림");
+    const box = label?.querySelector('input[type="checkbox"]');
+    if (!box) return null;
+    if (c) box.click();
+    return { checked: box.checked, disabled: box.disabled };
+  }, click);
+  const until = async (ms, fn) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(250); }
+    return null;
+  };
+
+  await step("the check-notification switch writes settings.checkNotify only and, with permission granted, writes the life-check cache entry", async () => {
+    const saved = await readState();
+    const today = await dstrIn(0);
+    try {
+      await page.browser().defaultBrowserContext().overridePermissions(origin(), ["notifications"]);
+      const planted = structuredClone(saved);
+      planted.work = [{ id: "e2e-check-carried", date: await dstrIn(-1), title: "E2E 이월 확인", done: false, createdAt: await dstrIn(-1), track: "biz" }];
+      planted.act = { ...planted.act, briefingSeen: today };
+      delete planted.settings?.checkNotify;
+      await writeState(planted);
+      await h.reload();
+      await h.openSettings();
+      await expectText("확인 알림");
+      if (!(await h.overlayText()).includes("설치된 앱에서만 주기 갱신이 돼요")) throw new Error("the periodic-sync caption is missing (headless Chrome is not an installed app)");
+      const box0 = await checkBox();
+      if (!box0 || box0.checked || box0.disabled) throw new Error("the switch is not an enabled, unchecked box: " + JSON.stringify(box0));
+
+      const before = await readState();
+      await checkBox(true);
+      await sleep(2500); // the refresh effect's debounce, then the cache write
+      const after = await readState();
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["settings"])) throw new Error("switch-on moved: " + JSON.stringify(changedKeys(before, after)));
+      if (after.settings.checkNotify !== true) throw new Error("settings.checkNotify is " + after.settings.checkNotify);
+      if (after.settings.workInAi !== before.settings.workInAi || after.settings.bizHoursPerWeek !== before.settings.bizHoursPerWeek) throw new Error("switch-on moved another setting: " + JSON.stringify(after.settings));
+      const entry = await until(4000, checkEntry);
+      if (!entry) throw new Error("no life-check cache entry after switch-on");
+      if (!/^인생 관리 — 확인 필요 \d가지$/.test(entry.title || "")) throw new Error("entry title: " + entry.title);
+      if (!(entry.body || "").includes("이월 업무 1건: E2E 이월 확인")) throw new Error("entry body lacks the carried line: " + entry.body);
+      if ((entry.body || "").includes("오늘 읽을 것 안 봄")) throw new Error("the reader was seen today, the body says it was not: " + entry.body);
+      if (typeof entry.ts !== "number") throw new Error("entry ts is " + typeof entry.ts);
+      // Soft: headless Chrome may not surface notifications to getNotifications; the number is recorded, not asserted.
+      h.metrics.checkNotificationsShown = await page.evaluate(async () => {
+        try { return (await (await navigator.serviceWorker.ready).getNotifications({ tag: "life-check" })).length; } catch { return -1; }
+      });
+
+      const before2 = await readState();
+      await checkBox(true);
+      await sleep(800);
+      const after2 = await readState();
+      if (after2.settings.checkNotify !== false) throw new Error("switch-off left settings.checkNotify " + after2.settings.checkNotify);
+      if (JSON.stringify(changedKeys(before2, after2)) !== JSON.stringify(["settings"])) throw new Error("switch-off moved: " + JSON.stringify(changedKeys(before2, after2)));
+      if (await checkEntry()) throw new Error("switch-off left the cache entry");
+      await closeModal();
+    } finally {
+      await restore(saved);
+    }
+  });
+
+  await step("a denied permission leaves the switch off and writes nothing", async () => {
+    const saved = await readState();
+    try {
+      // Every permission not listed is refused; the stub stands in for the prompt a real browser would show.
+      await page.browser().defaultBrowserContext().overridePermissions(origin(), []);
+      await h.openSettings();
+      await page.evaluate(() => { Notification.requestPermission = () => Promise.resolve("denied"); });
+      const before = await readState();
+      await checkBox(true);
+      await sleep(600);
+      const after = await readState();
+      if (after.settings && "checkNotify" in after.settings) throw new Error("a refused permission wrote settings.checkNotify = " + after.settings.checkNotify);
+      if (JSON.stringify(changedKeys(before, after)) !== "[]") throw new Error("a refused permission moved: " + JSON.stringify(changedKeys(before, after)));
+      await expectText("알림 권한이 꺼져 있어요 — 폰 설정에서 허용해요");
+      const box = await checkBox();
+      if (!box || box.checked) throw new Error("the switch reads checked after a refusal: " + JSON.stringify(box));
+      await closeModal();
+    } finally {
+      await restore(saved);
+    }
+  });
+
+  await step("?open=issues and ?open=reader open the named screen and strip the query; the served worker routes a tap to issues", async () => {
+    const saved = await readState();
+    const base = page.url().split("?")[0];
+    try {
+      await writeState({ ...saved, act: { ...saved.act, briefingSeen: await dstrIn(0) } });
+      // The issue list's slot lands in Phase 3 of the 2026-09-22 plan; until then `issues` falls back to the reader.
+      for (const open of ["issues", "reader"]) {
+        await page.goto(`${base}?open=${open}`, { waitUntil: "networkidle2" });
+        await sleep(400);
+        await expectText("오늘 읽을 것 —");
+        const search = await page.evaluate(() => location.search);
+        if (search !== "") throw new Error(`?open=${open} left the query: ${search}`);
+        await closeModal();
+      }
+      await h.reload({ waitUntil: "networkidle2" }, { keepModal: true });
+      if (await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length)) throw new Error("a reload without the param opened a screen on a seen-today save");
+      const sw = await page.evaluate(async () => (await fetch("./sw.js", { cache: "no-store" })).text());
+      for (const t of ['open: "issues"', '"./?open=issues"', "periodicsync", "notificationclick", "k !== CHECK_CACHE"]) {
+        if (!sw.includes(t)) throw new Error("the served sw.js lacks " + t);
+      }
+      if (sw.includes("location.reload") || sw.includes("controllerchange")) throw new Error("the served sw.js reloads a client");
+    } finally {
+      await writeState(saved);
+      await h.reload();
     }
   });
 

@@ -2249,6 +2249,8 @@ const PACKET_TRACKS_NO_WORK = ["biz", "personal"];                // the tracks 
 // explicitly false (absent reads as on — no migrate block). `aiHidden`, transcripts and profile identifiers stay out
 // either way.
 const workInAiOf = (state) => state?.settings?.workInAi !== false;
+// Whether the local `확인 필요` notification is on (2026-09-22): absent reads as off — no migrate block.
+const checkNotifyOf = (state) => state?.settings?.checkNotify === true;
 // The tracks a packet may carry: every track while the switch is on, else business and private only.
 const packetTracks = (state) => (workInAiOf(state) ? TRACKS : PACKET_TRACKS_NO_WORK);
 const trackOf = (rec, fallback = "work") => (TRACKS.includes(rec?.track) ? rec.track : fallback);
@@ -3111,6 +3113,64 @@ const readerSince = (act, today) => {
   if (!seen) return shiftDay(today, -READER_SINCE_FALLBACK_DAYS);
   return seen < today ? seen : shiftDay(today, -1);
 };
+
+// The `확인 필요` notification (2026-09-22): a local notification the app builds from its own state — no network, no AI.
+// Off by default (`settings.checkNotify`). The service worker cannot read localStorage, so the page mirrors the last
+// rendered text into one Cache API entry the worker re-shows on a periodic sync; the entry is rebuilt on every open and
+// may be lost without consequence (rule 9). `tools/harness/gen-sw.js` repeats the cache, request and tag literals.
+const CHECK_MINUTES_DAYS = 14;             // how far back a project appointment without minutes is listed
+const CHECK_LIST_MAX = 3;                  // names per body line before `외 {n}건`
+const CHECK_TAG = "life-check";            // the notification tag and the periodic sync tag
+const CHECK_CACHE = "life-check";          // the Cache API cache the worker keeps across builds
+const CHECK_CACHE_REQ = "./__check-summary"; // relative, so a subpath deploy and a root deploy resolve the same entry
+const CHECK_STALE_MS = 48 * 3600 * 1000;   // an entry older than this no longer suppresses a re-alert (the worker shows generic text past it)
+const CHECK_SYNC_MIN_MS = 12 * 3600 * 1000; // the periodic sync floor asked of Chrome
+const CHECK_DEBOUNCE_MS = 1500;            // a burst of edits writes the entry once
+
+// The three facts, all tracks (the notification never leaves the device): whether today was refreshed (a work item
+// created today, the reader seen today), which project appointments of the last CHECK_MINUTES_DAYS days have no linked
+// minutes (a done occurrence still counts — it happened), and which work items are carried. Pure, derived at render.
+const checkSummaryOf = (state, today) => {
+  const reasons = [];
+  if (!(state.work || []).some((w) => w.createdAt === today)) reasons.push("오늘 만든 업무 없음");
+  if (state.act?.briefingSeen !== today) reasons.push("오늘 읽을 것 안 봄");
+  const from = shiftDay(today, -CHECK_MINUTES_DAYS), to = shiftDay(today, -1);
+  const meetings = state.meetings || [];
+  const minutesMissing = [];
+  for (const ev of state.events || []) {
+    if (ev.kind !== "appt") continue;
+    const dates = occurrencesOf(ev, from, to).filter((d) => !meetings.some((m) => m.eventId === ev.id && m.date === d));
+    if (!dates.length || !eventProjectOf(state, ev)) continue;
+    for (const date of dates) minutesMissing.push({ date, title: ev.title, eventId: ev.id });
+  }
+  minutesMissing.sort((a, b) => b.date.localeCompare(a.date) || String(a.title || "").localeCompare(String(b.title || "")));
+  const carried = workOn(state, today, today).filter((w) => w.date < today).map((w) => ({ id: w.id, date: w.date, title: w.title }));
+  const notRefreshed = reasons.length ? reasons.join(" · ") : null;
+  const counts = { notRefreshed: notRefreshed ? 1 : 0, minutes: minutesMissing.length, carried: carried.length };
+  counts.total = counts.notRefreshed + (counts.minutes ? 1 : 0) + (counts.carried ? 1 : 0);
+  return { date: today, notRefreshed, workRefreshedAt: state.act?.workRefreshedAt || null, minutesMissing, carried, counts };
+};
+
+// The notification's title and body lines, or null when there is nothing to state. `counts` is what a re-render compares
+// against the cached entry, so the same facts never buzz the phone twice.
+const checkNotificationOf = (summary) => {
+  const { counts } = summary;
+  if (!counts.total) return null;
+  const more = (n) => (n > CHECK_LIST_MAX ? ` 외 ${n - CHECK_LIST_MAX}건` : "");
+  const monthDay = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  const lines = [];
+  if (summary.notRefreshed) lines.push(`오늘 할 일 미갱신 · ${summary.notRefreshed}${summary.workRefreshedAt ? ` · AI 갱신 ${summary.workRefreshedAt}` : ""}`);
+  if (counts.minutes) lines.push(`회의록 없는 지난 일정 ${counts.minutes}건: ${summary.minutesMissing.slice(0, CHECK_LIST_MAX).map((r) => `${monthDay(r.date)} ${r.title}`).join(" · ")}${more(counts.minutes)}`);
+  if (counts.carried) lines.push(`이월 업무 ${counts.carried}건: ${summary.carried.slice(0, CHECK_LIST_MAX).map((w) => w.title).join(" · ")}${more(counts.carried)}`);
+  return {
+    title: `인생 관리 — 확인 필요 ${counts.total}가지`,
+    body: lines.join("\n"),
+    counts: { notRefreshed: counts.notRefreshed, minutes: counts.minutes, carried: counts.carried },
+  };
+};
+
+// The `modal.type` values the `?open=` boot param and the service worker's message may name — nothing else opens this way.
+const OPEN_PARAM_TYPES = ["issues", "reader"];
 
 // The daily reader: the full content the saved state holds for today, section by section. Derived at render and stores
 // nothing (rule 9) — no tick, no confirm, no per-day record. Full content, never a count in place of a line; every
@@ -4365,8 +4425,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   ui: { bizView("deals"|"rates"|"folio"|"roadmap"|"leads"|"notices") },   // which view the business tab opens on — a preference, never derived data
  *                                               // (scheduleView was retired 2026-09-16 and dropped at v22)
  *   settings: { bizHoursPerWeek,     // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
- *               workInAi? },         // (2026-09-22, still v28, no migrate block) whether day-job records go into AI packets;
+ *               workInAi?,           // (2026-09-22, still v28, no migrate block) whether day-job records go into AI packets;
  *                                    // absent reads as true, the settings checkbox writes true/false (`workInAiOf`)
+ *               checkNotify? },      // (2026-09-22, still v28, no migrate block) the `확인 필요` notification switch; absent reads
+ *                                    // as off (`checkNotifyOf`). The Cache API entry it feeds is a mirror, not state (rule 9)
  *   lastTick, dModel
  * }
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), the role-model gap facts (`roleAreas`),
@@ -7172,9 +7234,31 @@ function StudyVerifyModal({ task, onClose, onDone }) {
    the CV states the counts and this sheet holds every earned item, so nothing earned becomes unreachable (rule 13).
    Both live in the one `modal` slot and write nothing to the save (rule 9). */
 
-function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onSetWorkInAi, onExport, onImport, onReset }) {
+function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onSetWorkInAi, onSetCheckNotify, onExport, onImport, onReset }) {
   const [hours, setHours] = useState(String(bizHoursOf(state)));
   const [hoursErr, setHoursErr] = useState("");
+  // What this browser can do for the `확인 필요` notification: the APIs plus a registered worker (the single-file demo and
+  // the dev server have none), and whether periodic sync is usable — desktop Chrome exposes `periodicSync` on every
+  // registration but grants the permission to an installed app only, so both are read.
+  const hasApi = typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator;
+  const [caps, setCaps] = useState({ api: hasApi, periodic: false });
+  const [denied, setDenied] = useState(false);
+  useEffect(() => {
+    if (!hasApi) return undefined;
+    let live = true;
+    (async () => {
+      let reg = null;
+      try { reg = (await navigator.serviceWorker.getRegistration()) || null; } catch {}
+      let periodic = false;
+      try { periodic = !!reg && "periodicSync" in reg && (await navigator.permissions.query({ name: "periodic-background-sync" })).state === "granted"; } catch {}
+      if (live) setCaps({ api: !!reg, periodic });
+    })();
+    return () => { live = false; };
+  }, [hasApi]);
+  const toggleCheck = async (e) => {
+    const res = await onSetCheckNotify(e.target.checked);
+    setDenied(res === "denied");
+  };
   // The weekly business budget (v28): a whole number of hours in one week, 0 to 168.
   const saveHours = () => {
     const t = hours.trim();
@@ -7217,6 +7301,19 @@ function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onSetWorkIn
               ? "직장 트랙 회의록·업무·일정도 AI 요청문에 실려요. 회사 자료를 보내면 안 되는 날엔 꺼요. 회의록마다 'AI에 보내지 않기'는 그대로 적용돼요."
               : "직장 트랙 기록은 AI 요청문에 실리지 않아요."}
           </p>
+        </div>
+        {/* 2026-09-22: the local notification — absent reads as off (`checkNotifyOf`); disabled without the browser APIs */}
+        <div>
+          <SectionLabel tone="text-cyan-400">확인 알림</SectionLabel>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={checkNotifyOf(state)} disabled={!caps.api} onChange={toggleCheck} className="mt-0.5 shrink-0" />
+            <span className={`text-sm ${caps.api ? "text-zinc-200" : "text-zinc-500"}`}>확인 필요 알림</span>
+          </label>
+          {!caps.api
+            ? <p className="text-xs text-zinc-500 mt-1.5">이 브라우저에서는 알림을 쓸 수 없어요</p>
+            : !caps.periodic && <p className="text-xs text-zinc-500 mt-1.5">설치된 앱에서만 주기 갱신이 돼요</p>}
+          {denied && <p className="text-xs text-rose-400 mt-1.5">알림 권한이 꺼져 있어요 — 폰 설정에서 허용해요</p>}
+          <p className="text-xs text-zinc-500 mt-1.5">켜면 앱을 열 때마다 세 가지를 확인해 알림 하나로 보여줘요 — 오늘 할 일 미갱신, 회의록 없는 지난 일정(14일), 이월 업무. 내용은 이 기기에만 있어요. Android는 잠금 화면에 제목이 보일 수 있어요. 앱을 닫아 둔 동안은 Chrome이 약 12시간마다 한 번까지만 갱신하고, 시점은 Chrome이 정해요.</p>
         </div>
         <div>
           <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
@@ -10720,6 +10817,61 @@ function Overlay({ data, onClose }) {
 }
 
 /* ───────────────────────── App root ───────────────────────── */
+/* The `확인 필요` notification's browser side (2026-09-22). Every call is guarded and none throws: the single-file demo,
+   `file://`, the dev server and a browser without the APIs simply do nothing. The Cache API entry is the only thing
+   written, and it is a mirror of text derived from the save (rule 9) — never read back into state. */
+const checkRegistration = async () => {
+  try { return (await navigator.serviceWorker?.getRegistration?.()) || null; } catch { return null; }
+};
+const checkCacheRead = async () => {
+  try { const r = await (await caches.open(CHECK_CACHE)).match(CHECK_CACHE_REQ); return r ? await r.json() : null; } catch { return null; }
+};
+const checkCacheWrite = async (entry) => {
+  try {
+    const body = new Response(JSON.stringify(entry), { headers: { "content-type": "application/json" } });
+    await (await caches.open(CHECK_CACHE)).put(CHECK_CACHE_REQ, body);
+  } catch { /* storage refused: the next open writes it again */ }
+};
+const checkNotificationsClose = async (reg) => {
+  try { for (const n of await reg.getNotifications({ tag: CHECK_TAG })) n.close(); } catch { /* nothing shown */ }
+};
+// Asks Chrome for a periodic sync; outside an installed app it refuses, silently (the settings caption states it).
+const checkSyncRegister = async () => {
+  const reg = await checkRegistration();
+  if (!reg?.periodicSync?.register) return;
+  try { await reg.periodicSync.register(CHECK_TAG, { minInterval: CHECK_SYNC_MIN_MS }); } catch { /* refused */ }
+};
+// Switch-off: no periodic sync, no notification on screen, no cached text.
+const checkNotifyTeardown = async () => {
+  const reg = await checkRegistration();
+  try { await reg?.periodicSync?.unregister?.(CHECK_TAG); } catch { /* not registered */ }
+  if (reg) await checkNotificationsClose(reg);
+  try { await caches.delete(CHECK_CACHE); } catch { /* no Cache API */ }
+};
+// Re-renders the notification from the save: nothing to state → the entry and the notification go; otherwise the entry is
+// rewritten and the notification re-shown under its tag, alerting again only when the counts changed (or the previous
+// entry is older than CHECK_STALE_MS, when the worker may have replaced the text with its generic pair).
+const checkRefresh = async (state, today) => {
+  try {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (!(await checkRegistration())) return;
+    const reg = await navigator.serviceWorker.ready;
+    const text = checkNotificationOf(checkSummaryOf(state, today));
+    const prev = await checkCacheRead();
+    if (!text) {
+      try { await (await caches.open(CHECK_CACHE)).delete(CHECK_CACHE_REQ); } catch { /* no Cache API */ }
+      await checkNotificationsClose(reg);
+      return;
+    }
+    await checkCacheWrite({ title: text.title, body: text.body, counts: text.counts, ts: Date.now() });
+    const fresh = prev && Date.now() - (prev.ts || 0) < CHECK_STALE_MS;
+    await reg.showNotification(text.title, {
+      body: text.body, tag: CHECK_TAG, data: { open: "issues" }, icon: "./icons/icon-192.png",
+      renotify: fresh ? JSON.stringify(prev.counts) !== JSON.stringify(text.counts) : true,
+    });
+  } catch { /* a refused notification changes nothing in the app */ }
+};
+
 export default function LifeManager() {
   const [phase, setPhase] = useState("loading");
   const [state, setState] = useState(null);
@@ -10737,6 +10889,9 @@ export default function LifeManager() {
   const today = day;
 
   const showToast = (t) => toastRef.current?.show(t);
+  // Opens a screen named by `?open=` or by the service worker's message (`OPEN_PARAM_TYPES`). The issue list's slot
+  // lands in Phase 3 of the 2026-09-22 plan; until it exists `issues` falls back to the reader.
+  const openNamed = (type) => setModal({ type: type === "issues" ? "reader" : type });
 
   useEffect(() => {
     (async () => {
@@ -10745,8 +10900,16 @@ export default function LifeManager() {
       if (m) {
         setState(applyDailyTick(m));
         setPhase("main");
-        // The first load of a day opens the daily reader once; the briefing is reached from it (`브리핑 ›`).
-        if (m.act?.briefingSeen !== dstr()) setModal({ type: "reader" });
+        // `?open=issues|reader` (the notification's cold-start path) opens the named screen whatever the seen-stamp
+        // says, then leaves the address so a reload does not reopen it. Otherwise the first load of a day opens the
+        // daily reader once; the briefing is reached from it (`브리핑 ›`).
+        let open = null;
+        try { open = new URLSearchParams(location.search).get("open"); } catch { /* no location */ }
+        if (OPEN_PARAM_TYPES.includes(open)) {
+          openNamed(open);
+          try { history.replaceState(null, "", location.pathname + location.hash); } catch { /* no history */ }
+        } else if (m.act?.briefingSeen !== dstr()) setModal({ type: "reader" });
+        if (checkNotifyOf(m) && typeof Notification !== "undefined" && Notification.permission === "granted") checkSyncRegister();
       }
       else setPhase("onboard");
       readyRef.current = true;
@@ -10771,6 +10934,23 @@ export default function LifeManager() {
     dayRef.current = day;
     if (state && state.act?.briefingSeen !== day) setModal({ type: "reader" });
   }, [day, state]);
+
+  // A tap on the notification while the app is open: the worker focuses this window and names the screen to open.
+  useEffect(() => {
+    const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : null;
+    if (!sw?.addEventListener) return undefined;
+    const onMessage = (e) => { if (OPEN_PARAM_TYPES.includes(e.data?.open)) openNamed(e.data.open); };
+    sw.addEventListener("message", onMessage);
+    return () => sw.removeEventListener("message", onMessage);
+  }, []);
+
+  // The `확인 필요` notification follows the save: every change (and every open) re-renders it once the edits settle.
+  // The switch-off teardown is `setCheckNotify`'s, not this effect's.
+  useEffect(() => {
+    if (!readyRef.current || !state || !checkNotifyOf(state)) return undefined;
+    const id = setTimeout(() => { checkRefresh(state, today); }, CHECK_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [state, today]);
 
   // A stage completion shows the overlay once: `role.seenStageK` is the seen-stamp (like act.briefingSeen), `k` is always
   // derived. A missing stamp or a lower `k` (a deleted record) is stamped silently; every role write stamps the new `k`
@@ -11710,7 +11890,7 @@ export default function LifeManager() {
     return s;
   });
   /* Time log and budget (v28) — records and a setting, never measures (rules 8, 9). `addTimeLog` / `removeTimeLog` write
-     `timeLog` only; `setBizHours` and `setWorkInAi` write `settings` only. */
+     `timeLog` only; `setBizHours`, `setWorkInAi` and `setCheckNotify` write `settings` only. */
   const addTimeLog = (next) => {
     const rec = { id: uid(), date: next.date, track: trackOf(next, "biz"), minutes: next.minutes, createdAt: today };
     const refused = recordFits(rec, 0, "시간 기록을");
@@ -11733,6 +11913,24 @@ export default function LifeManager() {
   const setWorkInAi = (on) => {
     setState((prev) => { const s = structuredClone(prev); s.settings = { ...(s.settings || {}), workInAi: on === true }; return s; });
     showToast({ msg: on ? "직장 기록 AI 포함 켜짐" : "직장 기록 AI 포함 꺼짐" });
+  };
+  // The `확인 필요` switch: on asks for the notification permission first and writes nothing when it is refused (the
+  // sheet states the refusal from the returned "denied"); off clears the periodic sync, the notification and the cache.
+  const setCheckNotify = async (on) => {
+    const write = (v) => setState((prev) => { const s = structuredClone(prev); s.settings = { ...(s.settings || {}), checkNotify: v }; return s; });
+    if (!on) {
+      write(false);
+      showToast({ msg: "확인 필요 알림 꺼짐" });
+      checkNotifyTeardown();
+      return "";
+    }
+    let res = "denied";
+    try { res = await Notification.requestPermission(); } catch { /* no API or refused */ }
+    if (res !== "granted") return "denied";
+    write(true);
+    showToast({ msg: "확인 필요 알림 켜짐" });
+    checkSyncRegister();
+    return "";
   };
   const removeWork = (id) => {
     const cur = (state.work || []).find((w) => w.id === id);
@@ -12212,7 +12410,7 @@ export default function LifeManager() {
           after the next onboarding or demo entry. The reset itself still asks nothing (TD-26). */}
       {modal?.type === "settings" && (
         <SettingsModal state={state} onClose={() => setModal(null)}
-          onRoleModel={() => setModal({ type: "role" })} onSetBizHours={setBizHours} onSetWorkInAi={setWorkInAi}
+          onRoleModel={() => setModal({ type: "role" })} onSetBizHours={setBizHours} onSetWorkInAi={setWorkInAi} onSetCheckNotify={setCheckNotify}
           onExport={exportBackup} onImport={askImport}
           onReset={() => { setModal(null); resetAll(); }} />
       )}
