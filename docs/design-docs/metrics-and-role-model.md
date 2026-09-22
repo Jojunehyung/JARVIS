@@ -157,7 +157,10 @@ Opened from the `롤모델` screen's (`RoleModal`, since the role-screen rewrite
 `AI에게 판정 묻기 ›` button (`modal.type: "roleVerdict"`, `roleVerdict` 39th value), disabled until `role.story`
 is set, with the caption `먼저 원하는 모습을 적고 저장해요 — 적은 글이 패킷에 실려요.` (reworded with the story
 section 2026-09-18, second change; the sheet itself is unchanged below). Three steps sharing `PacketSendPane` / `ReplyPastePane` / `copyPacket` with the other bridge
-modals: **send** (the packet and its privacy caption); **paste** (`ReplyPastePane`, pre-ticks every
+modals: **send** (the packet and its privacy caption — `…이름·생년월일·연락처·학교·회사명·고객사 이름` ends `은
+실리지 않아요` while the day-job-in-AI-packets settings switch is on (the default), or `·직장 트랙 기록은 실리지
+않아요` while it is off, 2026-09-22,
+[SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22)); **paste** (`ReplyPastePane`, pre-ticks every
 non-rejected stage and area row on `읽기`); **confirm** — a verdict block (`AI 판단 · 검증되지 않음 · {today}`,
 the summary, `근거:`/`현재 위치:` lines, gap lines, or `판정 없음 — 답변에 verdict가
 없어요` without one — no probability line since 2026-09-18, third role-model change of the day), then tickable stage rows (name, `why` or `근거 없음`, one mono condition line each, a

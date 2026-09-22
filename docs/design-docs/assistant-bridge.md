@@ -66,36 +66,51 @@ Originally extracted from `RoleAdviceModal`; shared, unchanged in its own filter
 The bridge carries **five** packets in total (2026-09-17/18): the daily check-in, `오늘 업무 만들기`,
 `AI에게 회의 준비 묻기`, the fourth, `주간 회고` (v28), and the fifth, `AI에게 판정 묻기` (2026-09-18), below.
 
-## Tracks (v28) — what leaves the device
+## Tracks — what leaves the device, and the day-job switch (v28; the switch 2026-09-22)
 
 Every project, document, event, work item, meeting and deal carries or derives a `track`
 (`work`/`직장`, `biz`/`사업`, `personal`/`개인` — see [meetings.md](../product-specs/meetings.md#tracks-v28)).
-`PACKET_TRACKS = ["biz", "personal"]` — a `work`-track record **never** leaves the device through any of the
-four packets below; the day-job track is the safe default (a record wrongly left on it is only absent from a
-packet, never leaked), and there is no per-record override ([TD-73](../exec-plans/tech-debt-tracker.md)).
+Whether a `work`-track record leaves the device through a packet is a settings switch,
+`settings.workInAi`, **on by default** (absent reads as `true`; no schema migration — `설정 › AI 요청문 ›
+직장 기록을 AI 요청문에 포함`). `packetTracks(state)` is the single helper every packet reads:
+`workInAiOf(state) ? TRACKS : PACKET_TRACKS_NO_WORK`, where `TRACKS = ["work", "biz", "personal"]` and
+`PACKET_TRACKS_NO_WORK = ["biz", "personal"]`. **With the switch on (the default), a `work`-track record goes
+into every packet that would otherwise carry it, exactly like a business or private record; with it off, a
+`work`-track record never leaves the device through any of the four packets below** — the day-job track is
+still the safe default in either state (a record wrongly left on it is only ever absent, never leaked beyond
+what the switch allows), and there is no per-record override — the switch is global
+([TD-73](../exec-plans/tech-debt-tracker.md)).
 
 | Packet | Filter |
 |---|---|
-| Daily check-in (`buildAssistantPacket`) | `briefLines` keeps only briefing items with no `track` or a track in `PACKET_TRACKS`, and additionally drops any item with `packet: false` (the v28 lead/notice count lines, below); `eventLines` filters by the event's own track; `bizPacketLines` filters deals by `trackOf(d, "biz")` and recomputes its summary line over that filtered list, so the section's totals can never disagree with the lines it names |
-| `오늘 업무 만들기` (`buildWorkPacket`) | `meetings` filtered by `PACKET_TRACKS.includes(meetingTrack(state, m))` before the slice; `eventLines` and the work-record section filtered by track; `taskLines` unchanged (a task has no track) |
-| `AI에게 회의 준비 묻기` (`buildPrepPacket`) | `docs` filtered by `trackOf(d)`; `dealsOfProject`'s result filtered by `trackOf(d, "biz")`; when the event's own track is outside `PACKET_TRACKS`, the function returns just the header plus `## 회의` with the single line `- 직장 트랙 일정 — AI 패킷에 실리지 않아요` |
-| `주간 회고` (`buildReviewPacket`, v28) | business track only by construction — see below |
-| `AI에게 판정 묻기` (`buildRoleVerdictPacket`, 2026-09-18) | record counts computed over `deals`/`milestones` filtered by `PACKET_TRACKS`; portfolio, leads and notices carry no track ([TD-78](../exec-plans/tech-debt-tracker.md)) and are counted whole — counts only, never a name — see below |
+| Daily check-in (`buildAssistantPacket`) | `briefLines` keeps only briefing items with no `track` or a track in `packetTracks(state)`, and additionally drops any item with `packet: false` (the v28 lead/notice count lines, below); `eventLines` filters by the event's own track; `bizPacketLines` filters deals by `trackOf(d, "biz")` and recomputes its summary line over that filtered list, so the section's totals can never disagree with the lines it names |
+| `오늘 업무 만들기` (`buildWorkPacket`) | `meetings` filtered by `packetTracks(state).includes(meetingTrack(state, m))` before the slice; `eventLines` and the work-record section filtered by track; `taskLines` unchanged (a task has no track) |
+| `AI에게 회의 준비 묻기` (`buildPrepPacket`) | `docs` filtered by `trackOf(d)`; `dealsOfProject`'s result filtered by `trackOf(d, "biz")`; when the event's own track is outside `packetTracks(state)`, the function returns just the header plus `## 회의` with the single line `- 직장 트랙 일정 — AI 패킷에 실리지 않아요` |
+| `주간 회고` (`buildReviewPacket`, v28) | business track only by construction, unaffected by the switch — see below |
+| `AI에게 판정 묻기` (`buildRoleVerdictPacket`, 2026-09-18) | record counts computed over `deals`/`milestones` filtered by `packetTracks(state)`; portfolio, leads and notices carry no track ([TD-78](../exec-plans/tech-debt-tracker.md)) and are counted whole — counts only, never a name — see below |
 
-Captions state the exclusion in the send pane itself: `BridgeModal`'s and `WorkBridgeModal`'s captions each gain
-the sentence `직장 트랙 기록은 실리지 않아요.`; `PrepBridgeModal`'s gains `직장 트랙 문서·계약은 실리지 않아요.`
+Captions state the exclusion in the send pane itself, **only while the switch is off**: `BridgeModal`'s and
+`WorkBridgeModal`'s captions each gain the sentence `직장 트랙 기록은 실리지 않아요.`; `PrepBridgeModal`'s gains
+`직장 트랙 문서·계약은 실리지 않아요.`; the role-verdict caption's `고객사 이름·직장 트랙 기록은 실리지 않아요`
+becomes `고객사 이름은 실리지 않아요` while the switch is on. The `트랙` chip row on every record form
+(`TrackRow`) shows `직장 트랙은 AI 패킷에 실리지 않아요.` only while the switch is off; while it is on, the row
+carries no caption. The demo build measures the effect directly: with `settings.workInAi` absent (on), the demo
+work packet gains the day-job meeting, its work item and its event — 2,650 → 2,925 characters; the demo daily
+packet, 2,419 → 2,445 (the extra briefing line pushes `[주간 리뷰]` out at its 12-line cap, [Rule
+13](core-beliefs.md#rule-13) — nothing is softened, a line is dropped by the same cap rule that already governed
+it). With the switch off, every packet is byte-identical to the build before this switch existed.
 
 ## The bridge — `buildAssistantPacket(state, today)`
 A text packet the user copies into an external chat. It opens with the role and the four rules the assistant must follow (facts and numbers only, `해요체`, no judging scores or difficulty, proposals limited to day-sized tasks under an existing goal whose title names the activity (`제목에 독서·운동처럼 활동을 그대로 적어요.`) — never a certification, an exam, or a business record — and a closing JSON block whose template no longer offers a `kind` field), then the data:
 
 | Section | Content | Cap |
 |---|---|---|
-| `## 오늘 브리핑` | briefing lines of severity 2 and above — since schema v26 this includes the `회의 준비` section's counts (`오늘 회의 준비 {n}건`, and, once any follow-up is overdue, `후속 기한 지남 {n}건 · 내 담당 {m}건`) whenever their severity qualifies, and the carried-work line (`이월 업무 {n}건 · 최장 {d}일`) when it does — never a meeting or follow-up title. `briefLines` additionally drops any item with `track` outside `PACKET_TRACKS` and, since v28, any item flagged `packet: false` — the lead-count and open-notice lines carry that flag so they never reach this packet even though their severity would otherwise qualify (a demo run without the flag pushed `[주간 리뷰] 이번 주 리뷰 없음` out of this cap; the flag is the one-condition fix) | 12 |
+| `## 오늘 브리핑` | briefing lines of severity 2 and above — since schema v26 this includes the `회의 준비` section's counts (`오늘 회의 준비 {n}건`, and, once any follow-up is overdue, `후속 기한 지남 {n}건 · 내 담당 {m}건`) whenever their severity qualifies, and the carried-work line (`이월 업무 {n}건 · 최장 {d}일`) when it does — never a meeting or follow-up title. `briefLines` additionally drops any item with `track` outside `packetTracks(state)` (only the day-job track while the switch above is off) and, since v28, any item flagged `packet: false` — the lead-count and open-notice lines carry that flag so they never reach this packet even though their severity would otherwise qualify (a demo run without the flag pushed `[주간 리뷰] 이번 주 리뷰 없음` out of this cap; the flag is the one-condition fix) | 12 |
 | `## 이력` | one line built from `cvSummaryOf(profile, today)` — the same helper the home CV's `학력` / `경력` rows read ([home.md](../product-specs/home.md)), lifted out of this function 2026-09-15 so the two surfaces cannot state a different degree or role: degree + status label (`박사 졸업`, not a bare `박사` — `topEdu` falls back to the most recent entry when nothing is completed, and a bare degree would imply one the user does not hold) + major/field (or `전공 미기재`), then total practice months (`careerMonths`) + the latest role; `학력 미입력` when there is no education entry at all, `경력 없음` when there is no career entry, and `- 없음` for the whole line only when both are absent (`cvSummaryOf(...).any` false). Deliberately excludes `profile.name`, `birth`, `email`, `phone`, the school name and the employer name — a school or an employer identifies a person nearly as well as a name does, and this is the one place data leaves the device by design (see `docs/SECURITY.md`) | 1 |
 | `## 목표` | active goals: deadline, D-day, progress, pace, KR remainders | 5 goals × 4 KRs |
 | `## 열린 실행` | the agenda in order: goal, title, difficulty, cadence, due | 12 |
 | `## 다가오는 일정 (14일)` | `- {date} {HH:MM\|시간 미정} · {약속\|마감} · {title}{ · 반복 {매일\|매주\|매월}}`, date-ascending from `upcomingEvents(state, today, PACKET_EVENT_DAYS)`; the heading and the window read the same constant | 8 |
-| `## 사업 (계약·매출)` | the summary line `- 이번 달 계약 {won} · 입금 확인 {won} · 남은 계약 {won} · 견적 대기 {won}`, then (v28) `- 입금 예정 {kind} {due} {client} {title} {won}` per payment line of an allowed deal (` · 입금 확인 {paidAt}` when paid), then `- 미수 {month} {client} {title} {won}` per unpaid billed month, then `- {진행 중\|예정} {client} {title} · {startMonth} ~ {endMonth} · 월 {won}` for `active`/`upcoming` deals — `bizPacketLines(state, today)` (2026-09-17, lifted to module level so the work packet below reuses it), built from the same `bizSummary` the tab and the briefing read, filtered to `PACKET_TRACKS` deals (v28), before the journal-trim loop below so its cap and behaviour are unaffected. A milestone, a lead and a notice **never** appear here — only the fourth packet (`주간 회고`, below) carries the roadmap, the pipeline and open notices | `PACKET_BIZ_LINES` = 6 |
+| `## 사업 (계약·매출)` | the summary line `- 이번 달 계약 {won} · 입금 확인 {won} · 남은 계약 {won} · 견적 대기 {won}`, then (v28) `- 입금 예정 {kind} {due} {client} {title} {won}` per payment line of an allowed deal (` · 입금 확인 {paidAt}` when paid), then `- 미수 {month} {client} {title} {won}` per unpaid billed month, then `- {진행 중\|예정} {client} {title} · {startMonth} ~ {endMonth} · 월 {won}` for `active`/`upcoming` deals — `bizPacketLines(state, today)` (2026-09-17, lifted to module level so the work packet below reuses it), built from the same `bizSummary` the tab and the briefing read, filtered to `packetTracks(state)` deals (v28), before the journal-trim loop below so its cap and behaviour are unaffected. A milestone, a lead and a notice **never** appear here — only the fourth packet (`주간 회고`, below) carries the roadmap, the pipeline and open notices | `PACKET_BIZ_LINES` = 6 |
 | `## 최근 일지 (7일)` | journal entries clipped to 200 characters | 7 |
 | `## 최근 주간 리뷰` | the newest review | 1 |
 | `## 연속·롤모델` | streak, shields, the role-model stage line (`- 롤모델 {name} · 단계 k/n · 조건 c/m`, `- 롤모델 {name} · 단계 없음`, or `- 롤모델 미설정` — no percentage since the [Rule 14](core-beliefs.md#rule-14) amendment of 2026-09-18) | 2 lines |
@@ -256,7 +271,7 @@ the packet always reads the stored review, never an unsaved draft ([../product-s
 It needs **no Rule 7 amendment**: the reply is read by the unchanged `parseWorkReply` (key `work` only, exactly
 as `오늘 업무 만들기`'s reply is) and registered by `importWork`, which gains an optional `date` (next Monday)
 and `track` (`biz`) argument — no new stored key, no network call. Business track of the current week only
-(`mondayOf(today)`) — **no day-job or private record, no `## 이력` line, no profile identifier, no transcript,
+(`mondayOf(today)`), unaffected by the day-job switch above — **no day-job or private record, no `## 이력` line, no profile identifier, no transcript,
 and no body of a meeting flagged `aiHidden`** (its follow-ups stay out too); a milestone whose `milestoneTrack`
 is `work` also stays out.
 
@@ -333,7 +348,7 @@ section documents the packet and the parser only.
 | `## 이력` | the same `cvSummaryOf` line every packet states — never `profile.name`, `birth`, `email`, `phone`, a school or an employer |
 | `## 영역 등급` | one line per area: grade name and `n/9`, plus ` · 요구 {RANKS[need].name}` when `role.targets[id] > 0` |
 | `## 보유 자격·시험` | held certifications (`heldCertsOf`) and exam bests (`examBestText`), or `- 자격 없음` / `- 시험 없음` |
-| `## 기록 요약` | counts only, computed over `deals`/`milestones` filtered by `PACKET_TRACKS` (won/active/upcoming contract counts, this month's revenue, portfolio and AI-portfolio counts, milestone completion, per-stage lead counts, per-status notice counts) — never a deal title, client, lead name, notice title, milestone title, project or work item; a day-job record's existence is not counted |
+| `## 기록 요약` | counts only, computed over `deals`/`milestones` filtered by `packetTracks(state)` (won/active/upcoming contract counts, this month's revenue, portfolio and AI-portfolio counts, milestone completion, per-stage lead counts, per-status notice counts) — never a deal title, client, lead name, notice title, milestone title, project or work item; a day-job record's own count is counted only while the switch above is on |
 | `## 현재 단계` | per stage, its name and (unless trimmed) one line per condition value, or `- 없음` without stages |
 | `## 지난 판정` | `- {date} · 단계 {k}/{n} · {clipped summary}` for the newest verdict, or `- 없음` — no probability figure since 2026-09-18 (third role-model change of the day) |
 
@@ -382,8 +397,9 @@ summary/basis/position/gaps text (no probability, 2026-09-18).
 
 ### What the role verdict packet never carries
 
-Never `profile.name`, `birth`, `email`, `phone`, a school name, an employer name, a client or lead name, a
-day-job record, or a transcript, and makes no network call. The daily packet and the briefing stay
+Never `profile.name`, `birth`, `email`, `phone`, a school name, an employer name, a client or lead name, or a
+transcript, and makes no network call; a day-job record's own name or text never enters — only its count in `##
+기록 요약`, and only while the day-job switch (above) is on. The daily packet and the briefing stay
 byte-identical, since the re-assessment line lives in the reader, not the briefing (`buildBriefing` is
 unchanged; [../product-specs/daily-reader.md](../product-specs/daily-reader.md#the-role-verdict-section)) — and,
 since 2026-09-18 (third role-model change of the day, [Rule 14](core-beliefs.md#rule-14) amendment), no packet

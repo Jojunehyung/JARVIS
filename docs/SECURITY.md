@@ -23,20 +23,33 @@ Life Manager is a local-only, single-user web app with no backend, no accounts, 
   item, memo and deal also carries a `track` (`직장`/`사업`/`개인`) — see "Tracks" below. All of it sits in the
   same unencrypted `liferpg-state-v1` key, with no separate handling.
 
-## Tracks (v28) — the day-job filter
+## Tracks — the day-job switch (2026-09-22)
 
 Every project, document, event, work item and deal carries a `track` (a project meeting derives its own from
-its project; a project-less memo carries its own field); the safe default is `"work"` (the day job), so a
-record wrongly left untracked is only **absent** from an AI packet, never leaked into one. **A `직장`-track
-record never leaves the device through any of the five AI packets** — the daily check-in, `오늘 업무 만들기`,
-`AI에게 회의 준비 묻기`, `주간 회고`, or `AI에게 판정 묻기` (2026-09-18, below) — each filters by `PACKET_TRACKS = ["biz", "personal"]` before
-building its text; the meeting-prep card states everything about a day-job event on-device (project name, last
-meeting, follow-ups, progress) but replaces its `AI에게 회의 준비 묻기` button with the line `직장 트랙 — AI
-패킷에 실리지 않아요`, so the one path that would send it stays unreachable. There is **no per-record override**:
-the app deliberately gives the user no "send this one to AI anyway" toggle for a `직장`-track record, since one
-tap would be the only thing standing between confidential day-job data and an external chat
-([TD-73](exec-plans/tech-debt-tracker.md), backlog if the user asks). The calendar file (below) is the one
-surface that includes every track, because the phone calendar is the user's own device, not an external chat.
+its project; a project-less memo carries its own field); the safe default is `"work"` (the day job). Whether a
+`직장`-track record enters an AI packet is now a settings switch, **`settings.workInAi`, on by default**
+(absent reads as `true`; no schema migration, still v28) — `직장 기록을 AI 요청문에 포함` in `설정 › AI 요청문`.
+`packetTracks(state)` (`workInAiOf(state) ? TRACKS : PACKET_TRACKS_NO_WORK`) is the single source every packet
+reads: `TRACKS = ["work", "biz", "personal"]` while the switch is on, `PACKET_TRACKS_NO_WORK = ["biz",
+"personal"]` while it is off. **With the switch on (the default), a `직장`-track record goes into every one of
+the five AI packets that would otherwise carry it** — the daily check-in, `오늘 업무 만들기`, `AI에게 회의 준비 묻기`,
+and (through the count-only fields it touches) `AI에게 판정 묻기`; `주간 회고` stays business-track only regardless
+of the switch, by scope, not by the filter (below). **With the switch off, a `직장`-track record never leaves the
+device through any of the five AI packets**, exactly as it did before this switch existed: the meeting-prep card
+states everything about a day-job event on-device (project name, last meeting, follow-ups, progress) but replaces
+its `AI에게 회의 준비 묻기` button with the line `직장 트랙 — AI 패킷에 실리지 않아요`, and every form's track-row caption
+(`직장 트랙은 AI 패킷에 실리지 않아요.`) reappears. There is **no per-record override**: the switch is the only control,
+global, not per meeting or per event — the app still gives the user no "send this one only" toggle
+([TD-73](exec-plans/tech-debt-tracker.md), backlog if the user asks). The per-meeting `AI에 보내지 않기` flag
+(`aiHidden`), the transcript exclusion and the profile-identifier exclusions apply unconditionally, in both
+states of the switch. The calendar file (below) is the one surface that always includes every track regardless
+of the switch, because the phone calendar is the user's own device, not an external chat.
+
+Reasoning for the default ([decision-log](design-docs/decision-log.md), 2026-09-22): since schema v28 backfilled
+every existing record to the `work` track, the v28 default silently excluded exactly the records — day-job
+meetings, work items, schedule — that `AI로 만들기` on the `업무` tab exists to summarise; the switch defaults
+on so the feature works out of the box, and a user who must keep a specific day's company data off the clipboard
+turns it off for that session.
 
 ## Data in transit
 None by the app. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static. The calendar export ("The calendar file", below) is the one other place item titles leave the app, through a file the user hands to their own calendar app.
@@ -45,13 +58,14 @@ The assistant bridge carries **five** packets, all text, all copy/paste only, al
 
 - **The daily check-in** (`AI에게 보내기`, `buildAssistantPacket`): goals, open tasks, the last seven journal entries, the last weekly review, the streak and the role-model's stage line (`단계 k/n · 조건 c/m`, or `단계 없음`/미설정 — no percentage since the [Rule 14](design-docs/core-beliefs.md#rule-14) amendment of 2026-09-18), and, since schema v21, one `## 이력` line stating degree, department/field, total months of practice and the most recent role — into a textarea and the clipboard; never photos. It never carries a meeting or a work item: `buildAssistantPacket` does not read `meetingProjects`, `meetings` or `work` ([product-specs/meetings.md](product-specs/meetings.md)). The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score.
 - **`오늘 업무 만들기`** (`buildWorkPacket`, schema v25, 2026-09-17): the same goals/tasks/schedule/business facts, plus what the daily packet never carries — the newest meeting minutes (summary, decisions) and their progress entries, and every undone work item carried into today plus yesterday's and today's own items, so the assistant does not repeat a proposal. Since schema v26 (2026-09-17), each visible meeting's follow-up items are also stated in full — owner flag, due date, done state and text, one line per item (open ones first). This is the user's own decision, reversing the 2026-09-16 default that the packet never reads a meeting: **every meeting is included by default**, except one flagged `aiHidden` (a per-meeting checkbox in `MeetingModal`, `AI에 보내지 않기`), whose line states only its date and title — no summary, decisions, follow-ups, progress, or project name (unchanged by v26). A project-less urgent memo (2026-09-17) is included the same way, printing `[프로젝트 없음]` in place of a project name. The reply's `work` array is read by `parseWorkReply`; each proposal becomes a work item, `source: "ai"`, only once the user ticks it in the confirm view. The raw reply is never stored (unlike the daily packet's `journal[].ai`).
-- **`AI에게 회의 준비 묻기`** (`buildPrepPacket`, schema v27, 2026-09-17): built for one schedule event that belongs to a meeting project — the event line, the project's newest meetings (a hidden one contributing date and title only), the project's document title and summary (never `source`), the open tasks those meetings link, the contracts of the same client when derivable, and the event's existing checks so they are not re-proposed. **Never** the profile identifiers, a transcript, an event's `place`/`note`, or a document's `source`. Since v28, a document or a contract on the `직장` track is filtered out even when the event's own track is a packet track, and an event on the `직장` track produces only `## 회의` with the line `직장 트랙 일정 — AI 패킷에 실리지 않아요` in place of everything else. The reply's `checks` array is read by `parsePrepReply`; each proposal becomes a check item, `source: "ai"`, only once ticked. The raw reply is never stored. See [design-docs/assistant-bridge.md](design-docs/assistant-bridge.md) (the third packet) and `tools/e2e/flow11.js` step 22 for the proof that the exclusions hold.
+- **`AI에게 회의 준비 묻기`** (`buildPrepPacket`, schema v27, 2026-09-17): built for one schedule event that belongs to a meeting project — the event line, the project's newest meetings (a hidden one contributing date and title only), the project's document title and summary (never `source`), the open tasks those meetings link, the contracts of the same client when derivable, and the event's existing checks so they are not re-proposed. **Never** the profile identifiers, a transcript, an event's `place`/`note`, or a document's `source`. While the day-job switch (above) is off, a document or a contract on the `직장` track is filtered out even when the event's own track is on a packet track, and an event on the `직장` track produces only `## 회의` with the line `직장 트랙 일정 — AI 패킷에 실리지 않아요` in place of everything else; while the switch is on (the default), a day-job event's project, meetings, documents and contracts are stated the same way a business-track event's are. The reply's `checks` array is read by `parsePrepReply`; each proposal becomes a check item, `source: "ai"`, only once ticked. The raw reply is never stored. See [design-docs/assistant-bridge.md](design-docs/assistant-bridge.md) (the third packet) and `tools/e2e/flow11.js` for the proof that the exclusions hold in both states of the switch.
 - **`주간 회고`** (`buildReviewPacket`, schema v28, 2026-09-18): opened from `ReviewModal`'s `AI에게 회고 묻기 ›`
   button, enabled only once the current week's review is saved, so it always reads the **stored** review, never
-  a draft. Business track (`사업`) of the current week only: the week's completed and open work items and open
-  follow-ups of non-hidden business meetings, the roadmap (open milestones on the business track, by
-  `milestoneTrack`), the sales pipeline, open notices, unpaid and paid lump-sum payment lines of business-track
-  deals, and the saved review's `잘된 것`/`막힌 것` text. **Never** the day-job or private track, a transcript,
+  a draft. Business track (`사업`) of the current week only, by the function's own scope (every filter tests
+  `=== "biz"` directly) — **unaffected by the day-job switch above, in either state**: the week's completed and
+  open work items and open follow-ups of non-hidden business meetings, the roadmap (open milestones on the
+  business track, by `milestoneTrack`), the sales pipeline, open notices, unpaid and paid lump-sum payment lines
+  of business-track deals, and the saved review's `잘된 것`/`막힌 것` text. **Never** the day-job or private track, a transcript,
   a profile identifier, or `## 이력`. Its reply is read by the **unchanged** `parseWorkReply` (the same `work`
   key `오늘 업무 만들기` reads); confirming registers next Monday's business work items through the same
   `importWork` path, now generalised to take a date and a track. No new stored key, no network call — this
@@ -62,11 +76,13 @@ The assistant bridge carries **five** packets, all text, all copy/paste only, al
   lives on the `롤모델` screen's `원하는 모습` section (`RoleModal`, since the role-screen rewrite a few hours
   later the same day) and `RoleVerdictModal`'s send caption repeats it; the app itself never appends an
   identifier to the story — the only fields it adds around
-  the story are the CV line, area grades and requirements, held certifications and exam bests, business/private
-  record counts (deals and milestones filtered by `PACKET_TRACKS`; portfolio, leads and notices carry no track
+  the story are the CV line, area grades and requirements, held certifications and exam bests, record
+  counts (deals and milestones filtered by `packetTracks(state)` — every track while the day-job switch above is
+  on, business/private only while it is off; portfolio, leads and notices carry no track
   and are counted whole — counts only, never a name, [TD-78](exec-plans/tech-debt-tracker.md)), the current
   stages' condition values, and the last verdict's own text. **Never** `profile.name`, `birth`, `email`,
-  `phone`, a school or an employer, a client or lead name, a day-job record or a transcript. The reply's
+  `phone`, a school or an employer, a client or lead name, or a transcript; a day-job record's own name/text
+  never enters either — only its count, and only while the switch is on. The reply's
   `verdict`/`stages`/`areas`/`note` keys are read by `parseRoleVerdictReply`; a stage or an area change is
   written only once the user ticks it, and the verdict (summary, basis, position, gaps — **no probability**,
   retired 2026-09-18, third change of the day, [Rule 14](design-docs/core-beliefs.md#rule-14) amendment) is
@@ -92,7 +108,7 @@ project); a roadmap milestone's due day and its D-7 (the title only — never pr
 contract payment line's due day, kind and client/title — **the amount is never written, on any calendar
 entry, ever**; and an open national-project notice's deadline, title and agency. **Every track is included** —
 the phone calendar is the user's own device and already carries day-job event titles, so the calendar file does
-not apply the `PACKET_TRACKS` filter the five AI packets do. Mechanics:
+not apply the `packetTracks` filter the five AI packets do, and is unaffected by the day-job switch above. Mechanics:
 [design-docs/calendar-export.md](design-docs/calendar-export.md); the sheet:
 [product-specs/schedule.md](product-specs/schedule.md).
 

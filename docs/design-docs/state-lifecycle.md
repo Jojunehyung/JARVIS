@@ -10,8 +10,9 @@ One JSON object holds everything, under one key, in the browser. It is loaded on
 
 **v28 additions (2026-09-17/18, tracks, roadmap, time budget, payments, role stages, pipeline, notices).**
 `track("work"|"biz"|"personal")` is a stored field on `events[]`, `deals[]`, `meetingProjects[]`, `work[]` and
-`documents[]` — the day job, the business or private life; a `work`-track record never enters any AI packet
-([SECURITY.md](../SECURITY.md)) — backfilled `work` (`biz` on a deal); `meetings[]` gains an optional `track?`
+`documents[]` — the day job, the business or private life; whether a `work`-track record enters an AI packet is
+the `settings.workInAi` switch, added 2026-09-22, on by default — see below and
+([SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22)) — backfilled `work` (`biz` on a deal); `meetings[]` gains an optional `track?`
 written **only for a project-less memo** (a project meeting inherits its project's track via `meetingTrack` and
 stores nothing of its own); `work[]` gains an optional `minutes?` (how long a done item took, typed on
 completion — the weekly sum reads `timeLog`, never this); `deals[]` gains an optional `payments?[{ id,
@@ -25,6 +26,12 @@ by track — a completion with minutes writes one entry with `workId`, a quick e
 `leads[]` (the hospital sales pipeline) and `notices[]` (national-project notices). `settings` is new —
 `{ bizHoursPerWeek }`, the weekly business-hours **budget** the user types, never a measure
 ([Rule 8](core-beliefs.md#rule-8)). `ui.bizView` widens to `"deals"|"rates"|"folio"|"roadmap"|"leads"|"notices"`.
+**`settings.workInAi?` (2026-09-22, still v28, no migrate block)** — whether a `work`-track record enters an AI
+packet: absent reads as `true` (on, the default — `workInAiOf(state)`); the settings checkbox writes it
+explicitly `true`/`false` (`setWorkInAi`, `SettingsModal`'s `AI 요청문` section,
+[../product-specs/home.md](../product-specs/home.md)). `packetTracks(state)` — `TRACKS` while on,
+`PACKET_TRACKS_NO_WORK = ["biz", "personal"]` while off — is the single filter every assistant-bridge packet
+reads ([assistant-bridge.md](assistant-bridge.md#tracks--what-leaves-the-device-and-the-day-job-switch-v28-the-switch-2026-09-22)).
 None of this touches a payout, a grade cut or `roleAreas`' filter; every derived value (track order, D-day,
 completion, pace, the stage and its conditions, the weekly sums, the payment figures, the calendar file's five
 new kinds) is computed at render, never stored ([Rule 9](core-beliefs.md#rule-9)).

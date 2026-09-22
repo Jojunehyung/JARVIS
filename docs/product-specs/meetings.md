@@ -93,10 +93,14 @@ meeting's project. A record of another kind whose `track` is missing (a hand-edi
 safe default — a record wrongly left on the day-job track is only absent from a packet, never leaked; there is
 no per-record "send to AI anyway" override ([TD-73](../exec-plans/tech-debt-tracker.md), backlog).
 
-- **The form row.** `TrackRow({ value, onPick, caption })`, a shared component beside `BizChips`: label `트랙`,
-  the three chips, caption `직장 트랙은 AI 패킷에 실리지 않아요.` `ProjectModal` shows it after `메모 (선택)`,
-  default `work`. `MeetingModal` shows it **only while `pid === null`** (the memo path), default `work`; picking
-  a project instead removes the row and, on submit, the record carries no `track` key at all.
+- **The form row.** `TrackRow({ value, onPick, workInAi = true })`, a shared component beside `BizChips`: label
+  `트랙`, the three chips, and, only while `workInAi` is false, the caption `직장 트랙은 AI 패킷에 실리지 않아요.`
+  (2026-09-22: the caption used to be a fixed `caption` prop; it is now conditional on the day-job-in-AI-packets
+  settings switch, `settings.workInAi` — on by default, so the caption is normally absent —
+  [assistant-bridge.md](../design-docs/assistant-bridge.md#tracks--what-leaves-the-device-and-the-day-job-switch-v28-the-switch-2026-09-22)).
+  `ProjectModal` shows the row after `메모 (선택)`, default `work`. `MeetingModal` shows it **only while
+  `pid === null`** (the memo path), default `work`; picking a project instead removes the row and, on submit, the
+  record carries no `track` key at all.
 - **`followUpWorkItem(fu, m, today, track)`** (gains a fourth argument) stamps the mirrored work item with the
   meeting's track at creation; `reconcileFollowUps` passes it through. The work item then keeps its own `track`
   field afterwards — editing the meeting's or the project's track later never rewrites an already-created work
@@ -105,15 +109,17 @@ no per-record "send to AI anyway" override ([TD-73](../exec-plans/tech-debt-trac
   before the counts on a project's section head; the memo group's own head carries no tag (a memo has no single
   track until read per row); each memo row's marker is prefixed with that memo's own track label and ` · `; each
   document row's marker becomes the track label, ` · ` and the `yy-mm-dd` date.
-- **Packet exclusion.** A `work`-track record never enters the work packet, the daily packet or a prep packet —
-  see [assistant-bridge.md](../design-docs/assistant-bridge.md) (`PACKET_TRACKS`). `buildWorkPacket` filters its
-  meetings by `PACKET_TRACKS.includes(meetingTrack(state, m))` before the slice; a linked event or deal on the
-  `work` track is never named through a live-link lookup either — `buildPrepPacket` treats a packet-track
-  event's `work`-track project as if the event had no project at all (no project name, minutes, documents or
-  contracts), and `meetingPacketLines`' `일정:` fact line omits a linked event's title when that event is
-  currently on the `work` track (a **deleted** link is still stated as gone). `MeetingPrepCard`'s block for a
-  `work`-track event replaces the `AI에게 회의 준비 묻기` button with the line `직장 트랙 — AI 패킷에 실리지
-  않아요` and states the event's track label on its second line.
+- **Packet inclusion, gated by a settings switch (2026-09-22).** Whether a `work`-track record enters the work
+  packet, the daily packet or a prep packet is `settings.workInAi` — **on by default** — see
+  [assistant-bridge.md](../design-docs/assistant-bridge.md) (`packetTracks`). While the switch is off, `buildWorkPacket`
+  filters its meetings by `packetTracks(state).includes(meetingTrack(state, m))` before the slice; a linked event or
+  deal on the `work` track is never named through a live-link lookup either — `buildPrepPacket` treats a
+  packet-track event's `work`-track project as if the event had no project at all (no project name, minutes,
+  documents or contracts), and `meetingPacketLines`' `일정:` fact line omits a linked event's title when that
+  event is currently on the `work` track (a **deleted** link is still stated as gone). `MeetingPrepCard`'s block
+  for a `work`-track event replaces the `AI에게 회의 준비 묻기` button with the line `직장 트랙 — AI 패킷에 실리지
+  않아요` and states the event's track label on its second line. While the switch is on (the default), the same
+  meeting, event, deal and link are stated exactly as a business-track one would be.
 - **Order.** Every surface that lists mixed-track records — the reader, the briefing, the work tab — orders
   `직장` first, then `사업`, then `개인`: the day job's items must not slip, so they lead; see
   [daily-work.md](daily-work.md), [daily-reader.md](daily-reader.md), [daily-briefing.md](daily-briefing.md).

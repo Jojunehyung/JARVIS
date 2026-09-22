@@ -336,7 +336,9 @@ days)`. `calendarExportOf` reads `state.events`, `state.tasks` and `state.goals`
 | Business (`deals`/`rates`/`folio`) amounts, portfolio, hospital leads, an event's `place`/`note`, documents, transcripts, `profile`/CV, `journal`, `reviews`, achievements, grades, exams, evidence | never | see [../SECURITY.md](../SECURITY.md) |
 
 **Every track is included** (v28) — the phone calendar is the user's own device and already carries day-job
-event titles, so nothing here is filtered by `PACKET_TRACKS` the way the AI packets are; see
+event titles, so nothing here is filtered by `packetTracks(state)` the way the AI packets are, and this file is
+unaffected by the day-job-in-AI-packets settings switch (2026-09-22,
+[../SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22)); see
 [../design-docs/calendar-export.md](../design-docs/calendar-export.md).
 
 A one-off event is left out both when its date is ticked (in `doneDates`) and when its date is in `skip` —

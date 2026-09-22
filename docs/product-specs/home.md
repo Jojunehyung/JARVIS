@@ -78,6 +78,15 @@ Opened by the CV's corner button. Title `설정`, a bottom sheet like every othe
   a measure: the weekly sum itself is always derived from dated `timeLog` entries, never stored
   ([Rule 8](../design-docs/core-beliefs.md#rule-8)). Screen and time-log mechanics:
   [daily-work.md](daily-work.md#weekly-time-budget-v28).
+- `AI 요청문` (2026-09-22, between `사업 시간` and `데이터`): `SectionLabel`, one checkbox row `직장 기록을 AI 요청문에
+  포함` (`checked={workInAiOf(state)}`) → `onSetWorkInAi(e.target.checked)` (root `setWorkInAi`, writes
+  `settings.workInAi` only, an explicit `true`/`false`, toast `직장 기록 AI 포함 켜짐` / `직장 기록 AI 포함 꺼짐`),
+  and a caption that switches with the checkbox: on (the default, since `settings.workInAi` is absent until the
+  user touches it) — `직장 트랙 회의록·업무·일정도 AI 요청문에 실려요. 회사 자료를 보내면 안 되는 날엔 꺼요.
+  회의록마다 'AI에 보내지 않기'는 그대로 적용돼요.`; off — `직장 트랙 기록은 AI 요청문에 실리지 않아요.` The
+  switch is the single source every assistant-bridge packet reads (`packetTracks(state)`); mechanics:
+  [assistant-bridge.md](../design-docs/assistant-bridge.md#tracks--what-leaves-the-device-and-the-day-job-switch-v28-the-switch-2026-09-22),
+  [SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22).
 - `데이터 — 백업 · 초기화`: the backup sentence, `백업 내보내기` → `exportBackup`, `백업 불러오기` → `askImport`, then `데이터 초기화` → `onReset`. No `<input type="file">` inside the modal — `askImport` drives the one hidden input mounted on `Shell` (R-14, [tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md)), so the modal closing mid-pick cannot take it down. The root wires `onReset={() => { setModal(null); resetAll(); }}` — `resetAll` never clears `modal` itself, so without the explicit close the sheet would reappear over the app after the next onboarding or demo entry. `resetAll` is otherwise byte-identical and still asks nothing before it runs ([TD-26](../exec-plans/tech-debt-tracker.md), unresolved).
 
 Backup and reset mechanics (file shape, validation, toasts): [install-and-backup.md](install-and-backup.md).
@@ -93,6 +102,7 @@ Opened by the CV's `성취` row. Title `성취의 벽`, read-only — the former
 | `onRoleAdvice` → `RoleAdviceModal`, growth `방향 제안` button | the home stage/role row and the briefing's `다음 단계` line — all renamed `onRole` → the `롤모델` screen (`RoleModal`), `RoleAdviceModal` retired 2026-09-18; the row's own proximity percentage and the CV's third-state `근접도 계산 대상 없음` button were themselves retired later the same day (third role-model change, [Rule 14](../design-docs/core-beliefs.md#rule-14) amendment) |
 | per-area proximity lines and squared bars, growth headline | `RoleGradeSection`, collapsed by default under the `롤모델` screen's `영역 등급` section (moved verbatim from `RoleAdviceModal`, 2026-09-18); the bars and their legend paragraph were retired the same day, third role-model change — only the per-area requirement lines remain |
 | `onExport` / `onImport`, growth data section | `SettingsModal` |
+| (new, 2026-09-22) | `onSetWorkInAi` → `setWorkInAi`, `SettingsModal`'s `AI 요청문` section — writes `settings.workInAi` only |
 | `onReset` → `resetAll`, growth data section | `SettingsModal`, with `setModal(null)` fired first |
 | trophy strip, specialisation lines, exam bests, per-area achievement lists, growth `성취의 벽` | `AchievementWallModal` from the CV's `성취` row; the CV states only the counts |
 | `브리핑 열기 ›`, home's `오늘 브리핑` card | `할 일` tab header chip row (named `실행` at the time; renamed 2026-09-16 — [tasks.md](tasks.md), [daily-briefing.md](daily-briefing.md)) |

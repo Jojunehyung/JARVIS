@@ -131,7 +131,8 @@ Since schema v28, `calendarExportOf` additionally reads `meetings[].followUps`, 
 `state.milestones`, `deals[].payments` and `state.notices`. Every new entry is all-day and alarms at the chosen
 reminder time (built through the same `entry(source, uid, date, summary, body)` helper the existing kinds use);
 **every track is included** — the phone calendar is the user's own device and already carries day-job event
-titles, so nothing here is filtered by `PACKET_TRACKS` the way the three AI packets are.
+titles, so nothing here is filtered by `packetTracks(state)` the way the five AI packets are, and this file is
+unaffected by the day-job-in-AI-packets settings switch ([SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22)).
 
 | Kind (`source`) | Written when | UID | Summary | Description | Skipped when |
 |---|---|---|---|---|---|

@@ -182,10 +182,13 @@ progress lines or `진행사항 없음`, and up to `PREP_TASKS` (5) linked-task 
 On-device only, so a meeting flagged `aiHidden` is stated in full here. Line 2 gains (v28) ` · ` and the event's
 own track label.
 
-For a row whose event is on the `work` track (v28), the block's `AI에게 회의 준비 묻기` button (below) is
-replaced by the line `직장 트랙 — AI 패킷에 실리지 않아요` (`text-xs text-zinc-500`) — the block still states
-everything on-device (the project name, the last meeting, its follow-ups and progress), since none of that
-leaves the device; only the ask-AI path is withheld, the same rule the prep packet itself enforces
+For a row whose event is on the `work` track (v28), whether the block's `AI에게 회의 준비 묻기` button (below)
+shows or is replaced by the line `직장 트랙 — AI 패킷에 실리지 않아요` (`text-xs text-zinc-500`) is the
+day-job-in-AI-packets settings switch (`settings.workInAi`, 2026-09-22,
+[SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22)) — **on by default**, so the button shows
+for a day-job row exactly as for any other. While the switch is off, the block still states everything
+on-device (the project name, the last meeting, its follow-ups and progress), since none of that leaves the
+device; only the ask-AI path is withheld, the same rule the prep packet itself enforces
 ([documents.md](documents.md), [assistant-bridge.md](../design-docs/assistant-bridge.md)).
 
 Then (schema v27, [documents.md](documents.md)) `문서 {n}건` and up to `PREP_DOCS` (5) of the project's
@@ -264,7 +267,9 @@ proposal has no goal, difficulty or type to choose.
    `AI 답변 붙여넣기 ›`. Caption (2026-09-17, gained one sentence; v28 gained a second): `아래 글을 복사해
    Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과
    진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를
-   켜요. 직장 트랙 기록은 실리지 않아요.`
+   켜요.` — plus, **only while the day-job-in-AI-packets settings switch is off** (`settings.workInAi`,
+   2026-09-22, on by default, [SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22)), the sentence
+   `직장 트랙 기록은 실리지 않아요.`
 2. **Paste** (`AI 답변 붙여넣기`): a textarea (`AI 답변을 여기에 붙여넣어요`) and `답변 확인`, which runs
    `parseWorkReply` and pre-ticks every non-rejected proposal.
 3. **Confirm**: `제안 업무 확인 — {n}건`, the reply's own `note` line, then one row per proposal — a checkbox

@@ -127,9 +127,12 @@ change — the whole state travels, and `migrate` adds the empty array to an old
 - **The prep packet** (`buildPrepPacket`, `AI에게 회의 준비 묻기`, [assistant-bridge.md](../design-docs/assistant-bridge.md)):
   title and summary only, up to `PREP_PACKET_DOCS` (10), clipped at `PREP_PACKET_DOC_CLIP` (1,500, trimmed to 500
   under the packet's own cap) — **never `source`**, since a file name or a link can name a drive or a person.
-  Since v28, the document list is filtered by `trackOf(d)` first: a `work`-track document never reaches this
-  packet even when it belongs to a matched project, and when the event's own track is outside `PACKET_TRACKS`
-  the function returns the header plus a single `## 회의` line, `직장 트랙 일정 — AI 패킷에 실리지 않아요`.
+  Since v28, the document list is filtered by `trackOf(d)` first: while the day-job-in-AI-packets settings
+  switch ([SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22)) is off, a `work`-track document
+  never reaches this packet even when it belongs to a matched project, and when the event's own track is outside
+  `packetTracks(state)` the function returns the header plus a single `## 회의` line, `직장 트랙 일정 — AI 패킷에
+  실리지 않아요`; while the switch is on (the default), a `work`-track document and event are stated the same
+  way a business-track one is.
 - **`NoticeModal`'s document links** ([business.md](business.md#공고-view--national-project-notices-v28)): the
   same checkbox list (`MilestoneLinkList`) as the roadmap sheet's link blocks, one row per document (title and
   the track label), up to 10 — a document link on a notice is a reference, exactly like a milestone's, and
