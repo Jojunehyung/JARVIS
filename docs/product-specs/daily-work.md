@@ -248,7 +248,7 @@ Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `ar
 | `toggleWork(id, next?)` | flips `done`; writes whatever the sheet sends (`title`/`note`/`result`/`minutes`/`track`/`link`) in the same update, so a result or minutes typed before completing is kept; when the item mirrors a follow-up, sets that follow-up's `done` to match; runs `syncTimeLog` (v28) in the same update — no streak, no trophy, no KR | `완료로 표시했어요` / `완료를 취소했어요` |
 | `removeWork(id)` | confirmed by name, then calls the shared `dropWork(new Set([id]))`, which filters `work` and (v28) removes the matching `timeLog` entry; a mirrored item's follow-up loses its `workId` (`mine`/`done` kept) | `업무를 삭제했어요` |
 | `removeWorkMany(ids)` | one confirmation `업무 {n}건을 삭제해요. 계속할까요?`, then `dropWork(ids)` the same way for every id; answers `true` when it deleted, so the tab leaves select mode | `업무 {n}건을 삭제했어요` |
-| `importWork(list, date = today, track = null)` (from the AI bridge, below) | registers every ticked proposal as `source: "ai"`, `done: false` records dated `date`; `track` is the given value or the Phase 1 rule (the linked project's or meeting's track via `meetingTrack`, else `biz` — a proposal can only originate from an allowed packet, so it never resolves to `work`); the raw reply is never stored | `AI 제안 업무 {n}건 등록`, plus ` · {date}` when `date` is not today |
+| `importWork(list, date = today)` (from the AI bridge, below) | registers every ticked proposal as `source: "ai"`, `done: false` records dated `date`, each taking the `track` picked on its confirm row (2026-09-22 — `trackOf(p, "biz")`; the sheet always sends one, so the fallback is defensive only); the raw reply is never stored | `AI 제안 업무 {n}건 등록`, plus ` · {date}` when `date` is not today |
 
 `moveWorkToToday` and its `onMove` wiring are gone (carry-forward is derived, above).
 
@@ -273,22 +273,26 @@ proposal has no goal, difficulty or type to choose.
 2. **Paste** (`AI 답변 붙여넣기`): a textarea (`AI 답변을 여기에 붙여넣어요`) and `답변 확인`, which runs
    `parseWorkReply` and pre-ticks every non-rejected proposal.
 3. **Confirm**: `제안 업무 확인 — {n}건`, the reply's own `note` line, then one row per proposal — a checkbox
-   (disabled and unticked when rejected), the title, a second line `{linkText || "연결 없음"}{ · note}`, and a
-   rose reason line when rejected. No proposals: `제안 업무 없음 — 등록할 항목이 없어요.` `선택한 업무 등록`
-   calls `importWork` with the ticked, non-rejected proposals only.
+   (disabled and unticked when rejected), the title, a second line `{linkText || "연결 없음"}{ · note}`, a rose
+   reason line when rejected, and, since 2026-09-22, a track-pick row (`직장`/`사업`/`개인` chips, `BizChips`)
+   under every open (non-rejected) row only, preselected by `importTrack` when the bridge passes one (the review
+   bridge: `biz`) else by `proposalTrackOf` ([assistant-bridge.md](../design-docs/assistant-bridge.md)). No
+   proposals: `제안 업무 없음 — 등록할 항목이 없어요.` `선택한 업무 등록` calls `importWork` with the ticked,
+   non-rejected proposals, each carrying the track picked on its row.
 
 **Generalised for a second caller (v28).** `WorkBridgeModal({ state, today, build, title, caption, importDate,
 importTrack, onClose, onImport, onToast })` takes the packet builder, the title, the caption, an import date and
 an import track as props rather than hard-coding them, so there is exactly **one** confirm view for both
 packets — a second copy would be a ≥ 6-line duplicate `npm run finish` flags. The root renders it twice:
-`workBridge` with `buildWorkPacket`, the existing title and caption, `today` and no track (the Phase 1 rule
-above); `reviewBridge` with `buildReviewPacket`, title `주간 회고 — AI에게 묻기`, caption `아래 글을 복사해
+`workBridge` with `buildWorkPacket`, the existing title and caption, `today` and no `importTrack` (each row
+preselects by `proposalTrackOf`, 2026-09-22); `reviewBridge` with `buildReviewPacket`, title `주간 회고 — AI에게
+묻기`, caption `아래 글을 복사해
 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 사업 트랙의 이번 주
 업무·후속·로드맵·파이프라인·공고·입금 예정과 저장된 리뷰가 실려요 — 직장·개인 트랙, 녹취록, 이름·연락처는
 실리지 않아요. 답변의 제안은 다음 주 월요일 업무로 등록돼요.`, next Monday (`shiftDay(mondayOf(today), 7)`) and
-`track: "biz"`. The `주간 회고` packet itself, its reply path and the `ReviewModal` button that opens it are
-documented in [assistant-bridge.md](../design-docs/assistant-bridge.md) — this section covers only the shared
-screen.
+`importTrack="biz"` (every row preselects `사업`, still repickable, 2026-09-22). The `주간 회고` packet itself,
+its reply path and the `ReviewModal` button that opens it are documented in
+[assistant-bridge.md](../design-docs/assistant-bridge.md) — this section covers only the shared screen.
 
 The packet, the parser and their caps are documented in full in
 [assistant-bridge.md](../design-docs/assistant-bridge.md); this spec covers the screen. Nothing here writes state
@@ -371,7 +375,15 @@ completing writes `minutes: 90` and exactly one business `timeLog` entry with th
 and `timeLog` only; the week line moves from `0h/20h` to `1.5h/20h`; un-completing removes the entry and keeps
 `minutes`; `1441` is refused; deleting a completed item leaves no entry. The week line opens `사업 시간 기록`,
 whose quick entry records minutes by track (`timeLog` only) and whose settings save writes `settings` only.
-See [tools/e2e/README.md](../../tools/e2e/README.md) for the running step count.
+
+**Work-proposal track pick (2026-09-22, written under the same standing instruction):** one more `flow11.js`
+step plants a day-job meeting with no project, then pastes a reply with three proposals — one stating
+`"track":"개인"`, one linked to the day-job meeting with no stated track, one unlinked with no stated track —
+and asserts the confirm rows preselect `개인`, `직장`, `직장` respectively; switches the third to `사업`;
+registers and asserts the stored items carry `personal`, `work`, `biz`. With `settings.workInAi` set to `false`
+an unlinked proposal's row preselects `사업` instead. The review bridge's own confirm row (asserted in
+`flow5.js`, where that bridge's step already lives) preselects `사업`. See
+[tools/e2e/README.md](../../tools/e2e/README.md) for the running step count.
 
 ## What a work item never does
 
