@@ -3284,6 +3284,11 @@ const WORK_PACKET_TASKS = 10;      // open task rows
 const WORK_PACKET_EVENTS = 8;      // schedule rows inside PACKET_EVENT_DAYS
 const WORK_PACKET_RECORDS = 20;    // carried, yesterday's and today's work items
 const WORK_PACKET_FOLLOWUPS = 30;  // follow-up items per visible meeting, done ones dropped first when trimming
+// Since-mode only (2026-09-22, `act.workRefreshedAt`): the sections that state what changed after the last refresh.
+const WORK_PACKET_DOCS = 10;       // document lines added on or after the stamp
+const WORK_PACKET_DOC_CLIP = 300;  // chars of a document summary
+const WORK_PACKET_OLDER_PROGRESS = 30;  // progress lines of the older-meeting section, newest first
+const WORK_PACKET_OLDER_FOLLOWUPS = 20; // open mine follow-up lines of the older-meeting section, meeting order
 const WORK_PACKET_HEAD = [
   "역할: 이 사용자의 목표·회의록·진행사항·기록을 근거로 오늘 처리할 업무를 제안하는 비서예요. 아래 데이터만 근거로 답해요.",
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
@@ -3295,6 +3300,10 @@ const WORK_PACKET_HEAD = [
   '{"work":[{"title":"...","note":"근거 한 줄","track":"직장|사업|개인","link":{"kind":"goal|meeting|project","title":"<이름 그대로>"}}],"note":"한 줄"}',
   "```",
 ];
+// The head of the work packet: unchanged without `since`; in since-mode rule 3 also asks to weigh the post-refresh records first.
+const workPacketHead = (since) => (since
+  ? WORK_PACKET_HEAD.map((line) => (line.startsWith("3)") ? `${line} '지난 갱신 이후' 기록을 우선 반영해요.` : line))
+  : WORK_PACKET_HEAD);
 // One line of a free text: newlines folded to ` / `, clipped at `n` with `…`, so a reader knows more was written than
 // it sees. The work packet and the meeting-prep card read it.
 const oneLineText = (t, n) => { const s = String(t || "").trim().replace(/\s*\n+\s*/g, " / "); return s.length > n ? `${s.slice(0, n)}…` : s; };
@@ -3457,6 +3466,25 @@ const meetingPacketLines = (state, list, today, { summary, progress: progressN, 
   return [`- ${m.date} [${project}] ${m.title}`, ...facts, ...body, ...followUps, ...progress];
 });
 
+/* What changed after the last AI work refresh (`since` = `act.workRefreshedAt`), for the since-mode work packet. On the
+   packet tracks only: `recent` = the meetings dated or created on or after `since` (uncapped, `meetingOrder`; `>=` so a
+   meeting written on the stamp day after the refresh is not lost); `older` = every other non-hidden meeting that has a
+   progress entry dated on or after `since` or an open `mine` follow-up (follow-ups carry no date, so every open one is
+   listed); `docs` = the documents added on or after `since`. `counts.progress` covers every non-hidden meeting. Pure. */
+const workSinceOf = (state, since) => {
+  const tracks = packetTracks(state);
+  const allowed = (state.meetings || []).filter((m) => tracks.includes(meetingTrack(state, m)));
+  const isRecent = (m) => m.date >= since || (m.createdAt || "") >= since;
+  const recent = allowed.filter(isRecent).sort(meetingOrder);
+  const newProgress = (m) => (m.progress || []).filter((e) => e.date >= since).sort((a, b) => b.date.localeCompare(a.date));
+  const older = allowed.filter((m) => !isRecent(m) && !m.aiHidden).sort(meetingOrder)
+    .map((m) => ({ m, progress: newProgress(m), followUps: (m.followUps || []).filter((f) => f.mine && !f.done) }))
+    .filter((o) => o.progress.length || o.followUps.length);
+  const docs = (state.documents || []).filter((d) => d.addedAt >= since && tracks.includes(trackOf(d))).sort(docOrder);
+  const progress = allowed.filter((m) => !m.aiHidden).reduce((n, m) => n + newProgress(m).length, 0);
+  return { recent, older, docs, counts: { meetings: recent.length, progress, docs: docs.length } };
+};
+
 /* The work packet (`오늘 업무 만들기`, 2026-09-17 amendment): the same facts the daily packet states — the CV at the level
    `cvSummaryOf` shares (never `profile.name`, `birth`, `email`, `phone`, a school or an employer), the goals, the open
    tasks, the schedule, the contracts — plus what the daily packet never reads: the newest meeting minutes with their
@@ -3468,8 +3496,15 @@ const meetingPacketLines = (state, list, today, { summary, progress: progressN, 
    10,000 → 1,500, then meetings 10 → 2 (oldest first), then follow-up items 30 → 5 per meeting (open ones kept first), then the summary clip → 500 and progress 5 → 1 per meeting, then the schedule rows,
    then the business lines to the first, then the open tasks, then the work records (the parser dedupes by title on its
    own), and last meetings 2 → 0. The header, the CV line and the goals are never dropped — about 800 chars of header
-   and 40 per goal line, far under the cap — so the packet always fits. */
-const buildWorkPacket = (state, today) => {
+   and 40 per goal line, far under the cap — so the packet always fits.
+   Since-mode (2026-09-22, `{ since }` = `act.workRefreshedAt`, the send pane's `지난 갱신 이후` chip): a count line
+   follows the title, head rule 3 gains one sentence (`workPacketHead`), `최근 회의록` holds only the meetings dated or
+   created on or after `since` (`workSinceOf`), and two sections follow it — `이전 회의록의 새 기록` (post-stamp progress
+   entries of older meetings, newest first, then their open mine follow-ups) and `문서 ({since} 이후)` (title and a
+   clipped summary, never `source`). Goals, tasks, schedule, contracts and work records are current state and stay as
+   they are. The trim order gains two steps before the last: … records → documents → the older-meeting section →
+   meetings 2 → 0; a dropped section keeps its heading with `- 없음`. Without `since` the output is the full packet. */
+const buildWorkPacket = (state, today, { since = null } = {}) => {
   const active = (state.goals || []).filter((g) => g.status === "active").slice(0, 5);
   const goalLines = active.map((g) => {
     const pc = paceOf(g, state);
@@ -3486,7 +3521,20 @@ const buildWorkPacket = (state, today) => {
     `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}${ev.repeat ? ` · 반복 ${REPEAT_LABEL[ev.repeat.freq]}` : ""}`);
   const bizLines = bizPacketLines(state, today);
   // v28: while day-job records are switched off, a day-job meeting (by `meetingTrack`) never enters, not even its date and title.
-  const meetings = (state.meetings || []).filter((m) => packetTracks(state).includes(meetingTrack(state, m))).sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
+  const sinceSel = since ? workSinceOf(state, since) : null;
+  const meetings = sinceSel ? sinceSel.recent.slice(0, WORK_PACKET_MEETINGS)
+    : (state.meetings || []).filter((m) => packetTracks(state).includes(meetingTrack(state, m))).sort(meetingOrder).slice(0, WORK_PACKET_MEETINGS);
+  // Since-mode only: older meetings' post-stamp progress (newest first across meetings, then meeting order), then their
+  // open mine follow-ups in meeting order; the documents added after the stamp with their project's name.
+  const olderProgress = sinceSel ? sinceSel.older.flatMap(({ m, progress }) => progress.map((e) => ({ m, e })))
+    .sort((a, b) => b.e.date.localeCompare(a.e.date)).slice(0, WORK_PACKET_OLDER_PROGRESS)
+    .map(({ m, e }) => `- ${m.title} · 진행 ${e.date}: ${oneLineText(e.text, WORK_PACKET_CLIP)}`) : [];
+  const olderFollowUps = sinceSel ? sinceSel.older.flatMap(({ m, followUps }) => followUps
+    .map((f) => `- ${m.title} · 후속 내 담당 미완료: ${oneLineText(f.text, MEETING_LIMITS.followUp)}`)).slice(0, WORK_PACKET_OLDER_FOLLOWUPS) : [];
+  const olderLines = [...olderProgress, ...olderFollowUps];
+  const docLines = (sinceSel ? sinceSel.docs : []).map((d) => [
+    `- ${d.addedAt} [${(state.meetingProjects || []).find((p) => p.id === d.projectId)?.name || "프로젝트 없음"}] ${d.title}`,
+    `  요약: ${oneLineText(d.summary, WORK_PACKET_DOC_CLIP)}`]);
   // Today's carried view (every undone item from earlier days, then today's) plus yesterday's items, deduped by id, by date
   // then `createdAt` — the list `parseWorkReply` dedupes against, so rule 3 of the head covers a carried item too.
   const yesterday = shiftDay(today, -1);
@@ -3497,12 +3545,17 @@ const buildWorkPacket = (state, today) => {
 
   // The knobs the reductions turn; `build` reads them fresh each time.
   const k = { meetings: meetings.length, summary: WORK_PACKET_SUMMARY, progress: WORK_PACKET_PROGRESS,
-    events: WORK_PACKET_EVENTS, biz: PACKET_BIZ_LINES, tasks: WORK_PACKET_TASKS, records: WORK_PACKET_RECORDS, followUps: WORK_PACKET_FOLLOWUPS };
+    events: WORK_PACKET_EVENTS, biz: PACKET_BIZ_LINES, tasks: WORK_PACKET_TASKS, records: WORK_PACKET_RECORDS, followUps: WORK_PACKET_FOLLOWUPS,
+    docs: WORK_PACKET_DOCS, older: 1 };
   const build = () => [
-    `[인생 관리 — 오늘 업무 제안 요청 ${today}]`, ...WORK_PACKET_HEAD, "",
+    `[인생 관리 — 오늘 업무 제안 요청 ${today}]`,
+    ...(sinceSel ? [`마지막 갱신 ${since} · 그 뒤 회의록 ${sinceSel.counts.meetings}건 · 진행사항 ${sinceSel.counts.progress}건 · 문서 ${sinceSel.counts.docs}건`] : []),
+    ...workPacketHead(since), "",
     ...packetSection("이력", cvLines), ...packetSection("목표", goalLines), ...packetSection("열린 할 일", taskLines.slice(0, k.tasks)),
     ...packetSection(`다가오는 일정 (${PACKET_EVENT_DAYS}일)`, eventLines.slice(0, k.events)), ...packetSection("사업 (계약·매출)", bizLines.slice(0, k.biz)),
-    ...packetSection(`최근 회의록 (${k.meetings}건)`, meetingPacketLines(state, meetings.slice(0, k.meetings), today, k)),
+    ...packetSection(sinceSel ? `최근 회의록 (${k.meetings}건 · ${since} 이후)` : `최근 회의록 (${k.meetings}건)`, meetingPacketLines(state, meetings.slice(0, k.meetings), today, k)),
+    ...(sinceSel ? [...packetSection("이전 회의록의 새 기록", k.older ? olderLines : []),
+      ...packetSection(`문서 (${since} 이후)`, docLines.slice(0, k.docs).flat())] : []),
     ...packetSection("업무 기록 (이월·어제·오늘)", recordLines.slice(0, k.records)),
   ].join("\n");
   // Each reduction answers true when it tightened something and false once it has nothing left to give.
@@ -3515,6 +3568,7 @@ const buildWorkPacket = (state, today) => {
     () => k.biz > 1 && (k.biz = 1, true),
     () => k.tasks > 0 && (k.tasks = 0, true),
     () => k.records > 0 && (k.records = 0, true),
+    ...(sinceSel ? [() => k.docs > 0 && (k.docs = 0, true), () => k.older > 0 && (k.older = 0, true)] : []),
     () => k.meetings > 0 && (k.meetings -= 1, true),
   ];
   let out = build();
@@ -4290,7 +4344,10 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   journal: [{ id, date, text, ai?, aiDate? }],              // one entry per date; `ai` = the assistant reply pasted back by the user
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
- *          briefingSeen?, lastReview? },                      // dates only — facts, never verdicts
+ *          briefingSeen?, lastReview?,                        // dates only — facts, never verdicts
+ *          workRefreshedAt? },                                 // (2026-09-22, still v28, no migrate block) the day the work bridge last
+ *                                                              // registered ≥ 1 AI proposal — a user-action stamp like `briefingSeen`,
+ *                                                              // never read as progress (rule 9)
  *   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -10333,14 +10390,18 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
    (`buildReviewPacket`, dated next Monday) — one confirm view for both packets. 2026-09-22: every open row carries a
    `직장` `사업` `개인` chip row, preselected by `importTrack` when the bridge passes one (the review bridge: `biz`),
    else by `proposalTrackOf`; the registered item takes the picked track. ── */
-function WorkBridgeModal({ state, today, build, title, caption, importDate, importTrack, onClose, onImport, onToast }) {
+// `since` (the work bridge only, `act.workRefreshedAt`): with a stamp the send pane offers `지난 갱신 이후` (preselected,
+// the since-mode packet) and `전체` (the full packet); without one nothing is rendered and the packet is the full one.
+function WorkBridgeModal({ state, today, build, title, caption, since = null, importDate, importTrack, onClose, onImport, onToast }) {
   const [mode, setMode] = useState("send");
+  const [scope, setScope] = useState("since");
   const [reply, setReply] = useState("");
   const [parsed, setParsed] = useState(null);
   const [picked, setPicked] = useState({});
   const [tracks, setTracks] = useState({});
   const taRef = useRef(null);
-  const packet = useMemo(() => build(state, today), [build, state, today]);
+  const sinceOn = !!since && scope === "since";
+  const packet = useMemo(() => build(state, today, sinceOn ? { since } : {}), [build, state, today, sinceOn, since]);
   const check = () => {
     const r = parseWorkReply(reply, state, today);
     const open = r.proposals.filter((p) => !p.reject);
@@ -10354,8 +10415,16 @@ function WorkBridgeModal({ state, today, build, title, caption, importDate, impo
   return (
     <Modal title={mode === "send" ? title : "AI 답변 붙여넣기"} onClose={onClose}>
       {mode === "send" ? (
-        <PacketSendPane packet={packet} taRef={taRef} onCopy={() => copyPacket(taRef, packet, onToast)} onPaste={() => setMode("paste")}
-          caption={caption} />
+        <>
+          {since && (
+            <div className="mb-3">
+              <BizChips options={[["since", "지난 갱신 이후"], ["all", "전체"]]} value={scope} onPick={setScope} />
+            </div>
+          )}
+          <PacketSendPane packet={packet} taRef={taRef} onCopy={() => copyPacket(taRef, packet, onToast)} onPaste={() => setMode("paste")}
+            caption={!since ? caption : sinceOn ? `${caption} 지난 갱신 ${since} 이후의 회의록·진행사항·문서만 실려요.`
+              : `${caption} 전체 회의록이 실려요 · 마지막 갱신 ${since}.`} />
+        </>
       ) : !parsed ? (
         <ReplyPastePane reply={reply} setReply={setReply} onCheck={check} />
       ) : (
@@ -11686,12 +11755,15 @@ export default function LifeManager() {
   // unresolved link is simply omitted. The raw reply is not stored anywhere — it would overwrite the day's journal reply.
   // 2026-09-22: an item takes the track picked on its confirm row (`WorkBridgeModal`, preselected by `proposalTrackOf`).
   // v28: `date` dates every item (the review packet's reply: next Monday); a date other than today is appended to the toast.
-  const importWork = (list, date = today) => {
+  // 2026-09-22: `stamp` (the work bridge only) records today as `act.workRefreshedAt` once at least one item is
+  // registered — a user-action stamp like `briefingSeen`, read by the since-mode packet; the review bridge never stamps.
+  const importWork = (list, date = today, { stamp = false } = {}) => {
     const made = list.map((p) => ({ id: uid(), date, title: p.title, ...(p.note ? { note: p.note } : {}),
       ...(p.link ? { link: p.link } : {}), done: false, source: "ai", track: trackOf(p, "biz"), createdAt: today }));
     const refused = recordFits(made, 0, "업무를");
     if (refused) { showToast({ msg: refused }); return; }
     if (made.length) writeWork((items) => [...made, ...items]);
+    if (stamp && made.length) setState((prev) => ({ ...prev, act: { ...prev.act, workRefreshedAt: today } }));
     setModal(null);
     showToast({ msg: `AI 제안 업무 ${made.length}건 등록${date !== today ? ` · ${date}` : ""}` });
   };
@@ -12097,7 +12169,8 @@ export default function LifeManager() {
       {modal?.type === "workBridge" && (
         <WorkBridgeModal state={state} today={today} build={buildWorkPacket} title="오늘 업무 만들기"
           caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요.${workInAiOf(state) ? "" : " 직장 트랙 기록은 실리지 않아요."}`}
-          importDate={today} importTrack={null} onClose={() => setModal(null)} onImport={importWork} onToast={(msg) => showToast({ msg })} />
+          importDate={today} importTrack={null} since={state.act?.workRefreshedAt || null} onClose={() => setModal(null)}
+          onImport={(list, date) => importWork(list, date, { stamp: true })} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "reviewBridge" && (
         <WorkBridgeModal state={state} today={today} build={buildReviewPacket} title="주간 회고 — AI에게 묻기"

@@ -337,5 +337,48 @@ ok(Math.max(...ICS.ICS_RANGE_DAYS) <= ICS.MAX_OCC, `range: ${Math.max(...ICS.ICS
 }
 console.log("calendar file: 18 check groups");
 
+// 6) since-mode work packet — `workSinceOf` selects what changed after the last AI work refresh (2026-09-22)
+{
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `since-mode: ${msg}`); };
+  // `meetingTrack` is a three-line expression that grabBlock cannot close on its own; cut it at its first `;`.
+  const liftExpr = (name) => { const t = lift(name).split("\n"); return t.slice(0, t.findIndex((l) => /;\s*(\/\/.*)?$/.test(l)) + 1).join("\n"); };
+  const SINCE = new Function([
+    ...["TRACKS", "PACKET_TRACKS_NO_WORK", "workInAiOf", "packetTracks", "trackOf", "meetingOrder", "docOrder"].map(lift),
+    liftExpr("meetingTrack"), lift("workSinceOf"),
+  ].join("\n") + "\nreturn { workSinceOf };")();
+  const since = "2026-09-15";
+  const mt = (id, date, extra = {}) => ({ id, projectId: "P", date, title: id, createdAt: date, progress: [], followUps: [], ...extra });
+  const state = {
+    meetingProjects: [{ id: "P", name: "사업 프로젝트", track: "biz" }],
+    meetings: [
+      mt("A", "2026-09-16", { progress: [{ id: "a1", date: "2026-09-16", text: "a" }] }),
+      mt("B", "2026-09-10", { createdAt: "2026-09-15" }),
+      mt("C", "2026-09-01", { progress: [{ id: "c1", date: "2026-09-14", text: "c1" }, { id: "c2", date: "2026-09-18", text: "c2" }],
+        followUps: [{ id: "f1", text: "f1", mine: true, done: false }, { id: "f2", text: "f2", mine: false, done: false }, { id: "f3", text: "f3", mine: true, done: true }] }),
+      mt("D", "2026-09-02"),
+      mt("E", "2026-09-03", { aiHidden: true, progress: [{ id: "e1", date: "2026-09-18", text: "e" }] }),
+      { id: "memo", projectId: null, track: "work", date: "2026-09-17", title: "memo", createdAt: "2026-09-17", progress: [], followUps: [] },
+    ],
+    documents: [
+      { id: "d1", projectId: "P", title: "d1", summary: "s", addedAt: "2026-09-14", track: "biz" },
+      { id: "d2", projectId: "P", title: "d2", summary: "s", addedAt: "2026-09-15", track: "biz" },
+    ],
+    settings: {},
+  };
+  const sel = SINCE.workSinceOf(state, since);
+  check(JSON.stringify(sel.recent.map((m) => m.id)) === '["memo","A","B"]', `recent ${JSON.stringify(sel.recent.map((m) => m.id))}`);
+  check(sel.older.length === 1 && sel.older[0].m.id === "C", `older ${JSON.stringify(sel.older.map((o) => o.m.id))}`);
+  check(sel.older[0]?.progress.length === 1 && sel.older[0].progress[0].date === "2026-09-18", "older progress is the post-stamp entry only");
+  check(sel.older[0]?.followUps.length === 1 && sel.older[0].followUps[0].id === "f1", "older follow-ups are the open mine ones");
+  check(JSON.stringify(sel.docs.map((d) => d.id)) === '["d2"]', `docs ${JSON.stringify(sel.docs.map((d) => d.id))}`);
+  check(JSON.stringify(sel.counts) === '{"meetings":3,"progress":2,"docs":1}', `counts ${JSON.stringify(sel.counts)}`);
+  const off = SINCE.workSinceOf({ ...state, settings: { workInAi: false } }, since);
+  check(!off.recent.some((m) => m.id === "memo") && off.counts.meetings === 2, `workInAi false: ${JSON.stringify(off.recent.map((m) => m.id))}`);
+  const early = SINCE.workSinceOf(state, "2026-01-01");
+  check(early.recent.length === state.meetings.length && early.older.length === 0, `early stamp: recent ${early.recent.length}, older ${early.older.length}`);
+  console.log(`since-mode packet: ${n} checks`);
+}
+
 console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");
 process.exit(fail ? 1 : 0);

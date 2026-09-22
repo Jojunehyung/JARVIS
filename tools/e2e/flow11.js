@@ -1616,4 +1616,145 @@ module.exports = async (h) => {
       await h.reload();
     }
   });
+
+  /* 2026-09-22 — the incremental work packet. Registering ≥ 1 AI proposal from the work bridge stamps
+     `act.workRefreshedAt`; with a stamp the send pane preselects `지난 갱신 이후` (the since-mode packet) and offers `전체`
+     (the full packet); the review bridge never stamps and shows no chip. Written under the standing instruction; not run.
+     Each step puts the keys it plants back in `finally` and leaves the stamp absent. */
+  // Deletes the stamp (or sets it to `date`) and optionally replaces top-level keys, then reloads.
+  const setStamp = async (date, keys = {}) => {
+    await page.evaluate((k, d, extra) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.act = { ...(st.act || {}) };
+      if (d) st.act.workRefreshedAt = d; else delete st.act.workRefreshedAt;
+      for (const [key, v] of Object.entries(extra)) { if (v === undefined) delete st[key]; else st[key] = v; }
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, date || null, keys);
+    await h.reload();
+  };
+  // The open sheet's chip by its label: `{ on }` read off the Chip's active class, or null when it is not rendered.
+  const sheetChip = (label) => page.evaluate((l) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const b = ov && [...ov.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
+    return b ? { on: /bg-cyan-400/.test(b.className || "") } : null;
+  }, label);
+  const REFRESH_TITLE = "E2E 갱신 스탬프 제안", REVIEW_TITLE = "E2E 회고 스탬프 없음 제안";
+
+  await step("registering AI proposals from the work bridge stamps act.workRefreshedAt with today", async () => {
+    const today = await dstrIn(0);
+    try {
+      await setStamp(null);
+      await openWorkBridge();
+      if (await sheetChip("지난 갱신 이후")) throw new Error("the send pane offers the since chip without a stamp");
+      if ((await packetText()).includes("마지막 갱신 ")) throw new Error("the packet states a last refresh without a stamp");
+      const before = await readState();
+      if (before.act.workRefreshedAt !== undefined) throw new Error("the stamp was not removed: " + before.act.workRefreshedAt);
+      await pasteReply("```json\n" + JSON.stringify({ work: [{ title: REFRESH_TITLE, note: "스탬프 확인" }] }) + "\n```");
+      await expectText("제안 업무 확인 — 1건");
+      const { after } = await registerProposals(before, 1);
+      if (after.act.workRefreshedAt !== today) throw new Error("the stamp after registering: " + after.act.workRefreshedAt);
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["act", "work"])) throw new Error("registering changed " + JSON.stringify(changedKeys(before, after)));
+      if (after.act.briefingSeen !== before.act.briefingSeen) throw new Error("registering moved act.briefingSeen");
+      const actKeys = [...new Set([...Object.keys(before.act), ...Object.keys(after.act)])].filter((k) => JSON.stringify(before.act[k]) !== JSON.stringify(after.act[k]));
+      if (JSON.stringify(actKeys) !== JSON.stringify(["workRefreshedAt"])) throw new Error("registering changed act keys " + JSON.stringify(actKeys));
+    } finally {
+      await closeModal();
+      const st = await readState();
+      await setStamp(null, { work: (st.work || []).filter((w) => w.title !== REFRESH_TITLE) });
+    }
+  });
+
+  await step("the send pane preselects the since-last-refresh chip with a stamp, the packet carries the header line and only post-stamp meetings, and the all chip shows the full packet", async () => {
+    const [stamp, d5, d2, d1] = [await dstrIn(-3), await dstrIn(-5), await dstrIn(-2), await dstrIn(-1)];
+    const PRE = "E2E 갱신 전 회의", POST = "E2E 갱신 후 회의", DOC = "E2E 갱신 후 문서";
+    const saved = await readState();
+    const keep = { meetingProjects: saved.meetingProjects, meetings: saved.meetings, documents: saved.documents };
+    try {
+      // Only the planted meetings and document, so the newest-ten cap of the full packet cannot push the pre-stamp meeting out.
+      await setStamp(stamp, {
+        meetingProjects: [{ id: PROJECT_ID, name: PROJECT, createdAt: d5, track: "biz" }, ...(saved.meetingProjects || []).filter((p) => p.id !== PROJECT_ID)],
+        meetings: [
+          { id: "e2e-refresh-pre", projectId: PROJECT_ID, date: d5, title: PRE, summary: "E2E 갱신 전 요약", createdAt: d5, taskIds: [], aiHidden: false,
+            progress: [{ id: "e2e-refresh-prog", date: d1, text: "E2E 갱신 뒤 진행" }],
+            followUps: [{ id: "e2e-refresh-fu", text: "E2E 이전 후속", mine: true, done: false }] },
+          { id: "e2e-refresh-post", projectId: PROJECT_ID, date: d2, title: POST, summary: "E2E 갱신 후 요약", createdAt: d2, taskIds: [], aiHidden: false, progress: [], followUps: [] },
+        ],
+        documents: [{ id: "e2e-refresh-doc", projectId: PROJECT_ID, title: DOC, source: "e2e-secret.pdf", summary: "E2E 문서 요약", addedAt: d1, track: "biz" }],
+      });
+      await openWorkBridge();
+      const since = await sheetChip("지난 갱신 이후"), all = await sheetChip("전체");
+      if (!since?.on || !all || all.on) throw new Error("the scope chips: " + JSON.stringify({ since, all }));
+      let txt = await packetText();
+      const line2 = txt.split("\n")[1] || "";
+      if (!/^마지막 갱신 \d{4}-\d{2}-\d{2} · 그 뒤 회의록 \d+건 · 진행사항 \d+건 · 문서 \d+건$/.test(line2)) throw new Error("line 2 of the since-mode packet: " + line2);
+      if (!line2.startsWith(`마지막 갱신 ${stamp} `)) throw new Error("line 2 names another stamp: " + line2);
+      for (const t of [POST, "## 이전 회의록의 새 기록", `${PRE} · 진행 `, "후속 내 담당 미완료: E2E 이전 후속", "## 문서 (", DOC, "'지난 갱신 이후' 기록을 우선 반영해요."]) {
+        if (!txt.includes(t)) throw new Error(`the since-mode packet lacks "${t}"`);
+      }
+      if (txt.includes("e2e-secret.pdf")) throw new Error("the since-mode packet carries a document's source");
+      if (txt.includes(`- ${d5} [${PROJECT}] ${PRE}`)) throw new Error("the pre-stamp meeting is listed as a recent meeting");
+      let sheet = await overlayText();
+      if (!sheet.includes(`지난 갱신 ${stamp} 이후의 회의록·진행사항·문서만 실려요.`)) throw new Error("the since caption: " + sheet.slice(0, 500));
+      await clickInModalExact("전체");
+      await sleep(300);
+      if (!(await sheetChip("전체"))?.on || (await sheetChip("지난 갱신 이후"))?.on) throw new Error("the all chip did not take the pick");
+      txt = await packetText();
+      if (txt.includes("마지막 갱신 ") || txt.includes("이전 회의록의 새 기록") || txt.includes("'지난 갱신 이후'")) throw new Error("the full packet carries since-mode lines");
+      if (!txt.includes(`- ${d5} [${PROJECT}] ${PRE}`) || !txt.includes(`- ${d2} [${PROJECT}] ${POST}`)) throw new Error("the full packet lacks a planted meeting line");
+      sheet = await overlayText();
+      if (!sheet.includes(`전체 회의록이 실려요 · 마지막 갱신 ${stamp}.`)) throw new Error("the full caption: " + sheet.slice(0, 500));
+    } finally {
+      await closeModal();
+      await setStamp(null, keep);
+    }
+  });
+
+  await step("the review bridge registers a proposal without stamping act.workRefreshedAt", async () => {
+    const [today, stamp] = [await dstrIn(0), await dstrIn(-3)];
+    const monday = await page.evaluate(() => {
+      const t = new Date(); t.setHours(12, 0, 0, 0); t.setDate(t.getDate() - ((t.getDay() + 6) % 7));
+      const p = (n) => String(n).padStart(2, "0");
+      const iso = (x) => `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`;
+      const next = new Date(t); next.setDate(next.getDate() + 7);
+      return { week: iso(t), next: iso(next) };
+    });
+    const saved = await readState();
+    const openReviewBridge = async () => {
+      await clickTab("할 일");
+      await clickMain("브리핑 열기 ›");
+      await sleep(400);
+      await h.clickInModal("이번 주 리뷰");
+      await sleep(400);
+      await clickInModalExact("AI에게 회고 묻기 ›");
+      await sleep(500);
+      if (!(await overlayText()).startsWith("주간 회고 — AI에게 묻기")) throw new Error("the review bridge title: " + (await overlayText()).slice(0, 60));
+    };
+    try {
+      // A saved review for this week enables the bridge button; a stamp is planted so the chip's absence proves something.
+      const reviews = [{ id: "e2e-refresh-review", weekOf: monday.week, wins: "E2E 잘된 것", blocks: "E2E 막힌 것", date: today },
+        ...(saved.reviews || []).filter((r) => r.weekOf !== monday.week)];
+      await setStamp(stamp, { reviews });
+      await openReviewBridge();
+      if (await sheetChip("지난 갱신 이후") || await sheetChip("전체")) throw new Error("the review bridge shows the scope chips");
+      if ((await overlayText()).includes("지난 갱신 ")) throw new Error("the review bridge caption names the stamp");
+      await closeModal();
+      await setStamp(null);
+      await openReviewBridge();
+      const before = await readState();
+      await pasteReply("```json\n" + JSON.stringify({ work: [{ title: REVIEW_TITLE, note: "다음 주" }] }) + "\n```");
+      await expectText("제안 업무 확인 — 1건");
+      await clickInModalExact("선택한 업무 등록");
+      await expectText(`AI 제안 업무 1건 등록 · ${monday.next}`);
+      await sleep(500);
+      const after = await readState();
+      if (after.act.workRefreshedAt !== undefined) throw new Error("the review bridge stamped act.workRefreshedAt: " + after.act.workRefreshedAt);
+      const item = (after.work || []).find((w) => w.title === REVIEW_TITLE);
+      if (!item || item.date !== monday.next) throw new Error("the review proposal: " + JSON.stringify(item));
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["work"])) throw new Error("the review import changed " + JSON.stringify(changedKeys(before, after)));
+    } finally {
+      await closeModal();
+      const st = await readState();
+      await setStamp(null, { reviews: saved.reviews, work: (st.work || []).filter((w) => w.title !== REVIEW_TITLE) });
+    }
+  });
 };
