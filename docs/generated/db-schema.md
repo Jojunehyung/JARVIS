@@ -451,19 +451,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1330 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6112 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6112 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6112 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 8227 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 8650 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 10654 | App root |
-| `liferpg-img-${slot}` | 10710 | App root |
-| `liferpg-img-ev-${id}` | 10733 | App root |
-| `liferpg-img-ev-${q.id}` | 10915 | App root |
-| `liferpg-img-ev-${t.id}` | 11783 | App root |
-| `liferpg-img-study-${t.id}-1` | 11783 | App root |
-| `liferpg-img-study-${t.id}-2` | 11783 | App root |
-| `liferpg-img-folio-${f.id}` | 11789 | App root |
+| `liferpg-img-ev-${task.id}` | 6129 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6129 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6129 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 8244 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 8667 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 10684 | App root |
+| `liferpg-img-${slot}` | 10740 | App root |
+| `liferpg-img-ev-${id}` | 10763 | App root |
+| `liferpg-img-ev-${q.id}` | 10945 | App root |
+| `liferpg-img-ev-${t.id}` | 11806 | App root |
+| `liferpg-img-study-${t.id}-1` | 11806 | App root |
+| `liferpg-img-study-${t.id}-2` | 11806 | App root |
+| `liferpg-img-folio-${f.id}` | 11812 | App root |
 
 ## Demo data (`demoState`)
 

@@ -372,6 +372,13 @@ module.exports = async (h) => {
       await setValue(".fixed.inset-0 textarea", "이번 주 회고 5줄\n```json\n{\"work\":[{\"title\":\"E2E 다음 주 업무\",\"note\":\"근거 한 줄\"}],\"tasks\":[{\"goal\":\"하네스 설계 엔지니어 취업\",\"title\":\"독서 30분\",\"diff\":\"E\",\"type\":\"once\"}]}\n```");
       await clickInModalExact("답변 확인");
       await expectText("제안 업무 확인 — 1건");
+      // 2026-09-22: the review bridge preselects `사업` on every confirm row.
+      const preset = await page.evaluate(() => {
+        const row = [...document.querySelectorAll(".fixed.inset-0 span")].find((s) => s.textContent.trim() === "E2E 다음 주 업무")?.closest("label")?.parentElement;
+        const on = row && [...row.querySelectorAll("button")].find((b) => /bg-cyan-400/.test(b.className || ""));
+        return on ? on.innerText.trim() : null;
+      });
+      if (preset !== "사업") throw new Error("the review bridge row preselects " + preset);
       const before = await readState();
       const nextMonday = await mondayIn(1);
       await clickInModalExact("선택한 업무 등록");

@@ -3289,10 +3289,10 @@ const WORK_PACKET_HEAD = [
   "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
   "2) 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
   "3) 제안은 오늘 처리할 업무 항목만이에요 — 건수 제한 없이, 제목 60자·메모 200자 이내. 실행·일정·계약·회의록을 만들거나 바꾸지 않아요. '업무 기록'에 이미 있는 항목은 다시 제안하지 않아요.",
-  "4) 각 항목의 근거가 된 목표·회의록·프로젝트 이름을 link.title에 아래 데이터의 표기 그대로 적어요. 근거가 없으면 link를 생략해요.",
+  "4) 각 항목의 근거가 된 목표·회의록·프로젝트 이름을 link.title에 아래 데이터의 표기 그대로 적어요. 근거가 없으면 link를 생략해요. 각 항목의 track에 직장·사업·개인 중 하나를 적어요 — 근거가 된 기록의 트랙을 따라요.",
   "5) 답변 형식: ① 회의록·진행사항·목표를 근거로 한 분석 5줄 이내 ② 마지막에 아래 JSON 블록 1개 (제안이 없으면 \"work\": []).",
   "```json",
-  '{"work":[{"title":"...","note":"근거 한 줄","link":{"kind":"goal|meeting|project","title":"<이름 그대로>"}}],"note":"한 줄"}',
+  '{"work":[{"title":"...","note":"근거 한 줄","track":"직장|사업|개인","link":{"kind":"goal|meeting|project","title":"<이름 그대로>"}}],"note":"한 줄"}',
   "```",
 ];
 // One line of a free text: newlines folded to ` / `, clipped at `n` with `…`, so a reader knows more was written than
@@ -3524,8 +3524,14 @@ const buildWorkPacket = (state, today) => {
 
 // Reads the JSON block a work reply appends — `data.work` and `data.note` only; `tasks`, `deals`, `events`,
 // `meetings` or any other key is ignored (rule 7 amendment). A proposal is a work item: a title, an optional note,
-// an optional link resolved against the app's own goals, meetings and projects. Nothing here writes state.
+// an optional link resolved against the app's own goals, meetings and projects, and an optional track (2026-09-22).
+// Nothing here writes state.
 const WORK_LINK_KINDS = ["goal", "meeting", "project"];
+// A proposal's stated track: the label as the head asks for it (`TRACK_LABEL`) or the internal value; anything else is null.
+const replyTrackOf = (v) => {
+  const s = typeof v === "string" ? v.trim() : "";
+  return TRACKS.includes(s) ? s : TRACKS.find((t) => TRACK_LABEL[t] === s) || null;
+};
 const parseWorkReply = (text, state, today) => {
   const raw = String(text || "");
   const data = replyJson(raw);
@@ -3552,10 +3558,20 @@ const parseWorkReply = (text, state, today) => {
     if (!title) reject = "제목이 없어요";
     else if (seen.has(normWorkTitle(title))) reject = "오늘 업무에 이미 있어요";
     else seen.add(normWorkTitle(title));
-    return { key: `w${n}`, title, note, link, linkText, reject };
+    return { key: `w${n}`, title, note, link, linkText, track: replyTrackOf(t?.track), reject };
   });
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
 };
+// The track a resolved link carries: the linked project's, or the linked meeting's (its project's when it has one).
+// A goal, a missing target or no link carries none (null).
+const linkTrackOf = (state, link) => {
+  if (link?.kind === "project") { const p = (state.meetingProjects || []).find((x) => x.id === link.id); return p ? trackOf(p, "biz") : null; }
+  if (link?.kind === "meeting") { const m = (state.meetings || []).find((x) => x.id === link.id); return m ? meetingTrack(state, m) : null; }
+  return null;
+};
+// The track a proposal's confirm row preselects (2026-09-22): the track the reply stated, else its link's track, else the
+// day job while day-job records go into packets (`workInAiOf`), else the business. The user may change it before registering.
+const proposalTrackOf = (state, p) => p?.track || linkTrackOf(state, p?.link) || (workInAiOf(state) ? "work" : "biz");
 
 // The prep packet (`AI에게 회의 준비 묻기`, rule 7 amendment 2026-09-17, the third packet): what it carries and how much.
 // Plain literals, so smoke-logic can lift them. Summary, progress, follow-up and clip knobs reuse the WORK_PACKET_* values.
@@ -3719,10 +3735,11 @@ const REVIEW_PACKET_HEAD = [
    record, no `## 이력` line, no profile identifier, no transcript, and no body of a meeting flagged `aiHidden` (its
    follow-ups stay out). A milestone linked to a day-job record (`milestoneTrack`) stays out; leads and notices are
    business by nature. The saved review is read, never a draft: the sheet enables the button only once this week's
-   review is stored. Its reply is read by the unchanged `parseWorkReply` (key `work` only) and registered by `importWork`
-   dated next Monday on the business track (rule 7). When the text exceeds REVIEW_PACKET_MAX the reductions run one step
-   at a time, rebuilding after each: done work 30 → 10, open work 30 → 10, follow-ups 30 → 5, leads 20 → 5, notices
-   10 → 3, payment lines → 3, done work → 0, leads → 0. The header, the facts and the roadmap are never dropped.
+   review is stored. Its reply is read by `parseWorkReply` (key `work` only) and registered by `importWork` dated
+   next Monday, each confirm row preselected on the business track (rule 7). When the text exceeds REVIEW_PACKET_MAX
+   the reductions run one step at a time, rebuilding after each: done work 30 → 10, open work 30 → 10, follow-ups
+   30 → 5, leads 20 → 5, notices 10 → 3, payment lines → 3, done work → 0, leads → 0. The header, the facts and the
+   roadmap are never dropped.
    Derived on demand, never stored (rule 9). */
 const buildReviewPacket = (state, today) => {
   const weekOf = mondayOf(today);
@@ -10312,21 +10329,27 @@ function WorkModal({ state, work, date, today, onClose, onAdd, onUpdate, onToggl
    before it becomes a record with `source: "ai"` (rule 7 amendment 2026-09-17). The raw reply is not stored: it would
    overwrite the day's journal reply, and nothing derived is stored (rule 9). Shares the send and paste panes with
    `BridgeModal`; the confirm view is its own, since a work proposal has no goal, difficulty or type to pick.
-   Generalised in v28: the root renders it for `workBridge` (`buildWorkPacket`, dated today, the link's track) and for
-   `reviewBridge` (`buildReviewPacket`, dated next Monday, the business track) — one confirm view for both packets. ── */
+   Generalised in v28: the root renders it for `workBridge` (`buildWorkPacket`, dated today) and for `reviewBridge`
+   (`buildReviewPacket`, dated next Monday) — one confirm view for both packets. 2026-09-22: every open row carries a
+   `직장` `사업` `개인` chip row, preselected by `importTrack` when the bridge passes one (the review bridge: `biz`),
+   else by `proposalTrackOf`; the registered item takes the picked track. ── */
 function WorkBridgeModal({ state, today, build, title, caption, importDate, importTrack, onClose, onImport, onToast }) {
   const [mode, setMode] = useState("send");
   const [reply, setReply] = useState("");
   const [parsed, setParsed] = useState(null);
   const [picked, setPicked] = useState({});
+  const [tracks, setTracks] = useState({});
   const taRef = useRef(null);
   const packet = useMemo(() => build(state, today), [build, state, today]);
   const check = () => {
     const r = parseWorkReply(reply, state, today);
+    const open = r.proposals.filter((p) => !p.reject);
     setParsed(r);
-    setPicked(Object.fromEntries(r.proposals.filter((p) => !p.reject).map((p) => [p.key, true])));
+    setPicked(Object.fromEntries(open.map((p) => [p.key, true])));
+    setTracks(Object.fromEntries(open.map((p) => [p.key, importTrack || proposalTrackOf(state, p)])));
   };
-  const confirm = () => onImport((parsed?.proposals || []).filter((p) => picked[p.key] && !p.reject), importDate, importTrack);
+  const confirm = () => onImport((parsed?.proposals || []).filter((p) => picked[p.key] && !p.reject)
+    .map((p) => ({ ...p, track: tracks[p.key] })), importDate);
 
   return (
     <Modal title={mode === "send" ? title : "AI 답변 붙여넣기"} onClose={onClose}>
@@ -10340,15 +10363,22 @@ function WorkBridgeModal({ state, today, build, title, caption, importDate, impo
           <div className="text-sm font-bold">제안 업무 확인 — {parsed.proposals.length}건</div>
           {parsed.note && <p className="text-xs text-zinc-400">{parsed.note}</p>}
           {parsed.proposals.length ? parsed.proposals.map((p) => (
-            <label key={p.key} className={`flex items-start gap-2 bg-zinc-950 rounded-xl p-3 ${p.reject ? "opacity-50" : ""}`}>
-              <input type="checkbox" disabled={!!p.reject} checked={!!picked[p.key]}
-                onChange={(e) => setPicked((s) => ({ ...s, [p.key]: e.target.checked }))} className="mt-0.5" />
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-semibold truncate">{p.title}</span>
-                <span className="block text-xs text-zinc-500 break-words">{p.linkText || "연결 없음"}{p.note ? ` · ${p.note}` : ""}</span>
-                {p.reject && <span className="block text-xs text-rose-400 mt-0.5">{p.reject}</span>}
-              </span>
-            </label>
+            <div key={p.key} className={`bg-zinc-950 rounded-xl p-3 space-y-2 ${p.reject ? "opacity-50" : ""}`}>
+              <label className="flex items-start gap-2">
+                <input type="checkbox" disabled={!!p.reject} checked={!!picked[p.key]}
+                  onChange={(e) => setPicked((s) => ({ ...s, [p.key]: e.target.checked }))} className="mt-0.5" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-semibold truncate">{p.title}</span>
+                  <span className="block text-xs text-zinc-500 break-words">{p.linkText || "연결 없음"}{p.note ? ` · ${p.note}` : ""}</span>
+                  {p.reject && <span className="block text-xs text-rose-400 mt-0.5">{p.reject}</span>}
+                </span>
+              </label>
+              {!p.reject && (
+                <div className="pl-5">
+                  <BizChips options={TRACK_OPTIONS} value={tracks[p.key]} onPick={(t) => setTracks((s) => ({ ...s, [p.key]: t }))} />
+                </div>
+              )}
+            </div>
           )) : (
             <p className="text-xs text-zinc-500">제안 업무 없음 — 등록할 항목이 없어요.</p>
           )}
@@ -11654,18 +11684,11 @@ export default function LifeManager() {
   };
   // Registers every ticked work proposal as today's item with `source: "ai"`. An
   // unresolved link is simply omitted. The raw reply is not stored anywhere — it would overwrite the day's journal reply.
-  // v28: an item takes the track of the project or meeting its proposal resolved to, else `biz` — the packet carries only
-  // `biz` / `personal` records, so a proposal cannot originate from the day job.
-  const importTrackOf = (link) => {
-    if (link?.kind === "project") return trackOf((state.meetingProjects || []).find((p) => p.id === link.id), "biz");
-    if (link?.kind === "meeting") { const m = (state.meetings || []).find((x) => x.id === link.id); return m ? meetingTrack(state, m) : "biz"; }
-    return "biz";
-  };
-  // v28: `date` dates every item (the review packet's reply: next Monday) and `track`, when given, replaces the link rule
-  // (the review packet's reply: `biz`). A date other than today is appended to the toast.
-  const importWork = (list, date = today, track = null) => {
+  // 2026-09-22: an item takes the track picked on its confirm row (`WorkBridgeModal`, preselected by `proposalTrackOf`).
+  // v28: `date` dates every item (the review packet's reply: next Monday); a date other than today is appended to the toast.
+  const importWork = (list, date = today) => {
     const made = list.map((p) => ({ id: uid(), date, title: p.title, ...(p.note ? { note: p.note } : {}),
-      ...(p.link ? { link: p.link } : {}), done: false, source: "ai", track: track || importTrackOf(p.link), createdAt: today }));
+      ...(p.link ? { link: p.link } : {}), done: false, source: "ai", track: trackOf(p, "biz"), createdAt: today }));
     const refused = recordFits(made, 0, "업무를");
     if (refused) { showToast({ msg: refused }); return; }
     if (made.length) writeWork((items) => [...made, ...items]);

@@ -519,6 +519,16 @@ module.exports = async (h) => {
     const box = label.querySelector('input[type="checkbox"]');
     return { text: label.innerText.replace(/\s+/g, " ").trim(), disabled: !!box?.disabled, checked: !!box?.checked };
   }, title);
+  // Registers the ticked proposals; returns the save after and the `n` work items it gained.
+  const registerProposals = async (before, n) => {
+    await clickInModalExact("선택한 업무 등록");
+    await expectText(`AI 제안 업무 ${n}건 등록`);
+    await sleep(500);
+    const after = await readState();
+    const made = (after.work || []).filter((w) => !(before.work || []).some((b) => b.id === w.id));
+    if (made.length !== n) throw new Error("imported work items: " + JSON.stringify(made));
+    return { after, made };
+  };
   const openWorkBridge = async () => { await clickTab("업무"); await clickMain("AI로 만들기 ›"); await sleep(400); await expectText("오늘 업무 만들기"); };
   // The paste pane is shared by the work and prep bridges.
   const pasteReply = async (reply) => {
@@ -603,12 +613,7 @@ module.exports = async (h) => {
     if (!linked || linked.disabled || !linked.checked || !linked.text.includes(`목표 · ${goal.title}`)) throw new Error("the goal-linked row: " + JSON.stringify(linked));
     const plain = await proposalRow("회의록 정리");
     if (!plain || plain.disabled || !plain.checked || !plain.text.includes("연결 없음")) throw new Error("the plain row: " + JSON.stringify(plain));
-    await clickInModalExact("선택한 업무 등록");
-    await expectText("AI 제안 업무 2건 등록");
-    await sleep(500);
-    const after = await readState();
-    const made = (after.work || []).filter((w) => !(before.work || []).some((b) => b.id === w.id));
-    if (made.length !== 2) throw new Error("imported work items: " + JSON.stringify(made));
+    const { after, made } = await registerProposals(before, 2);
     for (const w of made) {
       if (w.date !== today || w.source !== "ai" || w.done !== false || w.createdAt !== today) throw new Error("an imported item is not today's open AI record: " + JSON.stringify(w));
     }
@@ -1325,6 +1330,84 @@ module.exports = async (h) => {
       st.deals = (st.deals || []).filter((x) => x.id !== ids.deal);
       localStorage.setItem(k, JSON.stringify(st));
     }, KEY, JOB);
+    await h.reload();
+  });
+
+  /* 2026-09-22: a work proposal carries a track. The confirm row preselects the track the reply stated, else its link's
+     track, else `직장` while day-job records go into packets and `사업` while they are switched off; the registered item
+     takes the chip picked on its row. Written under the standing instruction; not run. */
+  // The track chip that is on in a proposal's confirm row (`bg-cyan-400`), or null when the row shows no chip row.
+  const rowTrack = (title) => page.evaluate((t) => {
+    const row = [...document.querySelectorAll(".fixed.inset-0 span")].find((s) => s.textContent.trim() === t)?.closest("label")?.parentElement;
+    const on = row && [...row.querySelectorAll("button")].find((b) => /bg-cyan-400/.test(b.className || ""));
+    return on ? on.innerText.trim() : null;
+  }, title);
+  const pickRowTrack = async (title, label) => {
+    const ok = await page.evaluate((t, l) => {
+      const row = [...document.querySelectorAll(".fixed.inset-0 span")].find((s) => s.textContent.trim() === t)?.closest("label")?.parentElement;
+      const b = row && [...row.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === l);
+      if (!b) return false;
+      b.click(); return true;
+    }, title, label);
+    if (!ok) throw new Error(`no "${label}" chip in the row of "${title}"`);
+    await sleep(200);
+  };
+
+  await step("a work proposal preselects its stated track, else its link's track, else the day job, and registers the picked track", async () => {
+    const JOB_MTG_ID = "e2e-trackpick-mtg", JOB_MTG = "E2E 직장 트랙 회의";
+    const P = { stated: "E2E 트랙 명시 제안", linked: "E2E 직장 회의 제안", plain: "E2E 연결 없는 제안", off: "E2E 스위치 끔 제안" };
+    const today = await dstrIn(0);
+    await page.evaluate((k, id, title, d) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetings = [{ id, projectId: null, date: d, title, summary: "직장 트랙 회의 요약", createdAt: d, taskIds: [], progress: [], aiHidden: false,
+        followUps: [], track: "work" }, ...(st.meetings || []).filter((m) => m.id !== id)];
+      if (st.settings) delete st.settings.workInAi;
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, JOB_MTG_ID, JOB_MTG, today);
+    await h.reload();
+    const before = await readState();
+    await openWorkBridge();
+    const txt = await packetText();
+    if (!txt.includes('"track":"직장|사업|개인"') || !txt.includes("각 항목의 track에 직장·사업·개인 중 하나를 적어요 — 근거가 된 기록의 트랙을 따라요.")) throw new Error("the work packet head does not ask for a track: " + txt.slice(0, 900));
+    await pasteReply("```json\n" + JSON.stringify({ work: [
+      { title: P.stated, note: "개인 트랙 명시", track: "개인" },
+      { title: P.linked, link: { kind: "meeting", title: JOB_MTG } },
+      { title: P.plain },
+    ], note: "세 건" }) + "\n```");
+    await expectText("제안 업무 확인 — 3건");
+    for (const [title, want] of [[P.stated, "개인"], [P.linked, "직장"], [P.plain, "직장"]]) {
+      const got = await rowTrack(title);
+      if (got !== want) throw new Error(`the row of "${title}" preselects ${got} (expected ${want})`);
+    }
+    await pickRowTrack(P.plain, "사업");
+    if ((await rowTrack(P.plain)) !== "사업") throw new Error("picking the business chip did not move the row's pick");
+    if ((await rowTrack(P.stated)) !== "개인" || (await rowTrack(P.linked)) !== "직장") throw new Error("picking one row changed another row's chip");
+    const { made } = await registerProposals(before, 3);
+    for (const [title, want] of [[P.stated, "personal"], [P.linked, "work"], [P.plain, "biz"]]) {
+      const w = made.find((x) => x.title === title);
+      if (!w || w.track !== want || w.source !== "ai" || w.date !== today) throw new Error(`the item "${title}" (expected track ${want}): ` + JSON.stringify(w));
+    }
+    if (made.find((x) => x.title === P.linked)?.link?.id !== JOB_MTG_ID) throw new Error("the day-job meeting link was not resolved");
+    // Day-job records switched off: an unlinked proposal without a stated track preselects the business chip.
+    await page.evaluate((k) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.settings = { ...(st.settings || {}), workInAi: false };
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY);
+    await h.reload();
+    await openWorkBridge();
+    await pasteReply("```json\n" + JSON.stringify({ work: [{ title: P.off }] }) + "\n```");
+    await expectText("제안 업무 확인 — 1건");
+    if ((await rowTrack(P.off)) !== "사업") throw new Error("with the switch off an unlinked proposal preselects " + (await rowTrack(P.off)));
+    await closeModal();
+    // Leave the save as flow4 expects it: no planted meeting, no imported items, the switch absent.
+    await page.evaluate((k, id, titles) => {
+      const st = JSON.parse(localStorage.getItem(k));
+      st.meetings = (st.meetings || []).filter((m) => m.id !== id);
+      st.work = (st.work || []).filter((w) => !titles.includes(w.title));
+      if (st.settings) delete st.settings.workInAi;
+      localStorage.setItem(k, JSON.stringify(st));
+    }, KEY, JOB_MTG_ID, Object.values(P));
     await h.reload();
   });
 

@@ -188,6 +188,13 @@ the work packet and `AI에게 회의 준비 묻기` on the day-job event's prep 
 switch writes settings.workInAi only and its caption follows`) toggles `직장 기록을 AI 요청문에 포함` off and on, asserting
 `settings` is the only changed key, the explicit `false` / `true`, both toasts and both captions. 256 `await step(` calls
 as written (`flow11.js` 32, the others unchanged); every edited file parses (`node --check`), and none of it has been executed.
+The work-proposal track pick (2026-09-22, schema still v28, no migrate block) added one `flow11.js` step under the same
+instruction, after the day-job switch packet step: a planted project-less day-job meeting, the work packet head asking for
+`"track":"직장|사업|개인"`, and a pasted reply of three proposals — one stating `"track":"개인"`, one linked to the day-job
+meeting, one unlinked — whose confirm rows preselect `개인`, `직장`, `직장`; the third is switched to `사업`, and the
+registered items store `personal`, `work`, `biz`. With `settings.workInAi` false an unlinked proposal preselects `사업`.
+The `flow5.js` review-bridge step asserts its row preselects `사업`. 259 `await step(` calls as written (`flow11.js` 33,
+the others unchanged); every edited file parses (`node --check`), and none of it has been executed.
 
 ## Scenario layout
 
