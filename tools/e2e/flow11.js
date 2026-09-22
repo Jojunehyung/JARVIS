@@ -1757,4 +1757,252 @@ module.exports = async (h) => {
       await setStamp(null, { reviews: saved.reviews, work: (st.work || []).filter((w) => w.title !== REVIEW_TITLE) });
     }
   });
+
+  /* 2026-09-22 — training records and the issue list (Phase 3). A training record is a meeting record with
+     `kind: "training"` and other labels; the issue list derives four sections and only opens existing sheets. Written
+     under the standing instruction; not run. The first step saves the two records the later steps read; the last one
+     removes them. */
+  const TR_TITLE = "E2E 교육 기록", CMP_TITLE = "E2E 교육 비교 회의";
+  const recordByTitle = async (title) => ((await readState()).meetings || []).find((m) => m.title === title);
+  // The open sheet's placeholders, so a relabel is read off the fields themselves.
+  const placeholders = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    return ov ? [...ov.querySelectorAll("input, textarea")].map((e) => e.getAttribute("placeholder") || "") : [];
+  });
+  // The E2E project's own `회의록 추가` button in the meetings tab.
+  const openMeetingFormOnProject = async () => {
+    await clickTab("미팅");
+    const ok = await page.evaluate((name) => {
+      const sec = [...document.querySelectorAll("main section")].find((x) => (x.innerText || "").trim().startsWith(name));
+      const b = sec && [...sec.querySelectorAll("button")].find((x) => (x.innerText || "").trim() === "회의록 추가");
+      if (!b) return false;
+      b.click(); return true;
+    }, PROJECT);
+    if (!ok) throw new Error("the E2E project has no add-minutes button");
+    await sleep(400);
+    await expectText("새 회의록");
+  };
+  // Fills the title and the summary of the open meeting form and registers it.
+  const saveMeetingForm = async (titleHint, summaryHint, title, summary) => {
+    await setValue(`.fixed.inset-0 input[placeholder="${titleHint}"]`, title);
+    await setValue(`.fixed.inset-0 textarea[placeholder="${summaryHint}"]`, summary);
+    await clickInModalExact("등록");
+    await sleep(500);
+  };
+  // Opens the issue list from the profile card; a tap on one of its rows by the row's exact title.
+  const openIssues = async () => {
+    await clickTab("프로필");
+    await clickMain("이슈 목록 ›");
+    await sleep(400);
+    if (!(await overlayText()).startsWith("이슈 목록")) throw new Error("the issue list did not open: " + (await overlayText()).slice(0, 80));
+  };
+  const tapIssueRow = async (title) => {
+    const ok = await page.evaluate((t) => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const node = ov && [...ov.querySelectorAll(".text-sm.font-semibold")].find((e) => (e.innerText || "").trim() === t);
+      const row = node && node.closest("button");
+      if (!row) return false;
+      row.click(); return true;
+    }, title);
+    if (!ok) throw new Error("no issue-list row titled " + title);
+    await sleep(450);
+  };
+  // The rows `{ lead, title, marker }` of one section (or one group of it) of the open issue list, in order.
+  const issueRows = (key, group = null) => page.evaluate((k, g) => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const sec = ov && ov.querySelector(`[data-issue-section="${k}"]`);
+    const scope = sec && (g ? sec.querySelector(`[data-issue-group="${g}"]`) : sec);
+    return scope ? [...scope.querySelectorAll("button")].filter((b) => b.querySelector(".text-sm.font-semibold")).map((b) => {
+      const spans = [...b.querySelectorAll("span")];
+      return { lead: (spans[0]?.innerText || "").trim(), title: (b.querySelector(".text-sm.font-semibold").innerText || "").trim(), marker: (spans[1]?.innerText || "").trim() };
+    }) : null;
+  }, key, group);
+
+  await step("a training record is saved from the form with its own labels, listed with the training marker, and viewed with its training labels", async () => {
+    await plantMeeting();
+    await openMeetingFormOnProject();
+    const meetingHints = await placeholders();
+    for (const t of ["회의 이름 — 예: 2차 요구사항 회의", "회의 요약 — 논의한 내용을 요점으로 적어요", "결정 사항 (선택)", "후속 조치 (선택)"]) {
+      if (!meetingHints.includes(t)) throw new Error(`the meeting form lacks the placeholder "${t}": ` + JSON.stringify(meetingHints));
+    }
+    await clickInModalExact("교육");
+    const trainingHints = await placeholders();
+    for (const t of ["교육 이름 — 예: 데이터 품질 지표 교육", "강사·주최 (선택) — 예: ○○협회", "배운 것 — 핵심 내용을 요점으로 적어요", "핵심 정리 (선택)", "적용할 것 (선택)"]) {
+      if (!trainingHints.includes(t)) throw new Error(`the training form lacks the placeholder "${t}": ` + JSON.stringify(trainingHints));
+    }
+    await clickInModalExact("등록");
+    if ((await modalError()) !== "교육 이름을 입력해 주세요.") throw new Error("the training form's empty-title refusal: " + (await modalError()));
+    await saveMeetingForm("교육 이름 — 예: 데이터 품질 지표 교육", "배운 것 — 핵심 내용을 요점으로 적어요", TR_TITLE, "E2E 배운 것 첫 줄\nE2E 배운 것 둘째 줄");
+    await openMeetingFormOnProject();
+    await saveMeetingForm("회의 이름 — 예: 2차 요구사항 회의", "회의 요약 — 논의한 내용을 요점으로 적어요", CMP_TITLE, "E2E 비교 회의 요약");
+    const tr = await recordByTitle(TR_TITLE), cmp = await recordByTitle(CMP_TITLE);
+    if (!tr || tr.kind !== "training") throw new Error("the training record: " + JSON.stringify(tr));
+    if (!cmp || "kind" in cmp) throw new Error("a meeting-kind record carries a kind key: " + JSON.stringify(cmp));
+    const keysOf = (m) => Object.keys(m).filter((k) => k !== "kind").sort().join(",");
+    if (keysOf(tr) !== keysOf(cmp)) throw new Error(`the two records differ in shape: ${keysOf(tr)} vs ${keysOf(cmp)}`);
+    await clickTab("미팅");
+    const row = (await workRows()).find((r) => r.title === TR_TITLE);
+    if (!row || !row.marker.startsWith("교육")) throw new Error("the training row's marker: " + JSON.stringify(row));
+    const plain = (await workRows()).find((r) => r.title === CMP_TITLE);
+    if (!plain || plain.marker.startsWith("교육")) throw new Error("the meeting row carries the training marker: " + JSON.stringify(plain));
+    await openTodo(TR_TITLE);
+    const view = await overlayText();
+    if (!view.startsWith(`교육 · ${TR_TITLE}`)) throw new Error("the training view's title: " + view.slice(0, 80));
+    for (const t of ["강사·주최", "배운 것", "핵심 정리", "적용할 것"]) if (!view.includes(t)) throw new Error(`the training view lacks "${t}"`);
+    if (view.includes("참석자")) throw new Error("the training view names the attendees label");
+    await closeModal();
+  });
+
+  await step("the work packet states a training record with its kind in the head line and its own body labels, and the prep card ignores it as the last meeting", async () => {
+    const [today, d1] = [await dstrIn(0), await dstrIn(-1)];
+    const EV = { id: "e2e-train-ev", title: "E2E 교육 준비 일정" };
+    try {
+      // The comparison meeting moves one day back, so the training record is strictly the project's newest record.
+      await page.evaluate((k, cmp, d, ev, pid, t) => {
+        const st = JSON.parse(localStorage.getItem(k));
+        st.meetings.find((m) => m.title === cmp).date = d;
+        st.events = [...(st.events || []), { id: ev.id, title: ev.title, kind: "appt", date: t, time: "09:00", projectId: pid, createdAt: t, track: "biz" }];
+        localStorage.setItem(k, JSON.stringify(st));
+      }, KEY, CMP_TITLE, d1, EV, PROJECT_ID, today);
+      await h.reload();
+      await openWorkBridge();
+      const lines = (await packetText()).split("\n");
+      const at = lines.findIndex((l) => l.endsWith(`] 교육 · ${TR_TITLE}`));
+      if (at < 0 || !lines[at].startsWith(`- ${today} [${PROJECT}] `)) throw new Error("the packet's training head line: " + lines.filter((l) => l.includes(TR_TITLE)).join(" | "));
+      const end = lines.findIndex((l, i) => i > at && !l.startsWith("  "));
+      const body = lines.slice(at + 1, end < 0 ? undefined : end);
+      if (!body.some((l) => l.startsWith("  배운 것: E2E 배운 것 첫 줄"))) throw new Error("the training body lacks its learned line: " + body.join(" | "));
+      if (body.some((l) => l.startsWith("  요약: "))) throw new Error("the training body states a summary label: " + body.join(" | "));
+      if (!lines.includes(`- ${d1} [${PROJECT}] ${CMP_TITLE}`)) throw new Error("the meeting-kind head line changed shape");
+      await closeModal();
+      await clickTab("업무");
+      const block = await page.evaluate((title) => {
+        const sec = [...document.querySelectorAll("main section")].find((x) => (x.innerText || "").trim().startsWith("오늘 회의 준비"));
+        const div = sec && [...sec.querySelectorAll(".bg-zinc-950.rounded-xl")].find((b) => (b.innerText || "").includes(title));
+        return div ? div.innerText.replace(/[ \t]+/g, " ") : null;
+      }, EV.title);
+      if (!block || !block.includes(`마지막 회의 ${d1} · ${CMP_TITLE}`) || block.includes(TR_TITLE)) throw new Error("the prep block's last meeting: " + block);
+    } finally {
+      await closeModal();
+      await page.evaluate((k, id) => { const s = JSON.parse(localStorage.getItem(k)); s.events = (s.events || []).filter((e) => e.id !== id); localStorage.setItem(k, JSON.stringify(s)); }, KEY, EV.id);
+      await h.reload();
+    }
+  });
+
+  await step("the issue list opens from the profile card and the reader, and states its four sections in order", async () => {
+    const today = await dstrIn(0);
+    await openIssues();
+    const labels = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      return [...ov.querySelectorAll("[data-issue-section]")].map((s) => [s.getAttribute("data-issue-section"), (s.firstElementChild?.innerText || "").trim()]);
+    });
+    const want = [["todo", "할 일 ("], ["events", "일정 (14일) ("], ["training", "교육 ("], ["projects", "프로젝트별 최신 회의록 ("]];
+    if (labels.length !== 4 || want.some(([k, l], i) => labels[i][0] !== k || !labels[i][1].startsWith(l))) throw new Error("the issue list's sections: " + JSON.stringify(labels));
+    if ((await overlayText()).includes("%")) throw new Error("the issue list states a percentage");
+    await closeModal();
+    await clickTab("프로필");
+    await clickMain("오늘 읽을 것 ›");
+    await sleep(400);
+    await clickInModalExact("이슈 목록 ›");
+    await sleep(400);
+    if (!(await overlayText()).startsWith("이슈 목록")) throw new Error("the reader's row did not open the issue list: " + (await overlayText()).slice(0, 80));
+    if ((await readState()).act.briefingSeen !== today) throw new Error("leaving the reader for the issue list did not stamp the day");
+    await closeModal();
+  });
+
+  await step("the issue list leads its track with the carried work item, lists the training record under training and not as the project's latest minutes, and the previous toggle expands compact rows", async () => {
+    const [d2, d10, d11, d12] = [await dstrIn(-2), await dstrIn(-10), await dstrIn(-11), await dstrIn(-12)];
+    const CARRY = "E2E 이슈 이월 업무";
+    const OLD = ["E2E 이슈 이전 회의 1", "E2E 이슈 이전 회의 2", "E2E 이슈 이전 회의 3"];
+    const saved = await readState();
+    const keep = { work: saved.work, meetings: saved.meetings };
+    try {
+      // Only the planted carried item, so an older leftover cannot lead the business group; the project keeps its two
+      // records from the first step and gains three older meetings (the second carries one open follow-up of two).
+      await page.evaluate((k, carry, d2x, olds, dates, pid) => {
+        const st = JSON.parse(localStorage.getItem(k));
+        st.work = [{ id: "e2e-issue-carry", date: d2x, title: carry, done: false, source: "manual", createdAt: d2x, track: "biz" }];
+        st.meetings = [...st.meetings.filter((m) => m.projectId !== pid || m.title.startsWith("E2E 교육")),
+          ...olds.map((t, i) => ({ id: `e2e-issue-old${i}`, projectId: pid, date: dates[i], title: t, summary: `${t} 요약`, createdAt: dates[i], taskIds: [], progress: [], aiHidden: false,
+            followUps: i === 1 ? [{ id: "e2e-issue-fu1", text: "E2E 이슈 후속", mine: false, done: false }, { id: "e2e-issue-fu2", text: "E2E 이슈 완료 후속", mine: false, done: true }] : [] }))];
+        localStorage.setItem(k, JSON.stringify(st));
+      }, KEY, CARRY, d2, OLD, [d10, d11, d12], PROJECT_ID);
+      await h.reload();
+      const before = await readState();
+      await openIssues();
+      const biz = await issueRows("todo", "biz");
+      if (!biz || biz[0]?.lead !== "이월 2일" || biz[0]?.title !== CARRY) throw new Error("the business group's first row: " + JSON.stringify(biz && biz.slice(0, 2)));
+      const training = await issueRows("training");
+      if (!training || !training[0]?.title.startsWith(TR_TITLE)) throw new Error("the training section's first row: " + JSON.stringify(training));
+      const project = await page.evaluate((name) => {
+        const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+        const box = ov && ov.querySelector(`[data-issue-project="${name}"]`);
+        return box ? { text: box.innerText, latest: (box.querySelector(".text-sm.font-semibold")?.innerText || "").trim() } : null;
+      }, PROJECT);
+      if (!project || project.latest !== CMP_TITLE) throw new Error("the project's latest minutes: " + JSON.stringify(project));
+      if (!project.text.includes("요약: E2E 비교 회의 요약")) throw new Error("the latest minutes lack the summary line: " + project.text);
+      await clickInModalExact("이전 3건 ›");
+      await sleep(300);
+      const rows = await page.evaluate((name) => {
+        const box = [...document.querySelectorAll(".fixed.inset-0")].pop().querySelector(`[data-issue-project="${name}"]`);
+        return [...box.querySelectorAll("button")].filter((b) => b.querySelector(".text-sm.font-semibold")).map((b) => ({
+          title: b.querySelector(".text-sm.font-semibold").innerText.trim(), marker: ([...b.querySelectorAll("span")][1]?.innerText || "").trim() }));
+      }, PROJECT);
+      // The latest row, then the three previous by date: the training record (prefixed), then the two newest older meetings.
+      const titles = rows.map((r) => r.title);
+      if (JSON.stringify(titles) !== JSON.stringify([CMP_TITLE, `교육 · ${TR_TITLE}`, OLD[0], OLD[1]])) throw new Error("the expanded rows: " + JSON.stringify(titles));
+      if (rows[3].marker !== "후속 1/2") throw new Error("the follow-up marker of a previous row: " + JSON.stringify(rows[3]));
+      if (!(await sheetChip("접기"))) throw new Error("the toggle does not read the collapse label once open");
+      await tapIssueRow(CMP_TITLE);
+      if (!(await overlayText()).startsWith(CMP_TITLE)) throw new Error("the latest row did not open its minutes: " + (await overlayText()).slice(0, 80));
+      await closeModal();
+      const after = await readState();
+      if (changedKeys(before, after).length) throw new Error("the issue list changed " + JSON.stringify(changedKeys(before, after)));
+    } finally {
+      await closeModal();
+      await page.evaluate((k, v) => { const s = JSON.parse(localStorage.getItem(k)); Object.assign(s, v); localStorage.setItem(k, JSON.stringify(s)); }, KEY, keep);
+      await h.reload();
+    }
+  });
+
+  await step("an issue-list row tap opens the work sheet and the event sheet without writing state, and the training records are removed", async () => {
+    const [d2, d1p] = [await dstrIn(-2), await dstrIn(1)];
+    const CARRY = "E2E 이슈 시트 업무", EVT = "E2E 이슈 시트 일정";
+    const saved = await readState();
+    try {
+      await page.evaluate((k, carry, d2x, evt, dx) => {
+        const st = JSON.parse(localStorage.getItem(k));
+        st.work = [...(st.work || []), { id: "e2e-issue-sheet", date: d2x, title: carry, done: false, source: "manual", createdAt: d2x, track: "biz" }];
+        st.events = [...(st.events || []), { id: "e2e-issue-ev", title: evt, kind: "appt", date: dx, time: "15:00", createdAt: d2x, track: "biz" }];
+        localStorage.setItem(k, JSON.stringify(st));
+      }, KEY, CARRY, d2, EVT, d1p);
+      await h.reload();
+      const before = await readState();
+      await openIssues();
+      await tapIssueRow(CARRY);
+      // The work sheet states its title in the title field, not as text.
+      const work = await page.evaluate(() => {
+        const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+        return { text: (ov?.innerText || "").trim(), title: ov?.querySelector('input[placeholder="업무 제목 — 예: 견적서 송부"]')?.value || "" };
+      });
+      if (!work.text.startsWith("업무") || work.title !== CARRY) throw new Error("the work row did not open the work sheet: " + JSON.stringify(work).slice(0, 160));
+      await closeModal();
+      await openIssues();
+      await tapIssueRow(`약속 · ${EVT}`);
+      const ev = await overlayText();
+      if (ev.startsWith("이슈 목록") || !ev.includes(EVT)) throw new Error("the event row did not open the event sheet: " + ev.slice(0, 120));
+      await closeModal();
+      const after = await readState();
+      if (changedKeys(before, after).length) throw new Error("opening sheets from the issue list changed " + JSON.stringify(changedKeys(before, after)));
+    } finally {
+      await closeModal();
+      await page.evaluate((k, keep) => {
+        const s = JSON.parse(localStorage.getItem(k));
+        s.work = keep.work; s.events = keep.events;
+        s.meetings = (s.meetings || []).filter((m) => !m.title.startsWith("E2E 교육"));
+        localStorage.setItem(k, JSON.stringify(s));
+      }, KEY, { work: saved.work, events: saved.events });
+      await h.reload();
+    }
+  });
 };

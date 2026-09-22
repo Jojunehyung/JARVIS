@@ -454,5 +454,82 @@ console.log("calendar file: 18 check groups");
   console.log(`check summary: ${n} checks`);
 }
 
+// 8) training records and the issue list — the `교육` labels, `lastMeetingOf` (a training record is never a project's
+// last meeting while a meeting-kind record exists) and `issueListOf`'s four sections (2026-09-22). The goal tasks come
+// from `agendaOf` directly, so `todoOf` (and its business helpers) need not be lifted. `demoState` is not lifted (it
+// calls `uid`/`dstr` and spans the whole seed); the E2E covers the demo.
+{
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `issue list: ${msg}`); };
+  const liftExpr = (name) => { const t = lift(name).split("\n"); return t.slice(0, t.findIndex((l) => /;\s*(\/\/.*)?$/.test(l)) + 1).join("\n"); };
+  const ISSUE = new Function([
+    ...["dstr", "shiftDay", "daysBetween", "mondayOf", "MAX_OCC", "occurrencesOf", "eventsOn", "upcomingEvents", "EVENT_KIND_LABEL",
+      "TRACKS", "TRACK_LABEL", "trackOf", "meetingOrder", "MEETING_KIND", "isTraining", "MEETING_FIELD_LABEL", "meetingLabels",
+      "kindPrefix", "lastMeetingOf", "oneLineText", "byCreated", "workOn", "agendaOf", "TODO_GROUPS",
+      "ISSUE_WORK_ROWS", "ISSUE_EVENT_DAYS", "ISSUE_EVENT_ROWS", "ISSUE_TRAINING_ROWS", "ISSUE_PREV_MEETINGS", "ISSUE_FOLLOWUPS",
+      "ISSUE_DECISION_CLIP", "ISSUE_SUMMARY_CLIP", "ISSUE_LEARNED_CLIP", "ISSUE_PROJECT_TRACKS"].map(lift),
+    liftExpr("meetingTrack"), lift("issueListOf"),
+  ].join("\n") + "\nreturn { meetingLabels, lastMeetingOf, issueListOf, MEETING_FIELD_LABEL };")();
+  const today = "2026-09-22";
+
+  // (a) labels: absent and "meeting" read as a meeting; "training" relabels
+  check(ISSUE.meetingLabels({}) === ISSUE.MEETING_FIELD_LABEL.meeting && ISSUE.meetingLabels({ kind: "meeting" }) === ISSUE.MEETING_FIELD_LABEL.meeting, "absent and meeting kinds read the meeting labels");
+  const tl = ISSUE.meetingLabels({ kind: "training" });
+  check(tl.summary === "배운 것" && tl.decisions === "핵심 정리" && tl.actions === "적용할 것" && tl.attendees === "강사·주최", `training labels ${JSON.stringify(tl)}`);
+
+  // (b) lastMeetingOf: a newer training record never displaces a meeting; alone, the newest training record stands in
+  const rec = (id, projectId, date, extra = {}) => ({ id, projectId, date, title: id, summary: `${id} 요약`, createdAt: date, taskIds: [], progress: [], followUps: [], ...extra });
+  const mixed = [rec("m1", "P", "2026-09-10"), rec("t1", "P", "2026-09-20", { kind: "training" }), rec("m0", "P", "2026-09-01")];
+  check(ISSUE.lastMeetingOf(mixed, "P")?.id === "m1", `a newer training record is not the last meeting: ${ISSUE.lastMeetingOf(mixed, "P")?.id}`);
+  const trainingOnly = [rec("t1", "P", "2026-09-20", { kind: "training" }), rec("t2", "P", "2026-09-21", { kind: "training" })];
+  check(ISSUE.lastMeetingOf(trainingOnly, "P")?.id === "t2" && ISSUE.lastMeetingOf([], "P") === null, "training-only → the newest training record; none → null");
+
+  // (c) an empty save: four sections in order, all empty
+  const empty = ISSUE.issueListOf({}, today);
+  check(empty.sections.map((s) => s.key).join(",") === "todo,events,training,projects" && empty.sections.every((s) => s.empty),
+    `empty save: ${JSON.stringify(empty.sections.map((s) => [s.key, s.empty]))}`);
+
+  // (d) a fixture with every row kind
+  const state = {
+    meetingProjects: [{ id: "B", name: "사업 프로젝트", track: "biz", createdAt: "2026-09-01" }, { id: "W", name: "직장 프로젝트", track: "work", createdAt: "2026-09-01" }],
+    meetings: [
+      rec("biz-meet", "B", "2026-09-15", { followUps: [{ id: "f1", text: "견적 회신", mine: true, done: false }] }),
+      rec("job-meet", "W", "2026-09-18", { decisions: "기준 확정", followUps: [{ id: "f2", text: "타인 할 일", mine: false, done: false }] }),
+      rec("job-train", "W", "2026-09-20", { kind: "training", summary: "지표 6종\n두 번째 줄", followUps: [{ id: "f3", text: "지표 표 추가", mine: true, due: "2026-09-25", done: false }] }),
+      rec("job-old", "W", "2026-09-05"),
+      rec("memo", null, "2026-09-21", { track: "biz" }),
+    ],
+    work: [
+      { id: "w1", date: "2026-09-20", title: "이월 업무", done: false, createdAt: "2026-09-20", track: "work" },
+      { id: "w2", date: today, title: "오늘 업무", done: false, createdAt: today, track: "work" },
+    ],
+    events: [
+      { id: "e1", kind: "appt", title: "점검", date: "2026-09-23", time: "10:00", checks: [{ id: "c1", text: "a", done: true }, { id: "c2", text: "b", done: false }] },
+      { id: "e2", kind: "due", title: "제출", date: "2026-09-25" },
+    ],
+    tasks: [],
+  };
+  const il = ISSUE.issueListOf(state, today);
+  const sec = (k) => il.sections.find((s) => s.key === k);
+  const todo = sec("todo");
+  check(todo.groups.map((g) => g.track).join(",") === "work,biz", `todo groups ${todo.groups.map((g) => g.label).join(",")}`);
+  const jobRows = todo.groups.find((g) => g.track === "work").rows;
+  check(jobRows[0].lead === "이월 2일" && jobRows[0].id === "w1" && jobRows[1].lead === "오늘", `the carried item leads the day-job group: ${JSON.stringify(jobRows.map((r) => r.lead))}`);
+  check(jobRows.some((r) => r.kind === "followUp" && r.text === "job-train · 지표 표 추가" && r.lead === "기한 2026-09-25")
+    && todo.groups.find((g) => g.track === "biz").rows.some((r) => r.text === "biz-meet · 견적 회신" && r.lead === "후속"), "follow-up rows carry `{meeting} · {text}`");
+  const ev = sec("events");
+  check(ev.rows.length === 2 && ev.rows[0].marker === "확인할 것 1/2" && ev.rows[0].lead === "09/23 10:00" && ev.rows[1].text === "마감 · 제출", `events ${JSON.stringify(ev.rows.map((r) => [r.lead, r.text, r.marker]))}`);
+  const tr = sec("training");
+  check(tr.rows.length === 1 && tr.rows[0].text === "job-train · 직장 프로젝트" && tr.rows[0].sub === "지표 6종", `training ${JSON.stringify(tr.rows)}`);
+  const pg = sec("projects").groups;
+  check(pg.map((g) => g.track).join(",") === "biz,work,", `project groups ${JSON.stringify(pg.map((g) => g.track))}`);
+  const job = pg.find((g) => g.track === "work").rows[0];
+  check(job.latest.meetingId === "job-meet" && job.latest.decisions === "기준 확정", `the day-job project's latest is the meeting, not the newer training record: ${job.latest.meetingId}`);
+  check(job.previous.map((x) => x.title).join("|") === "교육 · job-train|job-old", `previous rows ${JSON.stringify(job.previous.map((x) => x.title))}`);
+  const memoGroup = pg[pg.length - 1];
+  check(memoGroup.track === null && memoGroup.rows[0].latest.meetingId === "memo" && memoGroup.rows[0].previous.length === 0, "the memo group is last with no previous rows");
+  console.log(`issue list: ${n} checks`);
+}
+
 console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");
 process.exit(fail ? 1 : 0);

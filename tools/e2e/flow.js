@@ -401,8 +401,10 @@ module.exports = async (h) => {
         await expectText("이번 주 사업 4.5h/20h");
       }
       if (tab === "미팅") {
-        await expectText("프로젝트 3개 · 회의록 5건 · 문서 2건");
+        // 2026-09-22: the sixth record is the day-job project's training record, listed with its marker.
+        await expectText("프로젝트 3개 · 회의록 6건 · 문서 2건");
         await expectText("데이터 프로파일링 — 데모기관");
+        await expectText("데이터 품질 지표 교육");
         const tag = await page.evaluate(() => {
           const sec = [...document.querySelectorAll("main section")].find((s) => (s.innerText || "").trim().startsWith("데이터 프로파일링 — 데모기관"));
           return sec ? [...sec.querySelectorAll("span")].map((x) => (x.innerText || "").trim()).find((t) => t === "직장") || null : null;

@@ -204,11 +204,12 @@ module.exports = async (h) => {
     const base = page.url().split("?")[0];
     try {
       await writeState({ ...saved, act: { ...saved.act, briefingSeen: await dstrIn(0) } });
-      // The issue list's slot lands in Phase 3 of the 2026-09-22 plan; until then `issues` falls back to the reader.
-      for (const open of ["issues", "reader"]) {
+      // Each param names its own screen: the issue list (Phase 3 of the 2026-09-22 plan) and the reader.
+      for (const [open, title] of [["issues", "이슈 목록"], ["reader", "오늘 읽을 것 —"]]) {
         await page.goto(`${base}?open=${open}`, { waitUntil: "networkidle2" });
         await sleep(400);
-        await expectText("오늘 읽을 것 —");
+        const sheet = await page.evaluate(() => ([...document.querySelectorAll(".fixed.inset-0")].pop()?.innerText || "").trim());
+        if (!sheet.startsWith(title)) throw new Error(`?open=${open} opened another screen: ${sheet.slice(0, 80)}`);
         const search = await page.evaluate(() => location.search);
         if (search !== "") throw new Error(`?open=${open} left the query: ${search}`);
         await closeModal();
