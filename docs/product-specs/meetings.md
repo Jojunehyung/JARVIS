@@ -26,7 +26,7 @@ meetings: [{ id, projectId(string | null), date("YYYY-MM-DD"), title, attendees?
              progress[], aiHidden, followUps[{ id, text, mine, due?, done, workId? }], track?("work"|"biz"|"personal"), kind?("meeting"|"training") }]
 ```
 `kind?` (2026-09-22, still v28, no migration) is written **only** for a training record — see
-[Training records (`교육`)](#training-records-교육-2026-09-22) below; absent reads as `"meeting"`, so an existing
+[Training records (`교육`)](#training-records-교육-2026-09-22--reference-only-same-day) below; absent reads as `"meeting"`, so an existing
 save's meeting-kind records are unchanged.
 `track` on a project (schema v28) is a stored field with `TrackRow` chips in `ProjectModal`, default `work`,
 backfilled `work` on every existing project. `track?` on a meeting is written **only for a memo**
@@ -127,61 +127,119 @@ no per-record "send to AI anyway" override ([TD-73](../exec-plans/tech-debt-trac
   `직장` first, then `사업`, then `개인`: the day job's items must not slip, so they lead; see
   [daily-work.md](daily-work.md), [daily-reader.md](daily-reader.md), [daily-briefing.md](daily-briefing.md).
 
-## Training records (`교육`, 2026-09-22)
+## Training records (`교육`, 2026-09-22 — reference only, same day)
 
-A meeting record may be a **training record** — the same fields, the same progress log, follow-ups, transcript,
-task links and `AI에 보내지 않기` flag, only the field labels and a couple of list-line prefixes differ. There is
-no second data shape: `kind?: "meeting" | "training"` is the only new key, written only when `"training"`, so a
-meeting-kind record's save is byte-identical to before this change.
+A meeting record may be a **training record** — the same fields and the same shape, only the field labels differ
+— and, since a same-day follow-up decision ("`교육` is not for adding to the to-do list — just for grasping the
+content"), it is **reference only**: no follow-up items, no task links, no progress log, and it never mirrors a
+work item, whatever it stores. There is no second data shape: `kind?: "meeting" | "training"` is the only new
+key, written only when `"training"`, so a meeting-kind record's save is byte-identical to before this change.
 
 ```js
 const MEETING_KIND = { meeting: "회의", training: "교육" };
 const MEETING_KIND_OPTIONS = [["meeting", "회의"], ["training", "교육"]];
 const isTraining = (m) => m?.kind === "training";
+// A training record is reference only: the follow-ups, task links and progress a record saved before that day
+// may carry stay stored untouched, but no to-do surface, count, packet or calendar entry reads them — every such
+// reader goes through `followUpsOf` (a meeting-kind record answers its own list, so its output is unchanged).
+const followUpsOf = (m) => (isTraining(m) ? [] : m?.followUps || []);
 const MEETING_FIELD_LABEL = {
   meeting:  { attendees: "참석자",   summary: "회의 요약", decisions: "결정 사항", actions: "후속 조치",
               packetSummary: "요약", packetDecisions: "결정", packetActions: "후속" },
-  training: { attendees: "강사·주최", summary: "배운 것",   decisions: "핵심 정리", actions: "적용할 것",
-              packetSummary: "배운 것", packetDecisions: "핵심 정리", packetActions: "적용할 것" },
+  training: { attendees: "강사·주최", summary: "배운 것",   decisions: "핵심 정리", actions: "기억할 점",
+              packetSummary: "배운 것", packetDecisions: "핵심 정리", packetActions: "기억할 점" },
 };
 const meetingLabels = (m) => MEETING_FIELD_LABEL[isTraining(m) ? "training" : "meeting"];
-const kindPrefix = (m) => (isTraining(m) ? "교육 · " : "");
+const kindPrefix = (m) => (isTraining(m) ? `${MEETING_KIND.training} · ` : "");
 ```
+
+`적용할 것` (the field the training kind was born with, same day) was renamed `기억할 점` in the same change
+that made the kind reference only — a point to keep, not an action item: field label, placeholder `기억할 점
+(선택)`, refusal `기억할 점은 …자까지예요`, packet/body label `기억할 점:`.
 
 - **The form (`MeetingModal`)**: a `종류` `BizChips` row (`MEETING_KIND_OPTIONS`) at the top, above the project
   picker; `MEETING_FORM_TEXT[kind]` relabels the title placeholder (`교육 이름 — 예: 데이터 품질 지표 교육`),
   the attendees placeholder (`강사·주최 (선택) — 예: ○○협회`), the summary placeholder (`배운 것 — 핵심 내용을
   요점으로 적어요`), and the refusal messages (`교육 이름을 입력해 주세요.`, `배운 것을 입력해 주세요.`, and the
-  `{field}은/는 …자까지예요` names — `교육 이름은`/`강사·주최는`/`배운 것은`/`핵심 정리는`/`적용할 것은`). On
-  save, the record writes `kind` only when `"training"` — a meeting-kind save carries no `kind` key at all.
-  Everything else in the form (the follow-up editor, `확인할 것 가져오기`, the transcript block, task links,
-  `AI에 보내지 않기`, the project picker's `없음 (긴급 메모)` chip, the memo `TrackRow`) is unchanged.
+  `{field}은/는 …자까지예요` names — `교육 이름은`/`강사·주최는`/`배운 것은`/`핵심 정리는`/`기억할 점은`). For a
+  training record the form **hides three blocks entirely** (`training = kind === "training"` gates each): the
+  `할 일 연결` task-link picker, the `후속 항목` follow-up editor, and `확인할 것 가져오기` (which only ever
+  appears beside the follow-up editor). The transcript block, `AI에 보내지 않기`, the project picker's `없음
+  (긴급 메모)` chip and the memo `TrackRow` are unchanged and stay visible for training too. Switching an
+  already-saved meeting-kind record to `교육` while it carries a follow-up, task link or progress shows the
+  caption `교육으로 바꾸면 후속 항목·연결된 할 일은 목록에서 빠지고 기록만 남아요.` (`training && meeting &&
+  !isTraining(meeting)`) directly under the `종류` chips — the fact stated is `목록에서 빠지고`, never
+  `지워지고`: **nothing stored is deleted**. On save, a training record writes `taskIds`/`followUps` back exactly
+  as the record already had them (`meeting?.taskIds || []` / `meeting?.followUps || []`, including any stored
+  `workId`), so switching a meeting to `교육` and back loses nothing; a **new** training record writes
+  `taskIds: []`, `followUps: []`. The record writes `kind` only when `"training"` — a meeting-kind save carries
+  no `kind` key at all.
 - **The view (`MeetingViewModal`)**: the title is prefixed `교육 · ` for a training record; the `참석자` fact
-  reads `강사·주최`; the `요약`/`결정 사항`/`후속 조치` blocks read `배운 것`/`핵심 정리`/`적용할 것`; the
-  follow-up split panel's heading becomes `적용할 것에서 항목 나누기` for a training record. Follow-up items,
-  progress, the transcript block, `AI 전송` and every other row are unchanged.
-- **The list row (`MeetingsTab`)**: `meetingRowMarker(m, lead)` prefixes `교육` as the first part (before `lead`
-  and `진행 {n}건`) for a training record — a marker addition, not a different lead chip; the row's lead chip is
-  still the date, on every row.
+  reads `강사·주최`; the `요약`/`결정 사항`/`후속 조치` blocks read `배운 것`/`핵심 정리`/`기억할 점`. For a
+  training record the view **hides three blocks entirely**: `후속 항목` (with its `항목으로 나누기` split
+  panel), `진행사항`, and `연결된 할 일` — only the facts row, the transcript block and the three content blocks
+  (`배운 것`/`핵심 정리`/`기억할 점`) show. `수정` (and, through it, `삭제`) stay for every kind.
+- **The list row (`MeetingsTab`)**: `meetingRowMarker(m, lead)` prefixes `교육` as the first part (before
+  `lead`) for a training record and states **no** `진행 {n}건` or `후속 {open}/{total}` fragment for one,
+  whatever it has stored — a marker addition, not a different lead chip; the row's lead chip is still the date,
+  on every row.
+- **`followUpsOf(m)`** is the one helper every to-do surface, count, packet and calendar entry reads in place of
+  `m.followUps` directly, so a training record's stored follow-ups (if any, from before this change) never
+  surface anywhere but the meetings tab's own view (hidden, above) and the three places listed in "Nothing stored
+  is deleted" below. Readers routed through it: the briefing's `회의 준비` overdue-follow-up count
+  ([daily-briefing.md](daily-briefing.md)), `issueListOf`'s `할 일` section (mine follow-ups),
+  `meetingRowMarker`, a project's `latest` marker/follow-up lines and a `previous` row's `followUpsText`
+  ([issue-list.md](issue-list.md)), the daily reader's `followups` section
+  ([daily-reader.md](daily-reader.md)), `meetingPrepOf`/`MeetingPrepCard` (a training record standing in as a
+  project's last minutes lends its `기억할 점` only — no follow-up, progress or task line), `calendarExportOf`
+  (no follow-up-due calendar entry for a training record, [calendar-export.md](../design-docs/calendar-export.md)),
+  and `meetingPacketLines` (below).
+- **`commitMeeting`** skips `reconcileFollowUps` for a training record (`isTraining(rec) ? { work: cur, meeting:
+  rec } : reconcileFollowUps(...)`): saving one never creates, changes or removes a work item, and its stored
+  follow-ups (with their `workId`s, if any) are written back exactly as given — this is the one root-handler
+  change; `recordFits`, `followUpWorkItem` and every other handler are otherwise unchanged.
 - **`meetingPacketLines`** (the work and prep packets): the head line becomes `- {date} [{project}] 교육 ·
   {title}` (a hidden training record: `- {date} 교육 · {title}` then `내용 비공개 (AI에 보내지 않기)`) — the
   kind sits **after** the project bracket, so the existing `- {date} [{project}] ` prefix every packet assertion
-  matches is unchanged. The body labels follow the kind (`meetingLabels(m).packetSummary`/`packetDecisions`):
-  `배운 것:` / `핵심 정리:` in place of `요약:` / `결정:`. `workLinkLabel` (a work item's `연결` fact) reads
-  `회의록 · {date} 교육 · {title}` for a linked training record. The daily reader's `최근 7일 결정 사항` row
-  reads `교육 · {date} {title}` with the same `핵심 정리`/`decisions` text as its sub-line — a fact is a fact,
-  and the row's own title text is otherwise unchanged.
-- **`lastMeetingOf(meetings, projectId)`** (beside `meetingOrder`): the newest **meeting-kind** record by
-  `meetingOrder`, or, only when the project has no meeting-kind record at all, the newest record of any kind. A
-  training record is **never** a project's `마지막 회의` while a meeting-kind record exists — for the
-  meeting-prep card (`MeetingPrepCard`), `meetingPrepOf`, the work packet's implicit "last" (there isn't one —
-  the work packet lists every recent meeting, training included, in date order) and the [issue list](issue-list.md)'s
-  `프로젝트별 최신 회의록` section. Everywhere a **list** of a project's meetings is printed — the work packet's
-  `최근 회의록`, the prep packet, the meetings tab, the reader's `since` section, since-mode's `older` section —
-  training records are included in date order alongside meeting-kind records; only the single "last meeting"
-  fact treats them differently.
-- **`recordFits`, `commitMeeting`, `reconcileFollowUps`, `followUpWorkItem`** and every root handler are
-  unchanged — a training record is a meeting record, budgeted, reconciled and stored exactly the same way.
+  matches is unchanged. The body labels follow the kind (`meetingLabels(m).packetSummary`/`packetDecisions`/
+  `packetActions`): `배운 것:` / `핵심 정리:` / `기억할 점:` in place of `요약:` / `결정:` / `후속:` — and a
+  training record's `기억할 점:` line always shows when it has text, since `all = followUpsOf(m)` is always `[]`
+  for one, so the free-text `actions` line is never suppressed by follow-up items the way a meeting's could be.
+  A training record states **no** `진행 {date}:` line (its progress is never read here) and **no** `연결된 할
+  일:` line (its task links are never read here). `workLinkLabel` (a work item's `연결` fact) reads `회의록 ·
+  {date} 교육 · {title}` for a work item still linked to a training record from before this change. The daily
+  reader's `최근 7일 결정 사항` row reads `교육 · {date} {title}` with the `핵심 정리`/`decisions` text as its
+  sub-line — a fact is a fact, unaffected by the reference-only change (`decisions` is read directly, not
+  through `followUpsOf`).
+- **`buildWorkPacket` and `workSinceOf`** (2026-09-22, reference-only change): both filter training records out
+  entirely before the meeting list is built — `!isTraining(m)` in `workSinceOf`'s `allowed` and in
+  `buildWorkPacket`'s own full-mode meeting filter — so a training record contributes **nothing** to `오늘 업무
+  만들기`, in either mode: the assistant must not turn a `교육` note into a work item, so it never sees one.
+  **`buildPrepPacket`** does **not** filter training out: `AI에게 회의 준비 묻기`'s `최근 회의록` list is a
+  project's meetings by `meetingOrder`, any kind, through the same `meetingPacketLines` (`openOnly: true`), so a
+  training record there states its `기억할 점:` line and no follow-up/progress/task lines — it helps meeting
+  preparation, so it stays as content. `buildPrepPacket`'s linked-task section also skips a training record's
+  task links even when its meeting list includes one (`shown.filter((m) => !m.aiHidden && !isTraining(m))`).
+- **`lastMeetingOf(meetings, projectId)`** (beside `meetingOrder`, unchanged by this step — already true since
+  the kind was added): the newest **meeting-kind** record by `meetingOrder`, or, only when the project has no
+  meeting-kind record at all, the newest record of any kind. A training record is **never** a project's `마지막
+  회의` while a meeting-kind record exists. Everywhere a **list** of a project's meetings is printed — the prep
+  packet's `최근 회의록`, the meetings tab, the reader's `since`/`decisions` sections — training records are
+  still included in date order alongside meeting-kind records (never in the work packet, above); only the single
+  "last meeting" fact treats them differently.
+
+**Nothing stored is deleted.** A training record saved (or switched to `교육`) before this change may still carry
+`followUps`, `taskIds` and `progress` entries from when it behaved like a meeting. Those stay in the save — the
+form writes them back untouched, `removeTask`/`removeGoal` still drop a dangling task id from them — but no
+reader above surfaces them any more. A literal reading of the change left three places still reading a training
+record's stored data directly, open as tech debt: the review packet (`buildReviewPacket`'s `fuLines`) and the
+weekly review facts (`weekFacts`, [daily-briefing.md](daily-briefing.md)) still count a training record's stored
+follow-ups ([TD-103](../exec-plans/tech-debt-tracker.md)); the daily reader's `{since} 이후 새로 들어온 것`
+section still lists a training record's stored progress entries ([daily-reader.md](daily-reader.md),
+[TD-104](../exec-plans/tech-debt-tracker.md)); and the task sheet's reverse list (`meetingsOfTask`) still names a
+training record whose stored `taskIds` include the task ([TD-105](../exec-plans/tech-debt-tracker.md)). None of
+the three applies to a record saved after this change, since a training record now always writes `followUps:
+[]`/`taskIds: []`/`progress: []` unless it is carrying over what it already had.
 
 ## Caps and the storage arithmetic
 `MEETING_LIMITS = { title: 40, attendees: 80, summary: 10000, decisions: 1000, actions: 1000, tasks: 10, progress: 300, followUp: 200, transcript: 30000 }` (the minutes caps were widened at the user's request, from 800 / 200 / 200 to 1000 / 400 / 400 on 2026-09-16, to 1500 / 600 / 600 and then the summary alone to 5000 on 2026-09-17, and to 10000 / 1000 / 1000 on 2026-09-18; `progress` is new at schema v25, `followUp` at schema v26, `transcript` (2026-09-17, optional field, no migration) is `녹취록은` — placed last among the field caps, so the refusal order is title, attendees, summary, decisions, actions, then transcript, before the follow-up-row cap),
@@ -578,12 +636,16 @@ move to `프로젝트 3개 · 회의록 5건 · 문서 2건`, and the `미팅` s
 see [demo-data.md](../design-docs/demo-data.md) for the day-job additions' effect on every other tab's demo
 figures.
 
-**A training record (2026-09-22).** `mpJob` also carries one `kind: "training"` record, `데이터 품질 지표
-교육` (`attendees: "강사: 데모기관 품질팀"`, dated 4 days back — older than `주간 품질 점검`'s 2 days back, so
-the meeting-kind record stays `mpJob`'s `lastMeetingOf`), moving the demo counts to `프로젝트 3개 · 회의록 6건 ·
-문서 2건`. Its row marker leads with `교육`, its work-packet head line reads `- {date} [데이터 프로파일링 —
-데모기관] 교육 · 데이터 품질 지표 교육` with a `배운 것:` body line, and it is the one row the demo's
-[`이슈 목록`](../product-specs/issue-list.md) `교육` section lists.
+**A training record (2026-09-22, reference only since the same day).** `mpJob` also carries one `kind:
+"training"` record, `데이터 품질 지표 교육` (`attendees: "강사: 데모기관 품질팀"`, dated 4 days back — older than
+`주간 품질 점검`'s 2 days back, so the meeting-kind record stays `mpJob`'s `lastMeetingOf`), moving the demo
+counts to `프로젝트 3개 · 회의록 6건 · 문서 2건`. It carries no follow-up, task link or progress entry
+(`followUps: []`, `taskIds: []`, `progress: []`) — reference only from the start — and its `기억할 점`
+(`actions`) reads `완전성은 결측률, 유효성은 코드값 위반율로 측정해요` (renamed from `적용할 것`, and reworded
+the same day so it reads as a point to remember, not a to-do). Its row marker leads with `교육` and states no
+`진행`/`후속` fragment; it is the one row the demo's [`이슈 목록`](../product-specs/issue-list.md) `교육` section
+lists; its prep-packet line reads `기억할 점: 완전성은 결측률, 유효성은 코드값 위반율로 측정해요`; it never
+appears in the demo's `오늘 업무 만들기` work packet at all (`buildWorkPacket` filters training records out).
 
 ## Meeting-prep rows (`meetingPrepOf`, schema v26)
 
@@ -664,6 +726,13 @@ the key.
 **Training records (2026-09-22, written, not run):** one `flow11.js` step covers the form's `교육` chip
 switching every placeholder and refusal, a saved training record carrying `kind: "training"` while a
 meeting-kind record saved the same way carries no `kind` key, the list row's `교육`-led marker, the view's
-`교육 · {title}` title with the relabelled facts and blocks, the work packet's `교육 · ` head line and `배운
-것:` body label, and the meeting-prep card naming the project's older meeting-kind record, not the newer
-training record, as `마지막 회의`. See [tools/e2e/README.md](../../tools/e2e/README.md).
+`교육 · {title}` title with the relabelled facts and blocks, and the meeting-prep card naming the project's older
+meeting-kind record, not the newer training record, as `마지막 회의`.
+
+**Training records are reference only (2026-09-22, same day, written, not run):** further `flow11.js` steps cover
+the form hiding the task-link picker, the follow-up editor and `확인할 것 가져오기` for a `교육` record and the
+switch caption on an existing meeting with stored follow-ups; the view hiding `후속 항목`/`진행사항`/`연결된 할
+일` for one; a training record with a planted `mine` follow-up not appearing in the issue list's `할 일` section
+nor creating a work item on save (`commitMeeting` skips the reconcile); the work packet (both full and
+since-mode) omitting the training record entirely; and the prep packet keeping it, with its `기억할 점:` line and
+no follow-up/progress/task lines. See [tools/e2e/README.md](../../tools/e2e/README.md).

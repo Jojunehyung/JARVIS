@@ -8,7 +8,7 @@ Drives the app (`src/LifeManager.jsx`) end to end in a real browser. It uses the
 npm run build            # from the project root (add --sourcemap when you want line coverage)
 npx vite preview --port 4173
 cd tools/e2e && npm i    # once
-node run.js --tag run    # 268-step scenario as currently written (`await step(` count across flow*.js — not a claim of a recent green run; see the note below)
+node run.js --tag run    # 269-step scenario as currently written (`await step(` count across flow*.js — not a claim of a recent green run; see the note below)
 node perf.js --tag run   # performance measurement (4× CPU throttle)
 node cov_map.js out/run-coverage.json   # map never-executed source lines (needs a --sourcemap build)
 node prof.js             # top CPU-profile functions

@@ -103,8 +103,10 @@ least one proposal ticked; never read as progress, only as a `since` cursor for 
 by the root's `setCheckNotify` handler ([../product-specs/notifications.md](../product-specs/notifications.md));
 the notification's own rendered text is never stored in `state` — it lives only in a Cache API entry the
 service worker reads. `meetings[].kind?` (`"meeting"` | `"training"`) — absent reads as `"meeting"`; written
-only for a training record, so an existing meeting-kind record's save is byte-identical
-([../product-specs/meetings.md](../product-specs/meetings.md#training-records-교육-2026-09-22)). Every value any
+only for a training record, so an existing meeting-kind record's save is byte-identical; since a same-day
+follow-up decision, a training record is also **reference only** — no follow-up, task link or progress reaches
+any to-do surface or AI packet
+([../product-specs/meetings.md](../product-specs/meetings.md#training-records-교육-2026-09-22--reference-only-same-day)). Every value any
 of the three touches (the since-mode packet's sections, the notification's three facts, `lastMeetingOf`'s
 meeting/training distinction) is computed at render and stored nowhere else
 ([Rule 9](core-beliefs.md#rule-9)).

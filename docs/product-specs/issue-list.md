@@ -20,7 +20,7 @@ a packet: `aiHidden` changes nothing on this screen — the list is on-device on
 
 Pure, module level, Daily assistant region after `checkNotificationOf`. Dependencies: `shiftDay`, `daysBetween`,
 `occurrencesOf`, `eventsOn`, `upcomingEvents`, `workOn`, `byCreated`, `byTrack`, `trackOf`, `meetingTrack`,
-`meetingOrder`, `oneLineText`, `isTraining`, `lastMeetingOf`, `agendaOf` (for the goal-task rows — the plan's
+`meetingOrder`, `oneLineText`, `isTraining`, `followUpsOf`, `lastMeetingOf`, `agendaOf` (for the goal-task rows — the plan's
 `todoOf` extraction was not needed: the implementer read the same overdue/due-today/daily buckets straight off
 `agendaOf`, so smoke need not lift the business helpers `todoOf` would drag in). Constants (plain literals, so
 smoke can lift them):
@@ -53,9 +53,11 @@ the section reads `없음` only when every group is empty. Rows per group, in th
    tab's own first two groups), each `{ kind: "task", id, track: "personal", lead: "{group label}", text:
    title }`. A goal task carries no track of its own, so every one lists under `개인` — a goal is the user's own
    ladder, not a work track.
-4. **Open `mine` follow-ups** of every meeting (project or memo, training records included) not already mirrored
-   to a row above (`f.workId` absent, or its work item is not one of rows 1–2): `{ kind: "followUp", meetingId,
-   track: meetingTrack(state, m), lead: "기한 {due}" | "후속", text: "{meeting title} · {follow-up text}" }`.
+4. **Open `mine` follow-ups** of every meeting (project or memo) not already mirrored to a row above (`f.workId`
+   absent, or its work item is not one of rows 1–2): `{ kind: "followUp", meetingId, track: meetingTrack(state,
+   m), lead: "기한 {due}" | "후속", text: "{meeting title} · {follow-up text}" }`. Read through `followUpsOf(m)`
+   (2026-09-22: `[]` for a [training record](meetings.md#training-records-교육-2026-09-22--reference-only-same-day)
+   — reference only, so its stored follow-ups, if any, never reach this list).
 
 Each group capped at `ISSUE_WORK_ROWS` (30), then `{n}건 더`.
 
@@ -68,7 +70,7 @@ fact): `{ kind: "event", eventId, date, done, lead: "{M}/{D} {time | 시간 미�
 
 ### 3. `training` — `교육`
 
-The newest `ISSUE_TRAINING_ROWS` (3) [training records](meetings.md#교육-as-a-meeting-kind) across every project
+The newest `ISSUE_TRAINING_ROWS` (3) [training records](meetings.md#training-records-교육-2026-09-22--reference-only-same-day) across every project
 and the memo group, by `meetingOrder`: `{ kind: "meeting", meetingId, lead: date.slice(2), text: "{title} ·
 {project name | 프로젝트 없음}", sub: oneLineText(first line of summary, ISSUE_LEARNED_CLIP) }`. The remainder,
 past the cap, renders as `{n}건 더 ›` and opens the `미팅` tab (`onTab("meetings")`) rather than expanding
@@ -83,7 +85,7 @@ projects without minutes last), then a trailing memo group (`프로젝트 없음
 project with no meeting-kind record and no training record at all is omitted; a project with only training
 records still gets a group (its `latest` is the newest training record, per `lastMeetingOf`).
 
-Per project: `latest` = [`lastMeetingOf(meetings, projectId)`](meetings.md#교육-as-a-meeting-kind) (the newest
+Per project: `latest` = [`lastMeetingOf(meetings, projectId)`](meetings.md#training-records-교육-2026-09-22--reference-only-same-day) (the newest
 meeting-kind record; a training record stands in only when the project has none) —
 ```
 { meetingId, date, title, kind: "meeting" | "training",

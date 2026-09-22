@@ -136,7 +136,7 @@ unaffected by the day-job-in-AI-packets settings switch ([SECURITY.md](../SECURI
 
 | Kind (`source`) | Written when | UID | Summary | Description | Skipped when |
 |---|---|---|---|---|---|
-| `followup` | per meeting, per open follow-up with `today ≤ due ≤ end` | `icsUid("followup", meetingId + "-" + followUpId)` | `후속 기한 · {text}` | the meeting title, `목표 기여 없음` — never the minutes | `due < today` |
+| `followup` | per meeting, per open follow-up with `today ≤ due ≤ end`, read through `followUpsOf(m)` (2026-09-22, same-day follow-up: `[]` for a [training record](../product-specs/meetings.md#training-records-교육-2026-09-22--reference-only-same-day), so its stored follow-ups, if any, never write a calendar entry) | `icsUid("followup", meetingId + "-" + followUpId)` | `후속 기한 · {text}` | the meeting title, `목표 기여 없음` — never the minutes | `due < today` |
 | `check` | per included event occurrence with ≥ 1 open check, on `shiftDay(date, -ICS_CHECK_LEAD_DAYS)` when that date is `≥ today` | `icsUid("check", eventId, date)` | `확인할 것 {n}건 · {event title}` | one `- {text}` per open check | the reminder date (occurrence − 1 day) is before today — this counts a check whose meeting is today, since its reminder day has already passed |
 | `milestone` (due day) | per not-done milestone with `today ≤ due ≤ end` | `icsUid("milestone", id)` | `마일스톤 기한 · {title}` | `진행률·페이스는 넣지 않아요 — 내보낸 뒤 바로 달라져요.` | `due < today` |
 | `milestone` (D-7) | the same milestone, when `today ≤ due − 7 ≤ end` | `icsUid("milestone", id + "-d7")` | `마일스톤 D-7 · {title}` | same | (shares the due-day entry's skip) |
