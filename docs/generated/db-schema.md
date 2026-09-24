@@ -111,9 +111,14 @@
   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
          briefingSeen?, lastReview?,                        // dates only — facts, never verdicts
-         workRefreshedAt? },                                 // (2026-09-22, still v28, no migrate block) the day the work bridge last
+         workRefreshedAt?,                                   // (2026-09-22, still v28, no migrate block) the day the work bridge last
                                                              // registered ≥ 1 AI proposal — a user-action stamp like `briefingSeen`,
                                                              // never read as progress (rule 9)
+         gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt? } } },
+                                                             // (2026-09-24, still v28, no migrate block) the daily gate's user-action
+                                                             // stamps (`HH:MM` local times; `quiz` a locally graded score), newest
+                                                             // `GATE_KEEP_DAYS` days; `refreshed` is derived from `work[].createdAt`,
+                                                             // never stored (rule 9)
   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -404,6 +409,12 @@ const demoState = () => {
     wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
   }];
   s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: shiftDay(today, -7) };
+  // The daily gate (2026-09-24): today passed at 08:40 (the demo and its screenshots open in the app, not the gate);
+  // yesterday's quiz failed 5/7, so the settings line reads both counts and the average `5.5/7` when both days share a month.
+  s.act.gate = {
+    [shiftDay(today, -1)]: { readReaderAt: "08:31", readIssuesAt: "08:37", quiz: { total: 7, score: 5, passed: false, attempts: 1, at: "08:52" } },
+    [today]: { readReaderAt: "08:12", readIssuesAt: "08:19", quiz: { total: 7, score: 6, passed: true, attempts: 1, at: "08:33" }, passedAt: "08:40" },
+  };
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
@@ -464,20 +475,20 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
-| `liferpg-state-v1` | 1330 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6454 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6454 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6454 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 8604 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 9027 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 11191 | App root |
-| `liferpg-img-${slot}` | 11264 | App root |
-| `liferpg-img-ev-${id}` | 11287 | App root |
-| `liferpg-img-ev-${q.id}` | 11469 | App root |
-| `liferpg-img-ev-${t.id}` | 12353 | App root |
-| `liferpg-img-study-${t.id}-1` | 12353 | App root |
-| `liferpg-img-study-${t.id}-2` | 12353 | App root |
-| `liferpg-img-folio-${f.id}` | 12359 | App root |
+| `liferpg-state-v1` | 1332 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
+| `liferpg-img-ev-${task.id}` | 6618 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6618 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6618 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 8774 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 9197 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 11367 | App root |
+| `liferpg-img-${slot}` | 11443 | App root |
+| `liferpg-img-ev-${id}` | 11466 | App root |
+| `liferpg-img-ev-${q.id}` | 11648 | App root |
+| `liferpg-img-ev-${t.id}` | 12569 | App root |
+| `liferpg-img-study-${t.id}-1` | 12569 | App root |
+| `liferpg-img-study-${t.id}-2` | 12569 | App root |
+| `liferpg-img-folio-${f.id}` | 12575 | App root |
 
 ## Demo data (`demoState`)
 

@@ -168,6 +168,8 @@ const typeInto = async (placeholder, value) => {
   });
   await step("app load", async () => { await page.goto(URL, { waitUntil: "networkidle2", timeout: 60000 }); await sleep(400); if (!(await hasText("인생"))) throw new Error("title missing"); });
   await shot("title");
+  // Cannot close the daily gate (2026-09-24): the gate layer has no X and an inert backdrop, so this must not be called
+  // while the gate is active — `reload` plants today's stamp first (`plantGate`) unless `keepGate` is set.
   const closeModal = async () => { // close every open overlay (header X → click the backdrop if that fails)
     for (let i = 0; i < 3; i++) {
       const info = await page.evaluate(() => {
@@ -336,13 +338,33 @@ const typeInto = async (placeholder, value) => {
       });
     }
   };
+  // The daily gate (2026-09-24) stands on every load of a save with a profile and no `act.gate[today].passedAt`, and
+  // `closeModal` cannot close it. This writes today's synthetic `passedAt: "00:00"` into the save (the rest of the
+  // entry kept) so a load lands in the app; false when there is no save or no profile (onboarding has no gate).
+  // Today is computed in the page, noon-anchored like the flows' `dstrIn`.
+  const plantGate = () => page.evaluate(() => {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem("liferpg-state-v1")); } catch { s = null; }
+    if (!s || !s.profile) return false;
+    const t = new Date(); t.setHours(12, 0, 0, 0);
+    const two = (n) => String(n).padStart(2, "0");
+    const today = `${t.getFullYear()}-${two(t.getMonth() + 1)}-${two(t.getDate())}`;
+    s.act = s.act || {};
+    s.act.gate = { ...(s.act.gate || {}), [today]: { ...((s.act.gate || {})[today] || {}), passedAt: "00:00" } };
+    localStorage.setItem("liferpg-state-v1", JSON.stringify(s));
+    return true;
+  });
   // Split coverage around reloads and accumulate (V8 coverage resets on every navigation)
   // The app opens the daily briefing on the first load of each day; dismiss it so the next click
   // reaches the screen behind. Pass { keepModal: true } in steps that assert the briefing itself.
-  const reload = async (opts, { keepModal = false } = {}) => {
+  // Pass { keepGate: true } in steps that assert the gate: otherwise today's stamp is planted before the reload.
+  const reload = async (opts, { keepModal = false, keepGate = false } = {}) => {
+    if (!keepGate) await plantGate();
     await stashCov(); await page.reload(opts || { waitUntil: "networkidle2" }); await startCov(); await sleep(300);
     if (!keepModal) { try { await closeModal(); } catch {} }
   };
+  // Lifts a gate that is already on screen: stamp the save, reload, dismiss whatever opens over the app.
+  const passGate = async () => { await plantGate(); await reload(); };
   // 1x1 PNG fixture for photo attachments (evidence, study artifacts, profile)
   const PNG_PATH = path.join(OUT, "shot.png");
   fs.writeFileSync(PNG_PATH, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
@@ -410,7 +432,7 @@ const typeInto = async (placeholder, value) => {
     tasks: (st.tasks || []).length,
     goals: JSON.stringify(st.goals || []),
   });
-  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, plantGate, passGate, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

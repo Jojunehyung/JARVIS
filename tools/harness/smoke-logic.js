@@ -400,7 +400,7 @@ console.log("calendar file: 19 check groups");
   const CHECK = new Function([
     ...["dstr", "shiftDay", "daysBetween", "MAX_OCC", "occurrencesOf", "meetingOrder", "byCreated", "workOn", "eventProjectOf",
       "CHECK_MINUTES_DAYS", "CHECK_LIST_MAX", "CHECK_TAG", "CHECK_CACHE", "CHECK_CACHE_REQ", "CHECK_STALE_MS", "OPEN_PARAM_TYPES",
-      "checkSummaryOf", "checkNotificationOf"].map(lift),
+      "gateRefreshedOf", "checkSummaryOf", "checkNotificationOf"].map(lift),
   ].join("\n") + "\nreturn { checkSummaryOf, checkNotificationOf, CHECK_TAG, CHECK_CACHE, CHECK_CACHE_REQ, CHECK_STALE_MS, OPEN_PARAM_TYPES };")();
   const today = "2026-09-22";
   const sum = (st) => CHECK.checkSummaryOf({ work: [], events: [], meetings: [], meetingProjects: [{ id: "P", name: "프로젝트" }], ...st }, today);
@@ -548,6 +548,74 @@ console.log("calendar file: 19 check groups");
   const memoGroup = pg[pg.length - 1];
   check(memoGroup.track === null && memoGroup.rows[0].latest.meetingId === "memo" && memoGroup.rows[0].previous.length === 0, "the memo group is last with no previous rows");
   console.log(`issue list: ${n} checks`);
+}
+
+// 9) the daily gate (2026-09-24) — the pass rule, local grading, the gate's standing and steps, and the settings month
+// line, all derived from `act.gate` stamps and `work[].createdAt` (rule 9). Phase 1 of the gate plan lifts the helpers
+// it landed; Phase 2 adds `parseQuizReply` and `shuffleQuiz` here.
+{
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `daily gate: ${msg}`); };
+  const GATE = new Function([
+    ...["dstr", "shiftDay", "GATE_KEEP_DAYS", "GATE_PASS_RATIO", "GATE_MODAL_TYPES", "gateEntryOf", "gateRefreshedOf", "gateActiveOf",
+      "gateStepsOf", "quizNeed", "gradeQuiz", "gateMonthOf", "gateMonthLine"].map(lift),
+  ].join("\n") + "\nreturn { GATE_KEEP_DAYS, GATE_PASS_RATIO, GATE_MODAL_TYPES, gateEntryOf, gateRefreshedOf, gateActiveOf, gateStepsOf, quizNeed, gradeQuiz, gateMonthOf, gateMonthLine };")();
+  const today = "2026-09-24";
+
+  // (a) the pass threshold: ceil(0.8 × total) — 5 → 4, 6 → 5, 7 → 6, 8 → 7, 10 → 8 (user decision 1)
+  check(GATE.GATE_PASS_RATIO === 0.8 && GATE.GATE_KEEP_DAYS === 60, `constants ${GATE.GATE_PASS_RATIO} / ${GATE.GATE_KEEP_DAYS}`);
+  check([5, 6, 7, 8, 10].map(GATE.quizNeed).join(",") === "4,5,6,7,8", `quizNeed: ${[5, 6, 7, 8, 10].map(GATE.quizNeed).join(",")}`);
+  check(JSON.stringify(GATE.GATE_MODAL_TYPES) === JSON.stringify(["reader", "issues", "quiz", "workBridge", "work"]), "the gate's own five sheet types");
+
+  // (b) local grading: 5/7 fails, 6/7 passes, an unanswered item is wrong, `need` is echoed
+  const items = Array.from({ length: 7 }, (_, i) => ({ q: `q${i}`, choices: ["a", "b", "c", "d"], answer: i % 4 }));
+  const right = items.map((it) => it.answer);
+  const five = GATE.gradeQuiz(items, right.map((a, i) => (i < 5 ? a : (a + 1) % 4)));
+  check(JSON.stringify(five) === JSON.stringify({ total: 7, score: 5, need: 6, passed: false }), `5/7 ${JSON.stringify(five)}`);
+  const six = GATE.gradeQuiz(items, right.map((a, i) => (i < 6 ? a : (a + 1) % 4)));
+  check(JSON.stringify(six) === JSON.stringify({ total: 7, score: 6, need: 6, passed: true }), `6/7 ${JSON.stringify(six)}`);
+  const blank = GATE.gradeQuiz(items, right.map((a, i) => (i === 0 ? null : a)));
+  check(blank.score === 6 && blank.passed, `an unanswered item is wrong: ${JSON.stringify(blank)}`);
+  check(GATE.gradeQuiz(items, right).score === 7 && GATE.gradeQuiz(items, []).score === 0, "all right → 7; no answers → 0");
+
+  // (c) the gate stands with a profile and no stamp; not without a profile; not once passed
+  const stamped = { profile: { name: "x" }, act: { gate: { [today]: { passedAt: "08:40" } } } };
+  check(GATE.gateActiveOf({ profile: null }, today) === false && GATE.gateActiveOf(null, today) === false, "no profile → no gate");
+  check(GATE.gateActiveOf({ profile: { name: "x" }, act: {} }, today) === true, "a profile and no stamp → the gate");
+  check(GATE.gateActiveOf({ profile: { name: "x" }, act: { gate: { "2026-09-23": { passedAt: "08:40" } } } }, today) === true, "yesterday's stamp does not pass today");
+  check(GATE.gateActiveOf(stamped, today) === false, "today's passedAt lifts the gate");
+  check(JSON.stringify(GATE.gateEntryOf({ act: {} }, today)) === "{}" && GATE.gateEntryOf(stamped, today).passedAt === "08:40", "gateEntryOf reads today's entry or {}");
+
+  // (d) the steps: ready only with both reads, a passed quiz and a work item created today; a fail's cleared reads are not ready
+  const work = [{ id: "w1", date: today, title: "오늘 것", done: false, createdAt: today }];
+  const st = (entry, w = work) => GATE.gateStepsOf({ profile: {}, act: { gate: { [today]: entry } }, work: w }, today);
+  const passedQuiz = { total: 7, score: 6, passed: true, attempts: 1, at: "08:33" };
+  const full = st({ readReaderAt: "08:12", readIssuesAt: "08:19", quiz: passedQuiz });
+  check(full.ready && full.read.done && full.quizDone && full.refresh.count === 1 && full.refresh.done, `all three → ready ${JSON.stringify(full)}`);
+  check(full.read.reader === "08:12" && full.read.issues === "08:19" && full.quiz.score === 6, "the step lines read the stamps");
+  const none = st({});
+  check(!none.ready && !none.read.done && none.read.reader === null && none.read.issues === null && none.quiz === null && !none.quizDone && none.refresh.done, `no entry → nothing done but the refresh ${JSON.stringify(none)}`);
+  check(!st({ readReaderAt: "08:12", quiz: passedQuiz }).read.done, "one read is not read.done");
+  check(!st({ readReaderAt: "08:12", readIssuesAt: "08:19", quiz: { ...passedQuiz, score: 5, passed: false } }).ready, "a failed quiz is not ready");
+  check(!st({ readReaderAt: "08:12", readIssuesAt: "08:19", quiz: passedQuiz }, []).ready && st({ readReaderAt: "08:12", readIssuesAt: "08:19", quiz: passedQuiz }, []).refresh.count === 0, "no item created today → not ready");
+  check(!st({ readReaderAt: "08:12", readIssuesAt: "08:19", quiz: passedQuiz }, [{ ...work[0], createdAt: "2026-09-23" }]).refresh.done, "an item created yesterday and dated today does not count");
+  check(!st({ quiz: { ...passedQuiz, passed: false } }).read.done, "after a fail (both read stamps deleted) the read step is open again");
+  check(GATE.gateRefreshedOf({ work }, today) === true && GATE.gateRefreshedOf({}, today) === false, "gateRefreshedOf is the created-today rule");
+
+  // (e) the month line: three entries (two passed with quizzes 6/7 and 5/7, one opened and not passed) → the counts and 5.5/7
+  const month = { profile: {}, act: { gate: {
+    "2026-09-22": { readReaderAt: "08:12", readIssuesAt: "08:19", quiz: { total: 7, score: 6, passed: true, attempts: 1, at: "08:33" }, passedAt: "08:40" },
+    "2026-09-23": { readReaderAt: "08:12", readIssuesAt: "08:19", quiz: { total: 7, score: 5, passed: true, attempts: 2, at: "08:33" }, passedAt: "09:01" },
+    "2026-09-24": { readReaderAt: "08:12" },
+    "2026-08-30": { passedAt: "08:00", quiz: { total: 5, score: 4, passed: true, attempts: 1, at: "07:50" } },
+  } } };
+  const mo = GATE.gateMonthOf(month, today);
+  check(mo.passed === 2 && mo.failed === 1 && mo.quiz.score === 5.5 && mo.quiz.total === 7, `gateMonthOf ${JSON.stringify(mo)}`);
+  check(GATE.gateMonthLine(month, today) === "이번 달 관문 통과 2일 · 미통과 1일 · 퀴즈 평균 5.5/7", `month line: ${GATE.gateMonthLine(month, today)}`);
+  check(GATE.gateMonthLine({ act: { gate: { "2026-09-20": { passedAt: "08:00" } } } }, today) === "이번 달 관문 통과 1일 · 미통과 0일 · 퀴즈 없음", "no quiz → 퀴즈 없음");
+  check(GATE.gateMonthLine({ act: {} }, today) === "이번 달 관문 통과 0일 · 미통과 0일 · 퀴즈 없음", "no entry → zeros");
+  check(GATE.gateMonthOf({ act: { gate: { "2026-09-01": { quiz: { total: 7, score: 6 } }, "2026-09-02": { quiz: { total: 7, score: 6 } }, "2026-09-03": { quiz: { total: 7, score: 5 } } } } }, today).quiz.score === 5.7, "the average is rounded to one decimal");
+  console.log(`daily gate: ${n} checks`);
 }
 
 console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");

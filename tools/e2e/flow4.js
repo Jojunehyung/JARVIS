@@ -132,7 +132,10 @@ module.exports = async (h) => {
       };
       localStorage.setItem("liferpg-state-v1", JSON.stringify(old)); // the app's real storage key (KEY)
     });
-    await h.reload();
+    // The v11 block rebuilds `act` from its four fields, so the gate stamp `reload` plants into the fixture is gone and
+    // the daily gate (2026-09-24) stands on the migrated save: pass it before reading the schema (flow12 asserts the gate).
+    await h.reload({}, { keepModal: true });
+    await h.passGate();
     await sleep(800);
     const txt = await page.evaluate(() => document.body.innerText);
     if (/오류|Error|undefined/.test(txt)) errors.push("마이그레이션 후 오류 텍스트 노출");
@@ -158,7 +161,9 @@ module.exports = async (h) => {
       };
       localStorage.setItem("liferpg-state-v1", JSON.stringify(old));
     });
-    await h.reload();
+    // A save without `v` runs the v11 block too, which drops the planted gate stamp — same as the v10 fixture above.
+    await h.reload({}, { keepModal: true });
+    await h.passGate();
     await sleep(900);
     // the save is written at boot; render home (every fixture now shows the CV there), then check the schema
     await clickTab("프로필");

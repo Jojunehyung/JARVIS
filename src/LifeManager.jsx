@@ -1322,6 +1322,8 @@ const dstr = (d = new Date()) => {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+// A wall-clock stamp, "HH:MM" local — the daily gate's user-action times (2026-09-24); the date is the key beside it.
+const hhmm = (d = new Date()) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 const shiftDay = (base, delta) => { const d = new Date(base + "T12:00:00"); d.setDate(d.getDate() + delta); return dstr(d); };
 const monthStr = () => dstr().slice(0, 7);
 
@@ -3127,12 +3129,61 @@ const CHECK_STALE_MS = 48 * 3600 * 1000;   // an entry older than this no longer
 const CHECK_SYNC_MIN_MS = 12 * 3600 * 1000; // the periodic sync floor asked of Chrome
 const CHECK_DEBOUNCE_MS = 1500;            // a burst of edits writes the entry once
 
+/* ── The daily gate (2026-09-24) — `오늘의 관문`: read both screens to the end, pass a locally graded quiz, refresh
+   today's work. Everything stored is a stamp of a user action under `act.gate[date]` (`HH:MM` times, a quiz score);
+   every step line and `ready` are derived at render (rule 9). No reward of any kind (rule 7): the gate is a
+   precondition on use the user chose, with no close and no skip (user decision 2). Plain column-0 declarations, so
+   smoke-logic can lift them. ── */
+const GATE_KEEP_DAYS = 60;   // stamps older than this are dropped on the next gate write — the app's own stamps, never a record
+const GATE_PASS_RATIO = 0.8; // pass = at least ceil(0.8 × total) correct (user decision 1)
+// The `modal.type` values that may open above the gate — its own flows. Anything else `setModal` is asked for while
+// the gate stands is dropped by the root's derived `modal` line, not at the call sites.
+const GATE_MODAL_TYPES = ["reader", "issues", "quiz", "workBridge", "work"];
+const gateEntryOf = (state, today) => state?.act?.gate?.[today] || {};
+// Today was refreshed when at least one work item was created today — the one rule `checkSummaryOf` states too.
+const gateRefreshedOf = (state, today) => (state.work || []).some((w) => w.createdAt === today);
+// The gate stands whenever a profile exists and today carries no `passedAt`: onboarding has no state, a restored backup
+// or a re-dated save opens it at once, and a day change while open re-evaluates by itself.
+const gateActiveOf = (state, today) => !!state?.profile && !gateEntryOf(state, today).passedAt;
+const gateStepsOf = (state, today) => {
+  const e = gateEntryOf(state, today);
+  const reader = e.readReaderAt || null, issues = e.readIssuesAt || null;
+  const quiz = e.quiz || null;
+  const count = (state.work || []).filter((w) => w.createdAt === today).length;
+  const read = { reader, issues, done: !!(reader && issues) };
+  const quizDone = !!quiz?.passed;
+  const refresh = { count, done: count > 0 };
+  return { read, quiz, quizDone, refresh, ready: read.done && quizDone && refresh.done };
+};
+const quizNeed = (total) => Math.ceil(GATE_PASS_RATIO * total);
+// Local grading: `answers[i]` is a choice index or null; an unanswered item is wrong. Pure — the caller stores the result.
+const gradeQuiz = (items, answers) => {
+  const total = items.length;
+  const score = items.filter((it, i) => answers[i] === it.answer).length;
+  const need = quizNeed(total);
+  return { total, score, need, passed: score >= need };
+};
+// This month's stamps: days passed, days opened and not passed, the quiz averages to one decimal — a day with no entry
+// counts nowhere.
+const gateMonthOf = (state, today) => {
+  const month = today.slice(0, 7);
+  const entries = Object.entries(state?.act?.gate || {}).filter(([d]) => d.startsWith(month)).map(([, e]) => e);
+  const passed = entries.filter((e) => e.passedAt).length;
+  const quizzes = entries.filter((e) => e.quiz);
+  const avg = (f) => Math.round((quizzes.reduce((n, e) => n + f(e.quiz), 0) / quizzes.length) * 10) / 10;
+  return { passed, failed: entries.length - passed, quiz: quizzes.length ? { score: avg((q) => q.score), total: avg((q) => q.total) } : null };
+};
+const gateMonthLine = (state, today) => {
+  const m = gateMonthOf(state, today);
+  return `이번 달 관문 통과 ${m.passed}일 · 미통과 ${m.failed}일 · ${m.quiz ? `퀴즈 평균 ${m.quiz.score}/${m.quiz.total}` : "퀴즈 없음"}`;
+};
+
 // The three facts, all tracks (the notification never leaves the device): whether today was refreshed (a work item
 // created today, the reader seen today), which project appointments of the last CHECK_MINUTES_DAYS days have no linked
 // minutes (a done occurrence still counts — it happened), and which work items are carried. Pure, derived at render.
 const checkSummaryOf = (state, today) => {
   const reasons = [];
-  if (!(state.work || []).some((w) => w.createdAt === today)) reasons.push("오늘 만든 업무 없음");
+  if (!gateRefreshedOf(state, today)) reasons.push("오늘 만든 업무 없음");
   if (state.act?.briefingSeen !== today) reasons.push("오늘 읽을 것 안 봄");
   const from = shiftDay(today, -CHECK_MINUTES_DAYS), to = shiftDay(today, -1);
   const meetings = state.meetings || [];
@@ -4505,9 +4556,14 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   reviews: [{ id, weekOf(Monday), wins, blocks, date }],    // one entry per week
  *   act: { streak, lastActive, shieldMonth, shieldsLeft,      // shields: 2 per month, one consumed per missed day
  *          briefingSeen?, lastReview?,                        // dates only — facts, never verdicts
- *          workRefreshedAt? },                                 // (2026-09-22, still v28, no migrate block) the day the work bridge last
+ *          workRefreshedAt?,                                   // (2026-09-22, still v28, no migrate block) the day the work bridge last
  *                                                              // registered ≥ 1 AI proposal — a user-action stamp like `briefingSeen`,
  *                                                              // never read as progress (rule 9)
+ *          gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt? } } },
+ *                                                              // (2026-09-24, still v28, no migrate block) the daily gate's user-action
+ *                                                              // stamps (`HH:MM` local times; `quiz` a locally graded score), newest
+ *                                                              // `GATE_KEEP_DAYS` days; `refreshed` is derived from `work[].createdAt`,
+ *                                                              // never stored (rule 9)
  *   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -4951,6 +5007,12 @@ const demoState = () => {
     wins: "운동 4회 · 영어 스터디 2회", blocks: "CATIA 연습 3일 누락 — 야근",
   }];
   s.act = { streak: 4, lastActive: shiftDay(today, -1), shieldMonth: monthStr(), shieldsLeft: 2, briefingSeen: null, lastReview: shiftDay(today, -7) };
+  // The daily gate (2026-09-24): today passed at 08:40 (the demo and its screenshots open in the app, not the gate);
+  // yesterday's quiz failed 5/7, so the settings line reads both counts and the average `5.5/7` when both days share a month.
+  s.act.gate = {
+    [shiftDay(today, -1)]: { readReaderAt: "08:31", readIssuesAt: "08:37", quiz: { total: 7, score: 5, passed: false, attempts: 1, at: "08:52" } },
+    [today]: { readReaderAt: "08:12", readIssuesAt: "08:19", quiz: { total: 7, score: 6, passed: true, attempts: 1, at: "08:33" }, passedAt: "08:40" },
+  };
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
@@ -6104,11 +6166,102 @@ function BriefingModal({ state, today, onClose, onAction }) {
   );
 }
 
+/* ── The daily gate (`오늘의 관문`, 2026-09-24) — the root renders it in place of `<main>` and `<nav>` while
+   `gateActiveOf` holds, beneath the modal slot so the gate's own flows (the two read screens, the quiz, the work
+   bridge, the work sheet) paint over it. No close, no skip, no settings (user decision 2): no X, no backdrop handler,
+   no key handler. Every line is derived from `gateStepsOf` at render; the buttons only open sheets, and `통과` is
+   the one write, through `onPass` (rules 9, 13). Disabled buttons stay visible, dimmed, so the order of steps reads. ── */
+const GATE_BTN = "py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs disabled:opacity-40";
+function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onRetry, onBridge, onAddWork, onPass }) {
+  const st = gateStepsOf(state, today);
+  const readAt = (t) => (t ? `완료 ${t}` : "미완료");
+  const quizLine = st.quiz ? `${st.quiz.passed ? "통과" : "미통과"} ${st.quiz.score}/${st.quiz.total} · 시도 ${st.quiz.attempts}` : "아직";
+  return (
+    <div className="fixed inset-0 z-40 bg-zinc-950 overflow-y-auto">
+      <div className="max-w-md mx-auto p-5 space-y-4">
+        <h3 className="text-base font-bold text-zinc-100">오늘의 관문 — {today}</h3>
+        <p className="text-xs text-zinc-400">세 단계를 마쳐야 앱이 열려요. 닫기와 건너뛰기는 없어요.</p>
+        <p className="text-xs text-zinc-500">퀴즈는 외부 AI 채팅의 답변을 붙여넣어야 해요. AI를 쓸 수 없는 날은 통과할 수 없어요.</p>
+        <div className="bg-zinc-900 rounded-xl p-3 space-y-2">
+          <div className="font-mono text-xs text-zinc-200">1 읽기 — 오늘 읽을 것 {readAt(st.read.reader)} · 이슈 목록 {readAt(st.read.issues)}</div>
+          <div className="flex gap-1.5">
+            <button onClick={onOpenReader} className={`flex-1 ${GATE_BTN}`}>오늘 읽을 것 열기 ›</button>
+            <button onClick={onOpenIssues} className={`flex-1 ${GATE_BTN}`}>이슈 목록 열기 ›</button>
+          </div>
+        </div>
+        <div className="bg-zinc-900 rounded-xl p-3 space-y-2">
+          <div className="font-mono text-xs text-zinc-200">2 퀴즈 — {quizLine}</div>
+          {!st.quiz && (
+            <button onClick={onQuiz} disabled={!st.read.done} className={`w-full ${GATE_BTN}`}>퀴즈 요청문 만들기 ›</button>
+          )}
+          {st.quiz && !st.quiz.passed && (
+            <div className="flex gap-1.5">
+              <button onClick={onRetry} disabled={!st.read.done || !held} className={`flex-1 ${GATE_BTN}`}>같은 문제 다시 풀기</button>
+              <button onClick={onQuiz} disabled={!st.read.done} className={`flex-1 ${GATE_BTN}`}>새 퀴즈 요청 ›</button>
+            </div>
+          )}
+          {st.quiz && !st.quiz.passed && !held && (
+            <p className="text-xs text-zinc-500">앱을 다시 열면 문제가 지워져요 — 새 퀴즈를 요청해요.</p>
+          )}
+        </div>
+        <div className="bg-zinc-900 rounded-xl p-3 space-y-2">
+          <div className="font-mono text-xs text-zinc-200">3 업무 갱신 — {st.refresh.done ? `오늘 만든 업무 ${st.refresh.count}건` : "없음"}</div>
+          <div className="flex gap-1.5">
+            <button onClick={onBridge} disabled={!st.quizDone} className={`flex-1 ${GATE_BTN}`}>AI로 만들기 ›</button>
+            <button onClick={onAddWork} disabled={!st.quizDone} className={`flex-1 ${GATE_BTN}`}>업무 추가 ›</button>
+          </div>
+        </div>
+        <button onClick={onPass} disabled={!st.ready}
+          className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs disabled:opacity-40">통과</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Read-to-the-end tracking for the gate's two read screens: `seen` turns true once the sentinel at the very end of
+   the sheet enters the viewport (`IntersectionObserver`, which fires at once for content that fits without scrolling);
+   without the API, a scroll listener on the sheet's scrolling card checks its bottom, once at mount and on every
+   scroll. Component state only — the stamp is written by the root when `다 읽었어요` is pressed (rule 9). Not
+   enabled (outside the gate): nothing is observed and `seen` stays false. ── */
+function useReadEnd(enabled) {
+  const endRef = useRef(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = enabled ? endRef.current : null;
+    if (!el) return undefined;
+    if (typeof IntersectionObserver !== "undefined") {
+      const io = new IntersectionObserver((entries) => { if (entries.some((x) => x.isIntersecting)) setSeen(true); }, { root: null, threshold: 0 });
+      io.observe(el);
+      return () => io.disconnect();
+    }
+    const box = el.closest(".overflow-y-auto");
+    if (!box) return undefined;
+    const check = () => { if (box.scrollTop + box.clientHeight >= box.scrollHeight - 4) setSeen(true); };
+    check();
+    box.addEventListener("scroll", check);
+    return () => box.removeEventListener("scroll", check);
+  }, [enabled]);
+  return [endRef, seen];
+}
+// The gate's footer on both read screens: the end sentinel, the caption while the end is out of view, the one button.
+function ReadEndFooter({ endRef, which, seen, onRead }) {
+  return (
+    <>
+      <div ref={endRef} data-read-end={which} className="h-px" />
+      {!seen && <p className="text-xs text-zinc-500 text-center">끝까지 내려야 눌러져요</p>}
+      <button onClick={onRead} disabled={!seen}
+        className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs disabled:opacity-40">다 읽었어요</button>
+    </>
+  );
+}
+
 /* ── Daily reader — the full content of `buildReader`, one block per section. Nothing here is a checkbox, a toggle or
    a store (the user declined a confirm feature, 2026-09-17); every close goes through `closeBriefing`, which stamps the
-   day. ── */
-function DailyReaderModal({ state, today, onClose, onAction }) {
+   day. Inside the gate (`gateRead`, 2026-09-24) the routes are gone and the footer is `다 읽었어요` — one stamp per
+   screen per day through `onRead`, not a per-item tick; the X and the backdrop return to the gate without a stamp. ── */
+function DailyReaderModal({ state, today, onClose, onAction, gateRead = false, onRead }) {
   const { sections } = useMemo(() => buildReader(state, today), [state, today]);
+  const [endRef, seen] = useReadEnd(gateRead);
   return (
     <Modal title={`오늘 읽을 것 — ${today}`} onClose={onClose}>
       <div className="space-y-3">
@@ -6116,8 +6269,10 @@ function DailyReaderModal({ state, today, onClose, onAction }) {
           <div key={s.key} className="bg-zinc-950 rounded-xl p-3">
             <div className="flex items-start justify-between gap-2">
               <SectionLabel tone="text-zinc-400">{s.title}</SectionLabel>
-              <button onClick={() => onAction(s.action)} aria-label={`${s.title} 열기`}
-                className="shrink-0 px-1 text-xs text-zinc-400 active:opacity-70">›</button>
+              {!gateRead && (
+                <button onClick={() => onAction(s.action)} aria-label={`${s.title} 열기`}
+                  className="shrink-0 px-1 text-xs text-zinc-400 active:opacity-70">›</button>
+              )}
             </div>
             <div className="space-y-1.5">
               {s.items.map((it, n) => (it.head ? (
@@ -6134,13 +6289,17 @@ function DailyReaderModal({ state, today, onClose, onAction }) {
             </div>
           </div>
         ))}
-        {/* `closeBriefing` routes a non-tab type to `setModal({ type })`, so this stamps the day like any close */}
-        <button onClick={() => onAction({ type: "issues" })}
-          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">이슈 목록 ›</button>
-        <button onClick={() => onAction({ type: "briefing" })}
-          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">브리핑 ›</button>
-        <button onClick={onClose}
-          className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs">닫기</button>
+        {gateRead ? <ReadEndFooter endRef={endRef} which="reader" seen={seen} onRead={onRead} /> : (
+          <>
+            {/* `closeBriefing` routes a non-tab type to `setModal({ type })`, so this stamps the day like any close */}
+            <button onClick={() => onAction({ type: "issues" })}
+              className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">이슈 목록 ›</button>
+            <button onClick={() => onAction({ type: "briefing" })}
+              className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">브리핑 ›</button>
+            <button onClick={onClose}
+              className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs">닫기</button>
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -6158,14 +6317,17 @@ const issueSpecOf = (r) => ({
   meeting: { type: "meetingView", meetingId: r.meetingId },
   event: { type: "eventDetail", eventId: r.eventId, date: r.date },
 }[r.kind]);
-function IssueListModal({ state, today, onClose, onOpen, onTab }) {
+function IssueListModal({ state, today, onClose, onOpen, onTab, gateRead = false, onRead }) {
   const { sections } = useMemo(() => issueListOf(state, today), [state, today]);
   const [shown, setShown] = useState({}); // project key → earlier minutes expanded
+  const [endRef, seen] = useReadEnd(gateRead);
+  // Inside the gate (2026-09-24) every row is inert and `{n}건 더 ›` is plain text: the list is content to read, not a route.
+  const openRow = gateRead ? () => {} : onOpen;
   const marker = (text) => (text ? <span className="text-xs font-mono text-zinc-500 shrink-0">{text}</span> : null);
   const tone = (r) => (r.lead === "기한 지남" || r.lead.startsWith("이월 ") ? `${TODO_TONE.overdue} border-zinc-700` : ISSUE_LEAD);
   const row = (r, k) => (
     <div key={k}>
-      <TodoRow lead={{ text: r.lead, tone: tone(r) }} title={r.text} done={!!r.done} marker={marker(r.marker)} onOpen={() => onOpen(issueSpecOf(r))} />
+      <TodoRow lead={{ text: r.lead, tone: tone(r) }} title={r.text} done={!!r.done} marker={marker(r.marker)} onOpen={() => openRow(issueSpecOf(r))} />
       {r.sub && <p className="text-xs text-zinc-400 truncate px-3 mt-0.5">{r.sub}</p>}
     </div>
   );
@@ -6182,7 +6344,7 @@ function IssueListModal({ state, today, onClose, onOpen, onTab }) {
       <div key={key} className="space-y-1" data-issue-project={p.name}>
         <div className="text-sm font-bold truncate">{p.name}</div>
         <TodoRow lead={{ text: latest.date.slice(2), tone: ISSUE_LEAD }} title={latest.title} marker={marker(latest.marker)}
-          onOpen={() => onOpen({ type: "meetingView", meetingId: latest.meetingId })} />
+          onOpen={() => openRow({ type: "meetingView", meetingId: latest.meetingId })} />
         {latest.summary && <p className="text-xs text-zinc-400 break-words px-1">{labels.packetSummary}: {latest.summary}</p>}
         {latest.decisions && <p className="text-xs text-zinc-400 break-words px-1">{labels.packetDecisions}: {latest.decisions}</p>}
         {latest.followUps.map((f, i) => (
@@ -6197,7 +6359,7 @@ function IssueListModal({ state, today, onClose, onOpen, onTab }) {
         )}
         {open && p.previous.map((x) => (
           <TodoRow key={x.meetingId} lead={{ text: x.date.slice(2), tone: ISSUE_LEAD }} title={x.title} marker={marker(x.followUpsText)}
-            onOpen={() => onOpen({ type: "meetingView", meetingId: x.meetingId })} />
+            onOpen={() => openRow({ type: "meetingView", meetingId: x.meetingId })} />
         ))}
       </div>
     );
@@ -6219,9 +6381,9 @@ function IssueListModal({ state, today, onClose, onOpen, onTab }) {
                 ))}
                 {(s.key === "events" || s.key === "training") && s.rows.map(row)}
                 {s.key === "events" && more(s.more)}
-                {s.key === "training" && s.more > 0 && (
+                {s.key === "training" && s.more > 0 && (gateRead ? more(s.more) : (
                   <button onClick={() => onTab("meetings")} className="text-xs font-bold text-zinc-400 active:opacity-70">{s.more}건 더 ›</button>
-                )}
+                ))}
                 {s.key === "projects" && s.groups.map((g) => (
                   <div key={g.track || "memo"} className="space-y-2" data-issue-group={g.track || "memo"}>
                     {head(g, g.rows.length)}
@@ -6232,8 +6394,10 @@ function IssueListModal({ state, today, onClose, onOpen, onTab }) {
             )}
           </div>
         ))}
-        <button onClick={onClose}
-          className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs">닫기</button>
+        {gateRead ? <ReadEndFooter endRef={endRef} which="issues" seen={seen} onRead={onRead} /> : (
+          <button onClick={onClose}
+            className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs">닫기</button>
+        )}
       </div>
     </Modal>
   );
@@ -7440,7 +7604,7 @@ function StudyVerifyModal({ task, onClose, onDone }) {
    the CV states the counts and this sheet holds every earned item, so nothing earned becomes unreachable (rule 13).
    Both live in the one `modal` slot and write nothing to the save (rule 9). */
 
-function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onSetWorkInAi, onSetCheckNotify, onExport, onImport, onReset }) {
+function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSetWorkInAi, onSetCheckNotify, onExport, onImport, onReset }) {
   const [hours, setHours] = useState(String(bizHoursOf(state)));
   const [hoursErr, setHoursErr] = useState("");
   // What this browser can do for the `확인 필요` notification: the APIs plus a registered worker (the single-file demo and
@@ -7520,6 +7684,12 @@ function SettingsModal({ state, onClose, onRoleModel, onSetBizHours, onSetWorkIn
             : !caps.periodic && <p className="text-xs text-zinc-500 mt-1.5">설치된 앱에서만 주기 갱신이 돼요</p>}
           {denied && <p className="text-xs text-rose-400 mt-1.5">알림 권한이 꺼져 있어요 — 폰 설정에서 허용해요</p>}
           <p className="text-xs text-zinc-500 mt-1.5">켜면 앱을 열 때마다 세 가지를 확인해 알림 하나로 보여줘요 — 오늘 할 일 미갱신, 회의록 없는 지난 일정(14일), 이월 업무. 내용은 이 기기에만 있어요. Android는 잠금 화면에 제목이 보일 수 있어요. 앱을 닫아 둔 동안은 Chrome이 약 12시간마다 한 번까지만 갱신하고, 시점은 Chrome이 정해요.</p>
+        </div>
+        {/* 2026-09-24: the daily gate's month line — stamps read from `act.gate`, no switch (user decision 2) */}
+        <div>
+          <SectionLabel tone="text-cyan-400">오늘의 관문</SectionLabel>
+          <p className="font-mono text-xs text-zinc-300">{gateMonthLine(state, today)}</p>
+          <p className="text-xs text-zinc-500 mt-1.5">관문은 매일 첫 실행에 열려요. 끄는 설정은 없어요.</p>
         </div>
         <div>
           <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
@@ -11155,8 +11325,9 @@ export default function LifeManager() {
   const [phase, setPhase] = useState("loading");
   const [state, setState] = useState(null);
   const [tab, setTab] = useState("home");
-  const [modal, setModal] = useState(null);
+  const [modalRaw, setModal] = useState(null);
   const [overlay, setOverlay] = useState(null);
+  const [quizHeld, setQuizHeld] = useState(null); // the day's parsed quiz — component state, never the save (planner decision 7)
   const toastRef = useRef(null);
   const readyRef = useRef(false);
   const [imgs, setImgs] = useState({});
@@ -11166,6 +11337,11 @@ export default function LifeManager() {
   const [day, setDay] = useState(dstr());
   const dayRef = useRef(null);
   const today = day;
+  // The daily gate (2026-09-24): derived from the save and the day, never a ref. While it stands, `<main>` and `<nav>`
+  // are not rendered and only the gate's own flows may open — every other `setModal` is dropped by the derived `modal`
+  // line here rather than at the ~80 call sites (defence in depth: no tab handler can fire either).
+  const gateActive = phase === "main" && !!state && gateActiveOf(state, today);
+  const modal = gateActive && modalRaw && !GATE_MODAL_TYPES.includes(modalRaw.type) ? null : modalRaw;
 
   const showToast = (t) => toastRef.current?.show(t);
   useEffect(() => {
@@ -11183,7 +11359,7 @@ export default function LifeManager() {
         if (OPEN_PARAM_TYPES.includes(open)) {
           setModal({ type: open });
           try { history.replaceState(null, "", location.pathname + location.hash); } catch { /* no history */ }
-        } else if (m.act?.briefingSeen !== dstr()) setModal({ type: "reader" });
+        } else if (!gateActiveOf(m, dstr()) && m.act?.briefingSeen !== dstr()) setModal({ type: "reader" });
         if (checkNotifyOf(m) && typeof Notification !== "undefined" && Notification.permission === "granted") checkSyncRegister();
       }
       else setPhase("onboard");
@@ -11202,13 +11378,16 @@ export default function LifeManager() {
     return () => { clearInterval(id); window.removeEventListener("visibilitychange", check); window.removeEventListener("focus", check); };
   }, []);
 
-  // A new day opens the daily reader once, the same way boot does; the briefing is reached from it.
+  // A new day opens the daily reader once, the same way boot does; the briefing is reached from it. With the gate
+  // standing (no stamp for the new day) the gate is the first screen instead, and the reader is reached from it.
   useEffect(() => {
     if (!dayRef.current) { dayRef.current = day; return; }
     if (dayRef.current === day) return;
     dayRef.current = day;
-    if (state && state.act?.briefingSeen !== day) setModal({ type: "reader" });
+    if (state && !gateActiveOf(state, day) && state.act?.briefingSeen !== day) setModal({ type: "reader" });
   }, [day, state]);
+  // The held quiz belongs to the day it was pasted on.
+  useEffect(() => { setQuizHeld(null); }, [day]);
 
   // A tap on the notification while the app is open: the worker focuses this window and names the screen to open.
   useEffect(() => {
@@ -12255,6 +12434,43 @@ export default function LifeManager() {
     if (TAB_ACTIONS.includes(next.type)) { setTab(next.type); return; }
     setModal(next.type === "bridge" ? { type: "bridge", mode: next.mode } : { type: next.type });
   };
+  /* The daily gate (2026-09-24) — every write is a stamp of a user action under `act.gate[today]`, and each write
+     drops entries older than GATE_KEEP_DAYS (the app's own stamps, never a record). Nothing here completes, pays or
+     promotes; the refreshed step reads `work[]` at render (rules 1, 9, 18). */
+  const writeGate = (fn) => setState((prev) => {
+    const s = structuredClone(prev);
+    const gate = { ...(s.act.gate || {}) };
+    const e = { ...(gate[today] || {}) };
+    fn(e);
+    gate[today] = e;
+    const floor = shiftDay(today, -GATE_KEEP_DAYS);
+    for (const d of Object.keys(gate)) if (d < floor) delete gate[d];
+    s.act.gate = gate;
+    return s;
+  });
+  // `다 읽었어요` on a read screen inside the gate: the time, and for the reader also the one daily seen-marker every
+  // other reader of "seen today" agrees on. The sheet returns to the gate.
+  const readGate = (which) => {
+    writeGate((e) => { e[which === "reader" ? "readReaderAt" : "readIssuesAt"] = hhmm(); });
+    if (which === "reader") markBriefingSeen();
+    setModal(null);
+  };
+  // A quiz submit (the sheet lands in Phase 2): the attempt is counted across pastes and retries; a fail clears both
+  // read stamps (user decision 1). The result view stays up — nothing closes here.
+  const recordQuiz = ({ total, score, passed }) => writeGate((e) => {
+    e.quiz = { total, score, passed, attempts: (e.quiz?.attempts || 0) + 1, at: hhmm() };
+    if (!passed) { delete e.readReaderAt; delete e.readIssuesAt; }
+  });
+  // `통과`: the one stamp that lifts the gate, written only when every step holds; the raw modal slot is emptied so
+  // nothing stale surfaces when `<main>` returns.
+  const passGate = () => {
+    const st = gateStepsOf(state, today);
+    if (!st.ready) return;
+    writeGate((e) => { e.passedAt = hhmm(); });
+    setModal(null);
+    setQuizHeld(null);
+    showToast({ msg: `오늘의 관문 통과 · 퀴즈 ${st.quiz.score}/${st.quiz.total}` });
+  };
   // Stores the pasted reply on today's journal entry. Text only — it never changes a score (rule 7 amendment).
   const upsertReply = (s, raw) => {
     if (!raw) return;
@@ -12444,80 +12660,91 @@ export default function LifeManager() {
         </div>
       </header>
 
-      <main className="px-4 pb-24 space-y-4">
-        {tab === "home" && (
-          <HomeTab state={state} today={today} imgs={imgs} onProfile={() => setModal({ type: "profile" })}
-            onSettings={() => setModal({ type: "settings" })}
-            onPromote={(area) => setModal({ type: "promote", area })}
-            onRole={() => setModal({ type: "role" })}
-            onWall={() => setModal({ type: "wall" })}
-            onReader={() => setModal({ type: "reader" })}
-            onIssues={() => setModal({ type: "issues" })} />
-        )}
-        {tab === "goals" && (
-          <GoalsTab state={state}
-            onAddGoal={() => setModal({ type: "addGoal" })}
-            onCheckin={checkinKR}
-            onGoalStatus={goalStatus} onRemoveGoal={removeGoal}
-            onAddQuestFor={(gid) => setModal({ type: "addQuest", goalId: gid })} />
-        )}
-        {tab === "tasks" && (
-          <TaskTab state={state} today={today}
-            onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })}
-            onOpenEvent={(eventId, date) => setModal({ type: "eventDetail", eventId, date })}
-            onOpenBiz={(row) => setModal({ type: "bizDetail", row })}
-            onCatalog={() => setModal({ type: "catalog" })}
-            onGoGoals={() => setTab("goals")}
-            onGoBiz={() => { setBizView("deals"); setTab("biz"); }}
-            onBriefing={() => setModal({ type: "briefing" })} />
-        )}
-        {tab === "work" && (
-          <WorkTab state={state} today={today}
-            onAdd={(date) => setModal({ type: "work", date })}
-            onOpen={(workId) => setModal({ type: "work", workId })}
-            onBridge={() => setModal({ type: "workBridge" })} onTimeLog={() => setModal({ type: "timeLog" })} onRemoveMany={removeWorkMany}
-            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })}
-            onOpenDocument={(docId) => setModal({ type: "document", docId })}
-            onAddCheck={addCheck} onToggleCheck={toggleCheck} onRemoveCheck={removeCheck}
-            onAskAi={(eventId, date) => setModal({ type: "prepBridge", eventId, date })} />
-        )}
-        {tab === "schedule" && (
-          <ScheduleTab state={state} today={today}
-            onAdd={(date) => setModal({ type: "event", date })}
-            onEdit={(ev) => setModal({ type: "event", event: ev })}
-            onToggleDone={toggleEventDone} onSkip={skipOccurrence}
-            onExport={() => setModal({ type: "calExport" })} />
-        )}
-        {tab === "meetings" && (
-          <MeetingsTab state={state}
-            onAddProject={() => setModal({ type: "project" })}
-            onEditProject={(projectId) => setModal({ type: "project", projectId })}
-            onAddMeeting={(projectId) => setModal({ type: "meeting", projectId })}
-            onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })}
-            onAddDocument={(projectId) => setModal({ type: "document", projectId })}
-            onOpenDocument={(docId) => setModal({ type: "document", docId })} />
-        )}
-        {tab === "biz" && (
-          <BizTab state={state} today={today}
-            view={state.ui?.bizView} onView={setBizView}
-            onAdd={(list) => setModal({ type: BIZ_ADD_MODAL[list] })}
-            onEdit={(list, item) => setModal({ type: list, item })}
-            onTogglePaid={toggleDealPaid} onTogglePayment={toggleDealPayment}
-            onOpenMilestone={(id) => setModal({ type: "milestone", milestoneId: id })}
-            onSeedRoadmap={seedRoadmap}
-            onOpenLead={(id) => setModal({ type: "lead", leadId: id })}
-            onOpenNotice={(id) => setModal({ type: "notice", noticeId: id })} />
-        )}
-      </main>
+      {/* The daily gate stands in place of the screen and the tab bar until today's `passedAt` exists; the header stays */}
+      {gateActive ? (
+        <GateModal key={today} state={state} today={today} held={quizHeld}
+          onOpenReader={() => setModal({ type: "reader" })} onOpenIssues={() => setModal({ type: "issues" })}
+          onQuiz={() => setModal({ type: "quiz" })} onRetry={() => setModal({ type: "quiz", retry: true })}
+          onBridge={() => setModal({ type: "workBridge" })} onAddWork={() => setModal({ type: "work", date: today })}
+          onPass={passGate} />
+      ) : (
+        <>
+          <main className="px-4 pb-24 space-y-4">
+            {tab === "home" && (
+              <HomeTab state={state} today={today} imgs={imgs} onProfile={() => setModal({ type: "profile" })}
+                onSettings={() => setModal({ type: "settings" })}
+                onPromote={(area) => setModal({ type: "promote", area })}
+                onRole={() => setModal({ type: "role" })}
+                onWall={() => setModal({ type: "wall" })}
+                onReader={() => setModal({ type: "reader" })}
+                onIssues={() => setModal({ type: "issues" })} />
+            )}
+            {tab === "goals" && (
+              <GoalsTab state={state}
+                onAddGoal={() => setModal({ type: "addGoal" })}
+                onCheckin={checkinKR}
+                onGoalStatus={goalStatus} onRemoveGoal={removeGoal}
+                onAddQuestFor={(gid) => setModal({ type: "addQuest", goalId: gid })} />
+            )}
+            {tab === "tasks" && (
+              <TaskTab state={state} today={today}
+                onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })}
+                onOpenEvent={(eventId, date) => setModal({ type: "eventDetail", eventId, date })}
+                onOpenBiz={(row) => setModal({ type: "bizDetail", row })}
+                onCatalog={() => setModal({ type: "catalog" })}
+                onGoGoals={() => setTab("goals")}
+                onGoBiz={() => { setBizView("deals"); setTab("biz"); }}
+                onBriefing={() => setModal({ type: "briefing" })} />
+            )}
+            {tab === "work" && (
+              <WorkTab state={state} today={today}
+                onAdd={(date) => setModal({ type: "work", date })}
+                onOpen={(workId) => setModal({ type: "work", workId })}
+                onBridge={() => setModal({ type: "workBridge" })} onTimeLog={() => setModal({ type: "timeLog" })} onRemoveMany={removeWorkMany}
+                onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })}
+                onOpenDocument={(docId) => setModal({ type: "document", docId })}
+                onAddCheck={addCheck} onToggleCheck={toggleCheck} onRemoveCheck={removeCheck}
+                onAskAi={(eventId, date) => setModal({ type: "prepBridge", eventId, date })} />
+            )}
+            {tab === "schedule" && (
+              <ScheduleTab state={state} today={today}
+                onAdd={(date) => setModal({ type: "event", date })}
+                onEdit={(ev) => setModal({ type: "event", event: ev })}
+                onToggleDone={toggleEventDone} onSkip={skipOccurrence}
+                onExport={() => setModal({ type: "calExport" })} />
+            )}
+            {tab === "meetings" && (
+              <MeetingsTab state={state}
+                onAddProject={() => setModal({ type: "project" })}
+                onEditProject={(projectId) => setModal({ type: "project", projectId })}
+                onAddMeeting={(projectId) => setModal({ type: "meeting", projectId })}
+                onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })}
+                onAddDocument={(projectId) => setModal({ type: "document", projectId })}
+                onOpenDocument={(docId) => setModal({ type: "document", docId })} />
+            )}
+            {tab === "biz" && (
+              <BizTab state={state} today={today}
+                view={state.ui?.bizView} onView={setBizView}
+                onAdd={(list) => setModal({ type: BIZ_ADD_MODAL[list] })}
+                onEdit={(list, item) => setModal({ type: list, item })}
+                onTogglePaid={toggleDealPaid} onTogglePayment={toggleDealPayment}
+                onOpenMilestone={(id) => setModal({ type: "milestone", milestoneId: id })}
+                onSeedRoadmap={seedRoadmap}
+                onOpenLead={(id) => setModal({ type: "lead", leadId: id })}
+                onOpenNotice={(id) => setModal({ type: "notice", noticeId: id })} />
+            )}
+          </main>
 
-      <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-7 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
-        {NAV.map(([k, label, Icon]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
-            <Icon size={18} /> <span className="whitespace-nowrap leading-4">{label}</span>
-          </button>
-        ))}
-      </nav>
+          <nav className="fixed bottom-2 inset-x-3 max-w-md mx-auto grid grid-cols-7 bg-zinc-900 border border-zinc-800 rounded-2xl px-1 py-2">
+            {NAV.map(([k, label, Icon]) => (
+              <button key={k} onClick={() => setTab(k)}
+                className={`py-1.5 flex flex-col items-center gap-1 text-xs ${tab === k ? "text-cyan-300 font-bold" : "text-zinc-500 font-medium"}`}>
+                <Icon size={18} /> <span className="whitespace-nowrap leading-4">{label}</span>
+              </button>
+            ))}
+          </nav>
+        </>
+      )}
 
       {modal?.type === "addQuest" && (
         <AddTaskModal areas={state.areas} exams={state.exams} certBest={state.certBest} tasks={state.tasks}
@@ -12663,13 +12890,16 @@ export default function LifeManager() {
       {modal?.type === "briefing" && (
         <BriefingModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />
       )}
+      {/* Inside the gate both read screens run in `gateRead` mode: the X returns to the gate without a stamp, and
+          `다 읽었어요` stamps through `readGate` (the reader's stamp also marks the day seen) */}
       {modal?.type === "reader" && (
-        <DailyReaderModal state={state} today={today} onClose={() => closeBriefing()} onAction={closeBriefing} />
+        <DailyReaderModal state={state} today={today} onClose={gateActive ? () => setModal(null) : () => closeBriefing()} onAction={closeBriefing}
+          gateRead={gateActive} onRead={() => readGate("reader")} />
       )}
       {/* The issue list opens existing sheets in this slot and writes nothing (rules 1, 9, 10, 18) */}
       {modal?.type === "issues" && (
         <IssueListModal state={state} today={today} onClose={() => setModal(null)} onOpen={(m) => setModal(m)}
-          onTab={(t) => { setModal(null); setTab(t); }} />
+          onTab={(t) => { setModal(null); setTab(t); }} gateRead={gateActive} onRead={() => readGate("issues")} />
       )}
       {modal?.type === "journal" && (
         <JournalModal state={state} today={today} onClose={() => setModal(null)} onSave={saveJournal} />
@@ -12692,7 +12922,7 @@ export default function LifeManager() {
       {/* `resetAll` never clears `modal`, so the sheet is closed first — otherwise it would reappear over the app
           after the next onboarding or demo entry. The reset itself still asks nothing (TD-26). */}
       {modal?.type === "settings" && (
-        <SettingsModal state={state} onClose={() => setModal(null)}
+        <SettingsModal state={state} today={today} onClose={() => setModal(null)}
           onRoleModel={() => setModal({ type: "role" })} onSetBizHours={setBizHours} onSetWorkInAi={setWorkInAi} onSetCheckNotify={setCheckNotify}
           onExport={exportBackup} onImport={askImport}
           onReset={() => { setModal(null); resetAll(); }} />

@@ -64,7 +64,12 @@ module.exports = async (h) => {
   });
   await step("step 6 — computed result → start", async () => {
     await expectText("학력 학사 졸 · 경력 실무 1~3년"); // the two derived keys, in the frozen tables' own labels
-    await clickText("이 설정으로 시작"); await sleep(600); await expectText("영역 등급");
+    await clickText("이 설정으로 시작"); await sleep(600);
+    // The fresh save carries no gate stamp, so the daily gate (2026-09-24) is the first screen; the harness plants
+    // today's synthetic stamp and reloads to reach the app (flow12 asserts the gate itself).
+    await expectText("오늘의 관문 —");
+    await h.passGate();
+    await expectText("영역 등급");
   });
   await shot("home");
   await step("fresh state schema version and CV records", async () => {
@@ -354,6 +359,7 @@ module.exports = async (h) => {
   await require("./flow9.js")(h);
   await require("./flow10.js")(h); // before flow4, which replaces the save
   await require("./flow11.js")(h); // before flow4, which replaces the save
+  await require("./flow12.js")(h); // before flow4, which replaces the save
   await require("./flow4.js")(h);
   await require("./flow6.js")(h);
 
@@ -367,6 +373,9 @@ module.exports = async (h) => {
     await expectText("영역 등급");
     // 2026-09-18: the demo's `seenStageK` matches its current stage, so entering it raises no stage overlay (`z-50`).
     if (await page.evaluate(() => !!document.querySelector(".fixed.inset-0.z-50"))) throw new Error("entering the demo raised an overlay");
+    // 2026-09-24: the demo stamps today's gate as passed, so the tab bar is up and no gate is shown.
+    const demoGate = await page.evaluate(() => ({ nav: document.querySelector("nav") !== null, gate: document.body.innerText.includes("오늘의 관문") }));
+    if (!demoGate.nav || demoGate.gate) throw new Error("the demo entry shows the gate or no tab bar: " + JSON.stringify(demoGate));
   });
   // A stagnant-area line lands on home, where the area's grade row and its gate live. The demo's `건강` area has no
   // achievement at all, so its line exists whatever the date.
@@ -507,6 +516,9 @@ module.exports = async (h) => {
     await sleep(700);
     const open = await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length);
     if (open) throw new Error("a modal survived the reset");
+    // 2026-09-24: the demo enters with today's gate passed — the tab bar is up and no gate is shown.
+    const afterReset = await page.evaluate(() => ({ nav: document.querySelector("nav") !== null, gate: document.body.innerText.includes("오늘의 관문") }));
+    if (!afterReset.nav || afterReset.gate) throw new Error("the demo entry after the reset shows the gate or no tab bar: " + JSON.stringify(afterReset));
   });
   await shot("reset");
 };

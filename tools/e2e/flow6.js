@@ -203,7 +203,9 @@ module.exports = async (h) => {
     const saved = await readState();
     const base = page.url().split("?")[0];
     try {
-      await writeState({ ...saved, act: { ...saved.act, briefingSeen: await dstrIn(0) } });
+      // This step navigates with `page.goto`, not `reload`, so today's gate stamp (2026-09-24) is planted here by hand.
+      const today = await dstrIn(0);
+      await writeState({ ...saved, act: { ...saved.act, briefingSeen: today, gate: { ...(saved.act.gate || {}), [today]: { passedAt: "00:00" } } } });
       // Each param names its own screen: the issue list (Phase 3 of the 2026-09-22 plan) and the reader.
       for (const [open, title] of [["issues", "이슈 목록"], ["reader", "오늘 읽을 것 —"]]) {
         await page.goto(`${base}?open=${open}`, { waitUntil: "networkidle2" });
