@@ -111,6 +111,20 @@ of the three touches (the since-mode packet's sections, the notification's three
 meeting/training distinction) is computed at render and stored nowhere else
 ([Rule 9](core-beliefs.md#rule-9)).
 
+**2026-09-24 additions (the daily gate) — schema stays v28, no migration block, no `v` bump.** `act` gains one
+more optional field, `gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts,
+at }, passedAt? } }` — tolerated by every reader the same shape as `act.workRefreshedAt`/`settings.checkNotify`
+above (no backfill, since the only writer, `writeGate`, always writes a complete entry). Every value is a stamp
+of a user action: `HH:MM` local times (`hhmm()`) for the three read/pass moments, and a **locally graded** score
+for `quiz` — never a percentage, never a second field for the same fact. `writeGate` prunes every date key older
+than `GATE_KEEP_DAYS` (60) before today on each write — the app's own stamps, by the user's own decision, not a
+record ([Rule 9](core-beliefs.md#rule-9)). `gateActiveOf(state, today) = !!state?.profile &&
+!state?.act?.gate?.[today]?.passedAt` is the one derived fact every reader of "is the gate open" computes from
+this field; nothing about the gate's three step lines, its settings-sheet month line, or "today was refreshed"
+(`gateRefreshedOf`, shared with `checkSummaryOf`) is cached anywhere else. `freshState` is unchanged — a fresh
+save simply has no `gate` key until the first gate write. Mechanics:
+[../product-specs/daily-gate.md](../product-specs/daily-gate.md).
+
 **2026-09-18 additions (role story, verdicts, stage progress) — schema stays v28, no migration block, no `v`
 bump.** `role` gains three more optional fields, tolerated by every reader exactly the same shape as `role.stages`
 above and the v26 `meetings[].transcript`/`events[].projectId` change (no backfill, since the form or handler

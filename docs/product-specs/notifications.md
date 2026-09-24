@@ -155,6 +155,11 @@ names one of the two types, `setModal({ type })` opens it regardless of `act.bri
 tap on the notification while the app is already open, the `notificationclick` path above). `reader` is kept as
 a second accepted value so a notification shown before this screen existed still lands somewhere sensible.
 
+**With the [daily gate](daily-gate.md) active (2026-09-24):** this routing is unchanged code, but both accepted
+types are in `GATE_MODAL_TYPES`, so the call opens the named screen **in gate-read mode, above the gate** instead
+of over `<main>` — a tap on the notification before today's gate is passed lands on the gate's own read step,
+not on a bare reader or issue list floating over a hidden app.
+
 ## What the notification never does
 
 - No network request of its own — Periodic Background Sync wakes the worker, which reads the cache and shows a

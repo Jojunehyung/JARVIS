@@ -111,20 +111,21 @@ before the working day, and the day job's items are the ones that must not slip 
 the whole plan — so they lead; the business follows as the second block; private life closes. The work tab and
 the briefing use the same order, so no screen ever reorders the user's day differently from another.
 
-## `DailyReaderModal({ state, today, onClose, onAction })`
+## `DailyReaderModal({ state, today, onClose, onAction, gateRead = false, onRead })`
 
 `Modal` titled `오늘 읽을 것 — {today}`. One block per section (`bg-zinc-950 rounded-xl p-3`): a header row with
-the section title (`SectionLabel tone="text-zinc-400"`) and a button `›` (`aria-label="{title} 열기"`) →
+the section title (`SectionLabel tone="text-zinc-400"`) and, **outside the gate**, a button `›` (`aria-label="{title} 열기"`) →
 `onAction(section.action)`; then each item's `text` (`text-zinc-500` when it reads `없음`, `text-zinc-300`
-otherwise) and its `sub` lines indented; `{more}건 더` (mono) when `more > 0`. Footer: a full-width border button
+otherwise) and its `sub` lines indented; `{more}건 더` (mono) when `more > 0`. Footer, outside the gate: a full-width border button
 `이슈 목록 ›` (2026-09-22) → `onAction({ type: "issues" })` directly above `브리핑 ›` → `onAction({ type:
 "briefing" })`, then a cyan `닫기` → `onClose`. No checkbox, no toggle, no input anywhere in this modal — by the
 user's own decision.
 
+**Inside the [daily gate](daily-gate.md) (`gateRead={true}`, 2026-09-24):** no section `›` buttons and none of the three footer routes render at all — replaced by `useReadEnd`'s sentinel-gated footer, one button, `다 읽었어요` (`disabled` until the sentinel at the very end of the content enters the viewport) → `onRead`, which stamps `act.gate[today].readReaderAt` **and** `act.briefingSeen` (the same daily marker `closeBriefing` stamps outside the gate — no second field for "seen today"). The header X and the backdrop return to the gate without a stamp. `gateRead` defaults to `false`, so every byte of this modal's output outside the gate is unchanged by this addition.
+
 ## When it opens
 
-- **At boot** and **on a day change**, in the briefing's former place: `if (m.act?.briefingSeen !== dstr())
-  setModal({ type: "reader" })` — the same guard the briefing used to run, now opening the reader instead. The
+- **At boot** and **on a day change**, in the briefing's former place: `if (!gateActiveOf(m, dstr()) && m.act?.briefingSeen !== dstr()) setModal({ type: "reader" })` — the same guard the briefing used to run, now opening the reader instead, and (2026-09-24) skipped entirely while the [daily gate](daily-gate.md) stands, since the gate is the first screen in that case and the reader is reached from its own `오늘 읽을 것 열기 ›` button, in gate-read mode. The
   briefing no longer auto-opens on its own.
 - From the **profile tab's CV card**, a button `오늘 읽을 것 ›` next to `프로필 편집` (`HomeTab`'s `onReader`
   prop, root wires `() => setModal({ type: "reader" })`).
@@ -134,7 +135,10 @@ user's own decision.
   [`확인 필요 notification`](notifications.md) uses for `?open=issues`; `OPEN_PARAM_TYPES = ["issues", "reader"]` opens the
   named screen at boot regardless of `act.briefingSeen`, then strips the query with `history.replaceState`, so a
   reload does not reopen it. A worker `postMessage({ open: "reader" })` (a tap on a cached pre-2026-09-22
-  notification) opens it the same way through a `navigator.serviceWorker` `message` listener.
+  notification) opens it the same way through a `navigator.serviceWorker` `message` listener. (2026-09-24) With
+  the [daily gate](daily-gate.md) active, `?open=reader` and the worker message are unchanged code paths, but
+  `"reader"` is one of `GATE_MODAL_TYPES`, so the call opens the reader **in gate-read mode, above the gate**
+  instead of over `<main>` — the boot param routes into the gate's read step with no new routing code.
 
 ## Relation to the briefing
 
@@ -191,7 +195,11 @@ and asserts `롤모델 판정 없음 — 원하는 모습을 적고 AI에게 물
 (`aria-label="롤모델 판정 열기"`) opens `방향 제안 —` (`RoleAdviceModal`, as it read that day) — rewritten
 2026-09-18 (second change of the day) to assert `startsWith("롤모델")`, the `롤모델` screen `RoleAdviceModal`
 was folded into. `flow5.js`'s `READER_SECTIONS` gains `"롤모델 판정"` between `"뒤처진 목표 페이스"` and
-`"브리핑 ›"`. See [tools/e2e/README.md](../../tools/e2e/README.md).
+`"브리핑 ›"`. **The daily gate (2026-09-24, written, not run):** `tools/e2e/flow12.js` covers the reader in
+gate-read mode — no section route, no `브리핑 ›`/`이슈 목록 ›`/`닫기`, `다 읽었어요` disabled on an overflowing
+sheet until the end sentinel is scrolled into view, then stamping `readReaderAt` and `briefingSeen`; see
+[daily-gate.md](daily-gate.md#reading-to-the-end--usereadendenabled-and-gate-read-mode). See
+[tools/e2e/README.md](../../tools/e2e/README.md).
 
 ## What the daily reader never does
 

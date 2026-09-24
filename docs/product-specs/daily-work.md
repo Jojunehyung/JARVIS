@@ -234,6 +234,15 @@ leaves select mode when it deletes. The selection is component state only and is
 day ([Rule 9](../design-docs/core-beliefs.md#rule-9)). `전체 선택` covers what is on screen — today's view plus its
 carried rows — never other days.
 
+## Reached from the daily gate (2026-09-24)
+
+Step 3 of the [daily gate](daily-gate.md) (`오늘의 관문`) reaches `AI로 만들기 ›` and `업무 추가 ›` through the
+same handlers and the same modal slot as the `업무` tab does — `WorkBridgeModal`/`WorkModal` render above the
+gate exactly as they render above `<main>` here, and `importWork`/`addWork` are called unchanged. The gate never
+completes, edits or reads a work item on its own; "refreshed" (step 3's own state) is the same derived fact —
+`(state.work || []).some((w) => w.createdAt === today)` — `checkSummaryOf`'s `notRefreshed` reason and
+`gateStepsOf`'s `refresh` field both compute.
+
 ## Root handlers and toasts
 
 Clone-pattern updates writing only `work` — never `act`, `tasks`, `goals`, `areas`, `room`, `exams` or

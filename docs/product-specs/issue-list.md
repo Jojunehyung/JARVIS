@@ -99,7 +99,7 @@ row prefixed `교육 · `): `{ meetingId, date, title, followUpsText }` with `fo
 when the meeting has follow-up items, else empty. The memo group's `previous` is always empty — only its newest
 memo shows.
 
-## `IssueListModal({ state, today, onClose, onOpen, onTab })`
+## `IssueListModal({ state, today, onClose, onOpen, onTab, gateRead = false, onRead })`
 
 `Modal` title `이슈 목록`, next to `DailyReaderModal` in the Modals region. Per section: `SectionLabel` `{title}
 ({count})`; inside `todo` and `projects`, a track head (`TrackTag`, the same component the meetings tab and the
@@ -110,8 +110,17 @@ and `{결정/핵심정리 label}: {decisions}` when present (the label follows t
 `meetingLabels(latest.kind).packetSummary`/`packetDecisions`), then up to 5 open follow-up lines (`- {내
 담당|타인} · {text}`, `{n}건 더` past the cap), then, only when `previous` is non-empty, a full-width toggle
 button reading `이전 {n}건 ›` (the real count, never a fixed number) / `접기` (component state, per project,
-never stored — [Rule 9](../design-docs/core-beliefs.md#rule-9)) that expands `previous` as compact rows. Footer:
-`닫기`.
+never stored — [Rule 9](../design-docs/core-beliefs.md#rule-9)) that expands `previous` as compact rows. Footer,
+outside the gate: `닫기`.
+
+**Inside the [daily gate](daily-gate.md) (`gateRead={true}`, 2026-09-24):** every row's tap is a no-op (`onOpen`
+replaced by `() => {}`) and the training section's `{n}건 더 ›` button becomes the plain text `{n}건 더` — the
+list is content to read here, not a route; `이전 {n}건 ›`/`접기` keeps toggling, since expanding a project's
+earlier minutes is still reading. The `닫기` footer is replaced by `useReadEnd`'s sentinel-gated footer, one
+button `다 읽었어요` (`disabled` until the end of the content is scrolled into view) → `onRead`, which stamps
+`act.gate[today].readIssuesAt` only (no `act.briefingSeen` change — that stamp belongs to the reader). The header
+X and the backdrop return to the gate without a stamp. `gateRead` defaults to `false`, so this modal's output
+outside the gate is unchanged.
 
 **Row taps** (`issueSpecOf`, every one replacing this modal in the single slot — nothing here completes a tap):
 
@@ -134,6 +143,9 @@ The `교육` section's `{n}건 더 ›` and nothing else calls `onTab("meetings"
   non-tab action, so no new routing code was needed) — [daily-reader.md](daily-reader.md#when-it-opens).
 - **The `확인 필요` notification** — a tap routes here through the service worker's `notificationclick` handler
   and the `?open=issues` boot param — [notifications.md](notifications.md#boot-param-and-the-in-app-message).
+- **The [daily gate](daily-gate.md)'s `이슈 목록 열기 ›` button** (2026-09-24) — opens this modal in gate-read
+  mode above the gate; the same `?open=issues` boot param and the worker message also land here, in gate-read
+  mode, whenever the gate is active, since `"issues"` is one of `GATE_MODAL_TYPES`.
 
 `TAB_ACTIONS` (the tab-switch whitelist) is unchanged — the issue list is a `modal.type`, not a tab.
 
@@ -157,5 +169,10 @@ The `교육` section's `{n}건 더 ›` and nothing else calls `onTab("meetings"
 its track group as `이월 {n}일`; a training record listed under `교육` and correctly excluded as a project's
 `latest` while a meeting-kind record of the same project exists; a project's `latest` row stating its `요약:`
 line, `이전 {n}건 ›` expanding to the real count of compact rows and toggling to `접기`; and every row kind
-(work, task, follow-up, event, meeting) opening its sheet with no state changed. See
+(work, task, follow-up, event, meeting) opening its sheet with no state changed.
+
+**The daily gate (2026-09-24, written, not run):** `tools/e2e/flow12.js` covers this screen in gate-read mode —
+a row tap opening no sheet, no `건 더 ›` button, `이전 {n}건 ›` still toggling, `다 읽었어요` stamping
+`readIssuesAt` and returning to the gate; see
+[daily-gate.md](daily-gate.md#reading-to-the-end--usereadendenabled-and-gate-read-mode). See
 [tools/e2e/README.md](../../tools/e2e/README.md) for the exact step count.

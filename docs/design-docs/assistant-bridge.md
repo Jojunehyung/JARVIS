@@ -63,8 +63,9 @@ Thresholds are named constants: `AREA_STALE_DAYS` 30, `ACTIVITY_GAP_DAYS` 7, `CA
 ## `roleRecommendations(state)`
 Originally extracted from `RoleAdviceModal`; shared, unchanged in its own filtering and payout logic, by the briefing and `RoleGradeSection` (the `롤모델` screen's `영역 등급` section, since 2026-09-18) so the two compute the same thing. Returns `{ areas, gaps }` (renamed from `{ rg, gaps }` 2026-09-18, third role-model change of the day, alongside `roleGap` → `roleAreas` below) where each gap carries the area, the grades, the category hints (`areaCatHints`), up to four certification recommendations sorted by job-fit multiplier then ascending difficulty, and up to three next exam bands. The tiering and payout maths are unchanged ([Rule 14](core-beliefs.md#rule-14), [Rule 15](core-beliefs.md#rule-15)).
 
-The bridge carries **five** packets in total (2026-09-17/18): the daily check-in, `오늘 업무 만들기`,
-`AI에게 회의 준비 묻기`, the fourth, `주간 회고` (v28), and the fifth, `AI에게 판정 묻기` (2026-09-18), below.
+The bridge carries **six** packets in total (2026-09-17/18/24): the daily check-in, `오늘 업무 만들기`,
+`AI에게 회의 준비 묻기`, the fourth, `주간 회고` (v28), the fifth, `AI에게 판정 묻기` (2026-09-18), and the sixth,
+`오늘의 관문 퀴즈` (2026-09-24, the [daily gate](../product-specs/daily-gate.md)), below.
 
 ## Tracks — what leaves the device, and the day-job switch (v28; the switch 2026-09-22)
 
@@ -88,9 +89,10 @@ what the switch allows), and there is no per-record override — the switch is g
 | `AI에게 회의 준비 묻기` (`buildPrepPacket`) | `docs` filtered by `trackOf(d)`; `dealsOfProject`'s result filtered by `trackOf(d, "biz")`; when the event's own track is outside `packetTracks(state)`, the function returns just the header plus `## 회의` with the single line `- 직장 트랙 일정 — AI 패킷에 실리지 않아요` |
 | `주간 회고` (`buildReviewPacket`, v28) | business track only by construction, unaffected by the switch — see below |
 | `AI에게 판정 묻기` (`buildRoleVerdictPacket`, 2026-09-18) | record counts computed over `deals`/`milestones` filtered by `packetTracks(state)`; portfolio, leads and notices carry no track ([TD-78](../exec-plans/tech-debt-tracker.md)) and are counted whole — counts only, never a name — see below |
+| `오늘의 관문 퀴즈` (`buildQuizPacket`, 2026-09-24) | every section filtered to `packetTracks(state)` — the preparation rows by the event's and the project's track, the work lines by `trackOf(w)`, the schedule lines by `trackOf(o.ev)`, the decision/minutes/training lines by `meetingTrack(state, m)`, the documents by `trackOf(d)` — see below |
 
-Captions state the exclusion in the send pane itself, **only while the switch is off**: `BridgeModal`'s and
-`WorkBridgeModal`'s captions each gain the sentence `직장 트랙 기록은 실리지 않아요.`; `PrepBridgeModal`'s gains
+Captions state the exclusion in the send pane itself, **only while the switch is off**: `BridgeModal`'s,
+`WorkBridgeModal`'s and `QuizModal`'s (2026-09-24) captions each gain the sentence `직장 트랙 기록은 실리지 않아요.`; `PrepBridgeModal`'s gains
 `직장 트랙 문서·계약은 실리지 않아요.`; the role-verdict caption's `고객사 이름·직장 트랙 기록은 실리지 않아요`
 becomes `고객사 이름은 실리지 않아요` while the switch is on. The `트랙` chip row on every record form
 (`TrackRow`) shows `직장 트랙은 AI 패킷에 실리지 않아요.` only while the switch is off; while it is on, the row
@@ -465,3 +467,38 @@ byte-identical, since the re-assessment line lives in the reader, not the briefi
 unchanged; [../product-specs/daily-reader.md](../product-specs/daily-reader.md#the-role-verdict-section)) — and,
 since 2026-09-18 (third role-model change of the day, [Rule 14](core-beliefs.md#rule-14) amendment), no packet
 of any kind asks for or states a probability figure any more.
+
+## The sixth packet — `오늘의 관문 퀴즈` (`buildQuizPacket` / `parseQuizReply`, 2026-09-24, the [Rule 7](core-beliefs.md#rule-7) amendment "2026-09-24")
+
+Built for the [daily gate](../product-specs/daily-gate.md) — the full-screen layer that stands until the user reads both `오늘 읽을 것` and `이슈 목록` to their end, passes a locally graded quiz on that content, and refreshes today's work. A reply to this packet can only *propose* four-choice questions; the app grades the user's answers **locally** (`gradeQuiz`) and stores the result as a fact — no praise, no badge, no streak of its own ([Rule 13](core-beliefs.md#rule-13)).
+
+`buildQuizPacket(state, today)`, through the same `packetSection` helper, own cap `QUIZ_PACKET_MAX` = 12,000:
+
+| Section | Content | Cap / clip |
+|---|---|---|
+| `오늘·내일 회의 준비` | `meetingPrepOf(state, today)` rows on packet tracks — event, open checks, `결정: {clipped decisions \| 없음}` or `이전 회의록 없음`, or (a hidden last meeting) `내용 비공개 (AI에 보내지 않기)` | never dropped |
+| `업무 (이월·오늘)` | open work items from `workOn(state, today, today)`, carried first (`이월 {n}일` / `오늘`), with a `메모:` fragment | `QUIZ_PACKET_WORK` (30) |
+| `다가오는 일정 (14일)` | `upcomingEvents(state, today, QUIZ_PACKET_EVENT_DAYS)` — date, time, kind, title; never `place`/`note` | `QUIZ_PACKET_EVENTS` (30) |
+| `최근 7일 결정 사항` | meetings dated within `QUIZ_PACKET_DECISIONS` (7) days with a non-empty `decisions`, any kind, newest first; a hidden meeting states date and title only | clip `QUIZ_PACKET_CLIP` (300) |
+| `회의록 ({n}건[ · {since} 이후])` | since-mode when `act.workRefreshedAt` exists (`workSinceOf(state, since).recent`), else the newest meeting-kind minutes, through `meetingPacketLines` | `QUIZ_PACKET_MEETINGS` (5) |
+| `이전 회의록의 새 기록` (since-mode only) | the older meetings' post-stamp progress lines, newest first | `QUIZ_PACKET_OLDER_PROGRESS` (20) |
+| `교육` | the newest training records as content, through `meetingPacketLines` (`배운 것`/`핵심 정리`/`기억할 점`) | `QUIZ_PACKET_TRAINING` (3) |
+| `문서 ([{since} 이후])` | since-mode post-stamp documents, else the newest by `docOrder`; title and a clipped summary, never `source` | `QUIZ_PACKET_DOCS` (5) |
+
+Knobs are shared with the work packet through `minutesReductions(k)` (lifted to module level, 2026-09-24 — a `finish` duplicate finding merged the two packets' first four reductions; the work packet's own output stays byte-identical). Head (`QUIZ_PACKET_HEAD`, verbatim, a role line and four numbered rules): facts and numbers only, `해요체`; exactly `QUIZ_ASK` (7) questions, four choices each, one answer, `basis` a literal line from the data; no trap questions, no guesswork, nothing outside the data, and no evaluating or changing a score/grade/payout/difficulty; one JSON block only, `{"quiz":[{"q":"...","choices":["...","...","...","..."],"answer":0,"basis":"..."}]}`.
+
+**Trim order**, rebuilding and re-measuring after each step: the four `minutesReductions` steps shared with the work packet (summary clip 10,000 → `WORK_PACKET_SUMMARY_TRIM` (1,500); meetings → 2, one at a time; follow-ups → 5; summary → 500 with progress → 1), then schedule → 0; documents → 0; the decisions clip 300 → 100; the older-meeting section → 0; training → 0; work → 0; meetings 2 → 0. The title, the head and the preparation section are never dropped; a dropped section keeps its heading with `- 없음`.
+
+Measured: the demo packet is **2,761 chars**, no reduction fired; a heavy save shaped like `flow11.js`'s fixture (30 meetings × 30 follow-ups, 3,000-char summaries, 100 progress entries, 20 documents) trims to **5,242 chars** (summary clip, then meetings 5 → 2 — three steps); a heavier save adding 2,000-char transcripts, a hidden meeting, training records, dated events and `source`-carrying documents on every record trims to **8,155 chars** through all eleven reduction steps in order (the older-meeting section is a no-op without a stamp).
+
+### The reply — `parseQuizReply(text)`
+
+Reads the reply through the same `replyJson`; only `data.quiz` — `tasks`, `work`, `checks`, `verdict` or any other key is ignored, exactly like the other five parsers ignore each other's key. An item is kept whole or dropped, never repaired: `q` a non-empty trimmed string (clipped `QUIZ_Q_MAX` 200); `choices` exactly 4 non-empty trimmed strings, no two equal, each clipped `QUIZ_CHOICE_MAX` (80); `answer` an integer 0–3 (`Number.isInteger`; a numeric string like `"1"` is **not** coerced); `basis` optional, clipped `QUIZ_BASIS_MAX` (200), else `""`. The first `QUIZ_MAX` (10) valid items are kept in reply order; fewer than `QUIZ_MIN` (5) valid → `items: []`, `refused: "퀴즈 문제가 5개 미만이에요 — 답변을 다시 받아요"`. Nothing here writes state, and the raw reply is never stored.
+
+### Local grading — `gradeQuiz(items, answers)` / `quizNeed(total)` / `shuffleQuiz(items, rand)`
+
+`quizNeed(total) = Math.ceil(GATE_PASS_RATIO × total)` (`GATE_PASS_RATIO` 0.8 — 7 → 6, 5 → 4, 6 → 5, 8 → 7, 10 → 8, the user's own pass threshold, decision 1, 2026-09-24). `gradeQuiz` marks an unanswered item (`answers[i] == null`) wrong and returns `{ total, score, need, passed }`; nothing here is remote — the score is computed on the device from the user's own picks. `shuffleQuiz(items, rand = Math.random)` reorders each item's four choices (Fisher–Yates) and remaps `answer` to the correct text's new index, for `같은 문제 다시 풀기` (the same-questions retry) — pure, `rand` injectable so smoke fixes the order. The parsed items are held in the root's own component state (`quizHeld`), never in `state`; a reload loses them. See [../product-specs/daily-gate.md](../product-specs/daily-gate.md) for the gate screen, the grading UI and the stamps `act.gate[date].quiz` records.
+
+### What the sixth packet never carries
+
+Never `profile.name`, `birth`, `email`, `phone`, a school or an employer name — no `## 이력` line at all, like the prep packet. Never a transcript, an event's `place` or `note`, a document's `source`. A meeting flagged `aiHidden` contributes its date and title only, in every section it could otherwise appear in. `tools/e2e/flow12.js` step 4 plants a sentinel on each of these fields and asserts every one absent from the built packet text, while the content the reader and the issue list state that day (a decision line, an event title, a document title, a training summary, a hidden meeting's date/title) is present.

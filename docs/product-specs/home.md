@@ -96,6 +96,13 @@ Opened by the CV's corner button. Title `설정`, a bottom sheet like every othe
   the always-shown fact caption naming the three facts, the on-device scope, the Android lock-screen note and the
   ≈ 12-hour periodic floor Chrome itself decides. Mechanics, the three facts and the service-worker handlers:
   [notifications.md](notifications.md).
+- `오늘의 관문` (2026-09-24, between `확인 알림` and `데이터`): `SectionLabel`, a `font-mono text-xs text-zinc-300`
+  line, `gateMonthLine(state, today)` — `이번 달 관문 통과 {n}일 · 미통과 {m}일 · 퀴즈 평균 {s}/{t}` or, with no
+  quiz entries this month, `… · 퀴즈 없음` — then a caption, `관문은 매일 첫 실행에 열려요. 끄는 설정은 없어요.`
+  No checkbox: unlike every other section here, there is no switch, by the user's own decision (decision 2,
+  2026-09-24) — the [daily gate](daily-gate.md) cannot be turned off from settings, and this sheet is itself
+  unreachable while the gate stands (`settings` is not in `GATE_MODAL_TYPES`), so this section can only ever be
+  read once the day's gate is already passed.
 - `데이터 — 백업 · 초기화`: the backup sentence, `백업 내보내기` → `exportBackup`, `백업 불러오기` → `askImport`, then `데이터 초기화` → `onReset`. No `<input type="file">` inside the modal — `askImport` drives the one hidden input mounted on `Shell` (R-14, [tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md)), so the modal closing mid-pick cannot take it down. The root wires `onReset={() => { setModal(null); resetAll(); }}` — `resetAll` never clears `modal` itself, so without the explicit close the sheet would reappear over the app after the next onboarding or demo entry. `resetAll` is otherwise byte-identical and still asks nothing before it runs ([TD-26](../exec-plans/tech-debt-tracker.md), unresolved).
 
 Backup and reset mechanics (file shape, validation, toasts): [install-and-backup.md](install-and-backup.md).
