@@ -2,11 +2,13 @@
 // place of every tab and sheet: no X, an inert backdrop, no key closes it; the reader and the issue list open above it
 // in gate-read mode (no route, one read-done button per screen that stamps a `HH:MM` time), `?open=issues` routes
 // into that read step, a same-day reload lands in the app once passed, a save re-dated to yesterday opens the gate
-// again, onboarding sees no gate, and the settings sheet states the month's counts. Phase 1 wrote steps 1–3 and 9–11;
-// Phase 2 inserts the quiz steps 4–8 between them. Runs after flow11 and before flow4, which replaces the save.
+// again, onboarding sees no gate, and the settings sheet states the month's counts. Steps 4–8 (Phase 2) run the quiz:
+// the sixth packet's content and privacy, a refused four-item reply, a 5/7 fail that clears both read stamps, the
+// same-questions retry after a re-read passing 6/7, a work item added inside the gate and the pass itself. Runs after
+// flow11 and before flow4, which replaces the save.
 // Written under the standing instruction that the suite is not run: every step parses, none has been executed.
 module.exports = async (h) => {
-  const { step, clickInModalExact, overlayText, openSettings, hasText, sleep, page } = h;
+  const { step, clickInModalExact, overlayText, openSettings, hasText, sleep, page, setValue, modalError, typeInto } = h;
   const KEY = "liferpg-state-v1";
   // Dates come from the page with the app's own local-date logic (never toISOString), noon-anchored.
   const dstrIn = (delta) => page.evaluate((d) => {
@@ -44,6 +46,45 @@ module.exports = async (h) => {
     return true;
   });
   const HHMM = /^\d\d:\d\d$/;
+  // Seven valid quiz items with known correct texts: question k's right choice is `보기 k-{answer+1}`
+  const QUIZ = Array.from({ length: 7 }, (_, i) => ({
+    q: `E2E 관문 문제 ${i + 1}`, choices: [1, 2, 3, 4].map((n) => `보기 ${i + 1}-${n}`), answer: i % 4, basis: `근거 ${i + 1}`,
+  }));
+  const rightOf = (i) => QUIZ[i].choices[QUIZ[i].answer];
+  const wrongOf = (i) => QUIZ[i].choices[(QUIZ[i].answer + 1) % 4];
+  // The radio of question `k` (1-based) whose label reads `text`, on the sheet above the gate
+  const pick = async (k, text) => {
+    const ok = await page.evaluate((n, t) => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const inp = [...ov.querySelectorAll(`input[name="quiz-${n}"]`)].find((el) => (el.closest("label")?.innerText || "").trim() === t);
+      if (!inp) return false;
+      inp.scrollIntoView({ block: "center" });
+      inp.click();
+      return true;
+    }, k, text);
+    if (!ok) throw new Error(`no choice "${text}" on question ${k}`);
+  };
+  const choicesOf = (k) => page.evaluate((n) => [...[...document.querySelectorAll(".fixed.inset-0")].pop().querySelectorAll(`input[name="quiz-${n}"]`)]
+    .map((el) => (el.closest("label")?.innerText || "").trim()), k);
+  // A gate button that opens a sheet above the gate: tap, then the last overlay must start with `prefix`
+  const openAbove = async (label, prefix) => {
+    await clickInModalExact(label);
+    await sleep(500);
+    const ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith(prefix)) throw new Error(`"${label}" did not open "${prefix}" above the gate: ` + brief(ovs));
+    return ovs[1];
+  };
+  // Both read screens to their end inside the gate: open, scroll the sentinel into view, the read-done button
+  const readBoth = async () => {
+    for (const label of ["오늘 읽을 것 열기 ›", "이슈 목록 열기 ›"]) {
+      await clickInModalExact(label);
+      await sleep(500);
+      await scrollToEnd();
+      await sleep(400);
+      await clickInModalExact("다 읽었어요");
+      await sleep(400);
+    }
+  };
   const saved = await readState();
   const boundary0 = JSON.stringify(h.recordBoundary(saved));
   const today = await dstrIn(0), yesterday = await dstrIn(-1);
@@ -64,6 +105,15 @@ module.exports = async (h) => {
       id: `gate-m${i}`, projectId: "gate-p", date: days[i % 7], title: `E2E 관문 회의 ${i + 1}`, attendees: "", summary: `관문 회의 ${i + 1} 요약`,
       decisions, actions: "", createdAt: days[i % 7], taskIds: [], progress: [], followUps: [], aiHidden: false,
     }))];
+    // Step 4's sentinels: a meeting with a transcript, a hidden meeting, a training record, an event with a place and a
+    // note, a document with a source — the packet must carry the content lines and none of the sentinels
+    const rec = { projectId: "gate-p", date: today, attendees: "", actions: "", createdAt: today, taskIds: [], progress: [], followUps: [], aiHidden: false };
+    s.meetings.push(
+      { ...rec, id: "gate-transcript", title: "E2E 관문 녹취 회의", summary: "관문 녹취 회의 요약", decisions: "DECISION-E2E-LINE", transcript: "TRANSCRIPT-SENTINEL" },
+      { ...rec, id: "gate-hidden", title: "E2E 관문 비공개 회의", summary: "HIDDEN-SENTINEL", decisions: "HIDDEN-SENTINEL", aiHidden: true },
+      { ...rec, id: "gate-training", kind: "training", title: "E2E 관문 교육", summary: "TRAINING-E2E-LINE", decisions: "" });
+    s.events = [...(s.events || []), { id: "gate-ev", title: "E2E 관문 일정", kind: "appt", date: await dstrIn(3), time: "10:00", place: "PLACE-SENTINEL", note: "NOTE-SENTINEL", createdAt: today, track: "biz" }];
+    s.documents = [...(s.documents || []), { id: "gate-doc", projectId: "gate-p", title: "E2E 관문 문서", source: "SOURCE-SENTINEL", summary: "관문 문서 요약", addedAt: today, track: "biz" }];
     await writeState(s);
     await h.reload({}, { keepModal: true, keepGate: true });
     await sleep(600);
@@ -154,10 +204,119 @@ module.exports = async (h) => {
     await expectButton("통과", true, true);
   });
 
+  await step("the quiz packet carries the read content and no identifier, transcript, place, note or source", async () => {
+    await openAbove("퀴즈 요청문 만들기 ›", "오늘의 퀴즈 — 요청문");
+    const packet = await page.evaluate(() => [...document.querySelectorAll(".fixed.inset-0")].pop().querySelector("textarea")?.value || "");
+    if (!packet.startsWith(`[인생 관리 — 오늘의 관문 퀴즈 요청 ${today}]`)) throw new Error("the quiz packet title: " + packet.slice(0, 80));
+    for (const t of ['"quiz"', "정확히 7개", "DECISION-E2E-LINE", "E2E 관문 일정", "E2E 관문 문서", "TRAINING-E2E-LINE", "내용 비공개"]) {
+      if (!packet.includes(t)) throw new Error(`the quiz packet does not carry "${t}"`);
+    }
+    for (const t of ["TRANSCRIPT-SENTINEL", "HIDDEN-SENTINEL", "PLACE-SENTINEL", "NOTE-SENTINEL", "SOURCE-SENTINEL", "E2E테스터", "E2E대학교", "E2E전장", "## 이력"]) {
+      if (packet.includes(t)) throw new Error(`the quiz packet carries "${t}"`);
+    }
+    if (packet.length > 12000) throw new Error(`the quiz packet is ${packet.length} chars, over 12000`);
+  });
+
+  await step("a reply with four valid items is refused and its work key is ignored", async () => {
+    await clickInModalExact("AI 답변 붙여넣기 ›");
+    await sleep(300);
+    const four = { quiz: [...QUIZ.slice(0, 4), { q: "bad", choices: ["a", "b", "c"], answer: 0 }], work: [{ title: "E2E 관문 업무" }] };
+    await setValue("textarea", JSON.stringify(four));
+    await clickInModalExact("답변 확인");
+    await sleep(300);
+    const err = await modalError();
+    if (err !== "퀴즈 문제가 5개 미만이에요 — 답변을 다시 받아요") throw new Error("the refusal text: " + JSON.stringify(err));
+    const ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith("AI 답변 붙여넣기")) throw new Error("the refused reply left the paste view: " + brief(ovs));
+    const st = await readState();
+    if ((st.work || []).some((w) => w.title === "E2E 관문 업무")) throw new Error("the reply's work key registered a work item");
+    if (st.act.gate?.[today]?.quiz) throw new Error("a refused reply stamped a quiz: " + JSON.stringify(st.act.gate[today].quiz));
+  });
+
+  await step("a pasted reply with 7 questions grades locally: 5/7 fails, clears both read stamps and states the numbers", async () => {
+    await setValue("textarea", "```json\n" + JSON.stringify({ quiz: QUIZ }) + "\n```");
+    await clickInModalExact("답변 확인");
+    await sleep(400);
+    let ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith("오늘의 퀴즈 — 7문제")) throw new Error("the solve view: " + brief(ovs));
+    if (!ovs[1].includes("기준 6개 이상 정답") || !ovs[1].includes("0/7 답함")) throw new Error("the solve view's lines: " + ovs[1].slice(0, 200));
+    await expectButton("제출", true);
+    // Five right and two wrong (questions 6 and 7), by choice text
+    for (let i = 0; i < 7; i++) await pick(i + 1, i < 5 ? rightOf(i) : wrongOf(i));
+    await sleep(200);
+    if (!(await overlayText()).includes("7/7 답함")) throw new Error("not every answer registered: " + (await overlayText()).slice(-120));
+    await expectButton("제출", false);
+    await clickInModalExact("제출");
+    await sleep(500);
+    ovs = await overlays();
+    const res = ovs[1] || "";
+    if (ovs.length !== 2 || !res.startsWith("퀴즈 결과") || !res.includes("5/7 · 미통과 (기준 6개)")) throw new Error("the result view: " + res.slice(0, 200));
+    if ((res.match(/정답: /g) || []).length !== 2 || (res.match(/근거: /g) || []).length !== 2) throw new Error("the two wrong items are not each stated with their answer and basis: " + res.slice(0, 400));
+    if (!res.includes("읽기 완료 표시가 지워졌어요 — 두 화면을 다시 끝까지 읽어야 해요.")) throw new Error("the cleared-stamps line is missing: " + res.slice(-200));
+    const st = await readState();
+    const e = st.act.gate?.[today] || {};
+    const q = e.quiz || {};
+    if (!(q.total === 7 && q.score === 5 && q.passed === false && q.attempts === 1 && HHMM.test(q.at || ""))) throw new Error("the quiz stamp after the fail: " + JSON.stringify(e));
+    if (e.readReaderAt || e.readIssuesAt) throw new Error("the fail did not clear the read stamps: " + JSON.stringify(e));
+    if (st.act.briefingSeen !== today) throw new Error("the fail changed the seen-marker: " + st.act.briefingSeen);
+    await clickInModalExact("관문으로 ›");
+    await sleep(400);
+    const gate = await gateText();
+    if ((await overlays()).length !== 1 || !gate.includes("1 읽기 — 오늘 읽을 것 미완료 · 이슈 목록 미완료") || !gate.includes("2 퀴즈 — 미통과 5/7 · 시도 1")) throw new Error("the gate after the fail: " + gate.slice(0, 300));
+    await expectButton("같은 문제 다시 풀기", true, true);
+    await expectButton("새 퀴즈 요청 ›", true, true);
+    if ((await buttonOf("퀴즈 요청문 만들기 ›", true)).found) throw new Error("the first-quiz button is still offered after a fail");
+  });
+
+  await step("after re-reading both screens, the same-questions retry reshuffles the choices and 6/7 passes", async () => {
+    await readBoth();
+    await expectButton("같은 문제 다시 풀기", false, true);
+    await expectButton("새 퀴즈 요청 ›", false, true);
+    await openAbove("같은 문제 다시 풀기", "오늘의 퀴즈 — 7문제");
+    // Question 1's four choice texts are the pasted set; a shuffle may repeat the order, so the order is not asserted
+    const first = await choicesOf(1);
+    if (JSON.stringify([...first].sort()) !== JSON.stringify([...QUIZ[0].choices].sort())) throw new Error("question 1's choices after the reshuffle: " + JSON.stringify(first));
+    for (let i = 0; i < 7; i++) await pick(i + 1, i < 6 ? rightOf(i) : wrongOf(i));
+    await clickInModalExact("제출");
+    await sleep(500);
+    const res = (await overlays())[1] || "";
+    if (!res.includes("6/7 · 통과 (기준 6개)") || res.includes("읽기 완료 표시가 지워졌어요")) throw new Error("the result view after the pass: " + res.slice(0, 200));
+    const e = (await readState()).act.gate?.[today] || {};
+    const q = e.quiz || {};
+    if (!(q.total === 7 && q.score === 6 && q.passed === true && q.attempts === 2)) throw new Error("the quiz stamp after the pass: " + JSON.stringify(e));
+    if (!HHMM.test(e.readReaderAt || "") || !HHMM.test(e.readIssuesAt || "")) throw new Error("the pass touched the read stamps: " + JSON.stringify(e));
+    await clickInModalExact("관문으로 ›");
+    await sleep(400);
+    const gate = await gateText();
+    if (!gate.includes("2 퀴즈 — 통과 6/7 · 시도 2")) throw new Error("the gate after the pass: " + gate.slice(0, 300));
+    await expectButton("AI로 만들기 ›", false, true);
+    await expectButton("업무 추가 ›", false, true);
+    await expectButton("통과", true, true);
+  });
+
+  await step("the add-work button creates today's item and completes step 3; the pass button closes the gate, stamps passedAt and the tab bar returns", async () => {
+    await openAbove("업무 추가 ›", "업무 추가");
+    await typeInto("업무 제목", "E2E 관문 업무");
+    await clickInModalExact("등록");
+    await sleep(600);
+    const gate = await gateText();
+    if ((await overlays()).length !== 1 || !gate.includes("3 업무 갱신 — 오늘 만든 업무 1건")) throw new Error("the gate after the work item: " + gate.slice(0, 300));
+    await expectButton("통과", false, true);
+    await clickInModalExact("통과");
+    await sleep(600);
+    const open = await page.evaluate(() => ({ overlays: document.querySelectorAll(".fixed.inset-0").length, tabs: document.querySelectorAll("nav button").length }));
+    if (open.overlays !== 0 || open.tabs !== 7) throw new Error("after the pass: " + JSON.stringify(open));
+    if (!(await hasText("오늘의 관문 통과 · 퀴즈 6/7"))) throw new Error("no pass toast with the quiz score");
+    const st = await readState();
+    const e = st.act.gate?.[today] || {};
+    if (!HHMM.test(e.passedAt || "")) throw new Error("passedAt after the pass: " + JSON.stringify(e));
+    const w = (st.work || []).find((x) => x.title === "E2E 관문 업무");
+    if (!w || w.createdAt !== today || w.source !== "manual") throw new Error("the work item created inside the gate: " + JSON.stringify(w));
+    if (JSON.stringify(h.recordBoundary(st)) !== boundary0) throw new Error(`the quiz and the pass moved a record: ${boundary0} -> ${JSON.stringify(h.recordBoundary(st))}`);
+  });
+
   await step("a reload the same day opens nothing; a save re-dated to yesterday opens the gate again, and the reader does not open over it", async () => {
-    // Phase 1 has no quiz sheet, so the passed state is reached through the harness stamp; Phase 2's step 8 passes the
-    // gate through the app itself and this step then follows it.
-    if (!(await h.plantGate())) throw new Error("plantGate found no save with a profile");
+    // Step 8 passed the gate through the app itself (a real `passedAt`), so nothing is planted here
     await h.reload({}, { keepModal: true, keepGate: true });
     await sleep(600);
     const open = await page.evaluate(() => ({ overlays: document.querySelectorAll(".fixed.inset-0").length, tabs: document.querySelectorAll("nav button").length }));
@@ -191,7 +350,7 @@ module.exports = async (h) => {
     const e = (await readState()).act.gate?.[today] || {};
     if (e.readIssuesAt) throw new Error("the header X stamped readIssuesAt: " + JSON.stringify(e));
     // The settings line, computed here from the save by the app's rule: this month's entries, passed = with
-    // `passedAt`, the quiz averages to one decimal or the no-quiz wording (the E2E save carries no quiz in Phase 1).
+    // `passedAt`, the quiz averages to one decimal or the no-quiz wording (yesterday's re-dated entry carries step 7's 6/7).
     await h.plantGate();
     await h.reload();
     await openSettings();

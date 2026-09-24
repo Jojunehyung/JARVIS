@@ -3512,6 +3512,15 @@ const workPacketHead = (since) => (since
 const oneLineText = (t, n) => { const s = String(t || "").trim().replace(/\s*\n+\s*/g, " / "); return s.length > n ? `${s.slice(0, n)}…` : s; };
 // One packet section: the heading and its lines, or `- 없음` when there is nothing to state. Both packets use it.
 const packetSection = (title, lines) => (lines.length ? [`## ${title}`, ...lines] : [`## ${title}`, "- 없음"]);
+// The minutes reductions the work packet and the quiz packet run first, in this order: the summary clip →
+// WORK_PACKET_SUMMARY_TRIM, meetings → 2 one at a time, follow-ups → 5 per meeting, then the summary → 500 with
+// progress → 1. Each answers true when it tightened something and false once it has nothing left to give.
+const minutesReductions = (k) => [
+  () => k.summary > WORK_PACKET_SUMMARY_TRIM && (k.summary = WORK_PACKET_SUMMARY_TRIM, true),
+  () => k.meetings > 2 && (k.meetings -= 1, true),
+  () => k.followUps > 5 && (k.followUps = 5, true),
+  () => (k.summary > 500 || k.progress > 1) && (k.summary = 500, k.progress = 1, true),
+];
 // Contract facts only, read from the same `bizSummary` the tab and the briefing state. Neither parser reads a business
 // key, so a pasted reply can never create a deal, a rate or a portfolio entry (rule 7 amendment). Both packets use it.
 // v28: only deals on a packet track are stated, and the summary line is computed over those deals alone, so the
@@ -3767,12 +3776,9 @@ const buildWorkPacket = (state, today, { since = null } = {}) => {
       ...packetSection(`문서 (${since} 이후)`, docLines.slice(0, k.docs).flat())] : []),
     ...packetSection("업무 기록 (이월·어제·오늘)", recordLines.slice(0, k.records)),
   ].join("\n");
-  // Each reduction answers true when it tightened something and false once it has nothing left to give.
+  // The shared minutes reductions first, then this packet's own; each answers true when it tightened something.
   const reductions = [
-    () => k.summary > WORK_PACKET_SUMMARY_TRIM && (k.summary = WORK_PACKET_SUMMARY_TRIM, true),
-    () => k.meetings > 2 && (k.meetings -= 1, true),
-    () => k.followUps > 5 && (k.followUps = 5, true),
-    () => (k.summary > 500 || k.progress > 1) && (k.summary = 500, k.progress = 1, true),
+    ...minutesReductions(k),
     () => k.events > 0 && (k.events = 0, true),
     () => k.biz > 1 && (k.biz = 1, true),
     () => k.tasks > 0 && (k.tasks = 0, true),
@@ -3941,6 +3947,150 @@ const parsePrepReply = (text, ev) => {
   });
   return { raw, note: typeof data?.note === "string" ? data.note.slice(0, 200) : "", proposals };
 };
+
+// The quiz packet (`오늘의 관문 퀴즈`, rule 7 amendment 2026-09-24, the sixth packet): what it carries and how much.
+// Plain literals, so smoke-logic can lift them. The summary, progress, follow-up, note and document clips reuse the
+// WORK_PACKET_* values. A reply's items are validated by `parseQuizReply` against the QUIZ_* caps and graded by
+// `gradeQuiz` — locally, never by the reply.
+const QUIZ_ASK = 7;                     // questions the head asks for
+const QUIZ_MIN = 5;                     // fewer valid items → the reply is refused
+const QUIZ_MAX = 10;                    // valid items kept, in reply order
+const QUIZ_Q_MAX = 200;                 // chars of a question
+const QUIZ_CHOICE_MAX = 80;             // chars of a choice
+const QUIZ_BASIS_MAX = 200;             // chars of a basis line
+const QUIZ_PACKET_MAX = 12000;          // the quiz packet's own cap
+const QUIZ_PACKET_MEETINGS = 5;         // newest meeting-kind minutes (since-mode: of the post-stamp ones)
+const QUIZ_PACKET_TRAINING = 3;         // newest training records, as content
+const QUIZ_PACKET_DOCS = 5;             // newest documents (since-mode: of the post-stamp ones)
+const QUIZ_PACKET_EVENT_DAYS = 14;      // the schedule window
+const QUIZ_PACKET_EVENTS = 30;          // schedule rows
+const QUIZ_PACKET_WORK = 30;            // open work rows, carried first
+const QUIZ_PACKET_DECISIONS = 7;        // days of decisions, today included
+const QUIZ_PACKET_CLIP = 300;           // chars of a decisions line in the preparation and decisions sections
+const QUIZ_PACKET_OLDER_PROGRESS = 20;  // post-stamp progress lines of older meetings (since-mode)
+const QUIZ_PACKET_HEAD = [
+  "역할: 아래 데이터로 이 사용자가 오늘 읽은 내용을 확인하는 4지선다 문제를 내는 출제자예요. 아래 데이터만 근거로 해요.",
+  "규칙: 1) 사실과 숫자만 써요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  `2) 문제는 정확히 ${QUIZ_ASK}개, 문제마다 보기 4개, 정답은 하나예요. 정답의 근거는 아래 데이터의 한 줄이어야 하고, basis에 그 줄을 그대로 적어요.`,
+  "3) 함정 문제, 추측이 필요한 문제, 아래 데이터에 없는 내용은 내지 않아요. 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
+  "4) 답변 형식: 아래 JSON 블록 1개만 써요. 다른 설명은 쓰지 않아요.",
+  "```json",
+  '{"quiz":[{"q":"...","choices":["...","...","...","..."],"answer":0,"basis":"..."}]}',
+  "```",
+];
+
+/* The quiz packet for the daily gate (`오늘의 관문`): the content the daily reader and the issue list stated today, on
+   the packet tracks, for an external chat to turn into four-choice questions the app grades locally (`gradeQuiz`).
+   Sections, in order: today's and tomorrow's meeting preparation (`meetingPrepOf` — the event, its open checks, the
+   last minutes' decisions), the open work items (`workOn`, carried first), the two-week schedule, the last
+   QUIZ_PACKET_DECISIONS days' decisions (any kind, newest first), the minutes — since-mode when `act.workRefreshedAt`
+   exists (`workSinceOf`'s post-stamp meetings, then the older meetings' post-stamp progress), else the newest
+   meeting-kind minutes — the newest training records as content, and the documents (post-stamp, else the newest).
+   A meeting flagged `aiHidden` contributes its date and title only, in every section. The prep packet's privacy set:
+   no `## 이력` line and no profile field, no transcript, no event place or note, no document `source`. When the text
+   exceeds QUIZ_PACKET_MAX the reductions run one step at a time, rebuilding after each: the summary clip
+   10,000 → 1,500, minutes → 2 (one at a time), follow-ups 30 → 5, the summary → 500 and progress 5 → 1, the
+   schedule → 0, documents → 0, the decisions clip 300 → 100, the older-meeting section → 0, training → 0, work → 0,
+   minutes 2 → 0. The title, the head and the preparation section are never dropped; a dropped section keeps its
+   heading with `- 없음`. Derived on demand, never stored (rule 9). */
+const buildQuizPacket = (state, today) => {
+  const tracks = packetTracks(state);
+  const projectName = (id) => (state.meetingProjects || []).find((p) => p.id === id)?.name || "프로젝트 없음";
+  const since = state.act?.workRefreshedAt || null;
+  const sinceSel = since ? workSinceOf(state, since) : null;
+  // 1) the preparation rows the reader's `회의 준비` section states, on packet-track events and projects
+  const prepRows = meetingPrepOf(state, today).filter((r) => tracks.includes(trackOf(r.ev)) && tracks.includes(trackOf(r.project)));
+  // 2) today's open work, carried items first (`workOn`)
+  const workLines = workOn(state, today, today).filter((w) => !w.done && tracks.includes(trackOf(w)))
+    .map((w) => `- ${w.date < today ? `이월 ${daysBetween(w.date, today)}일` : "오늘"} · ${w.title}${w.note ? ` · 메모: ${oneLineText(w.note, WORK_PACKET_NOTE)}` : ""}`);
+  // 3) the schedule — never a place or a note
+  const eventLines = upcomingEvents(state, today, QUIZ_PACKET_EVENT_DAYS).filter((o) => tracks.includes(trackOf(o.ev)))
+    .map(({ ev, date }) => `- ${date} ${ev.time || "시간 미정"} · ${EVENT_KIND_LABEL[ev.kind]} · ${ev.title}`);
+  // 4) the decisions of the window, any kind, newest first
+  const floor = shiftDay(today, 1 - QUIZ_PACKET_DECISIONS);
+  const decided = (state.meetings || [])
+    .filter((m) => m.date >= floor && m.date <= today && String(m.decisions || "").trim() && tracks.includes(meetingTrack(state, m))).sort(meetingOrder);
+  // 5) the minutes: the post-stamp meetings when stamped (training records already left out), else the newest meeting-kind ones
+  const meetings = (sinceSel ? sinceSel.recent
+    : (state.meetings || []).filter((m) => !isTraining(m) && tracks.includes(meetingTrack(state, m))).sort(meetingOrder)).slice(0, QUIZ_PACKET_MEETINGS);
+  const olderLines = sinceSel ? sinceSel.older.flatMap(({ m, progress }) => progress.map((e) => ({ m, e })))
+    .sort((a, b) => b.e.date.localeCompare(a.e.date)).slice(0, QUIZ_PACKET_OLDER_PROGRESS)
+    .map(({ m, e }) => `- ${m.title} · 진행 ${e.date}: ${oneLineText(e.text, WORK_PACKET_CLIP)}`) : [];
+  // 6) training records as content — `workSinceOf` leaves them out by design; the issue list shows them, so the quiz may ask
+  const training = (state.meetings || []).filter((m) => isTraining(m) && tracks.includes(meetingTrack(state, m))).sort(meetingOrder);
+  // 7) the documents — title and a clipped summary, never `source`
+  const docs = sinceSel ? sinceSel.docs : (state.documents || []).filter((d) => tracks.includes(trackOf(d))).sort(docOrder);
+  const docLines = docs.map((d) => [`- ${d.addedAt} [${projectName(d.projectId)}] ${d.title}`, `  요약: ${oneLineText(d.summary, WORK_PACKET_DOC_CLIP)}`]);
+
+  // The knobs the reductions turn; `build` reads them fresh each time.
+  const k = { meetings: meetings.length, summary: WORK_PACKET_SUMMARY, progress: WORK_PACKET_PROGRESS, followUps: WORK_PACKET_FOLLOWUPS,
+    clip: QUIZ_PACKET_CLIP, events: QUIZ_PACKET_EVENTS, work: QUIZ_PACKET_WORK, docs: QUIZ_PACKET_DOCS, training: QUIZ_PACKET_TRAINING, older: 1 };
+  // A training record standing in as the last minutes lends its `핵심 정리` text under the same `결정:` label — content is content.
+  const prepLines = () => prepRows.flatMap(({ ev, date, project, last }) => {
+    const checks = ev.checks || [];
+    const open = checks.filter((c) => !c.done);
+    return [
+      `- ${date === today ? "오늘" : "내일"} ${ev.time || "시간 미정"} · ${ev.title} · ${project.name}`,
+      ...(checks.length ? [`  확인할 것 ${open.length}/${checks.length}`, ...open.map((c) => `  - ${c.text}`)] : []),
+      !last ? "  이전 회의록 없음" : last.aiHidden ? "  내용 비공개 (AI에 보내지 않기)" : `  결정: ${oneLineText(last.decisions, k.clip) || "없음"}`,
+    ];
+  });
+  const decisionLines = () => decided.flatMap((m) => [`- ${m.date} ${kindPrefix(m)}${m.title}`,
+    m.aiHidden ? "  내용 비공개 (AI에 보내지 않기)" : `  ${meetingLabels(m).packetDecisions}: ${oneLineText(m.decisions, k.clip)}`]);
+  const build = () => [
+    `[인생 관리 — 오늘의 관문 퀴즈 요청 ${today}]`, ...QUIZ_PACKET_HEAD, "",
+    ...packetSection("오늘·내일 회의 준비", prepLines()),
+    ...packetSection("업무 (이월·오늘)", workLines.slice(0, k.work)),
+    ...packetSection(`다가오는 일정 (${QUIZ_PACKET_EVENT_DAYS}일)`, eventLines.slice(0, k.events)),
+    ...packetSection(`최근 ${QUIZ_PACKET_DECISIONS}일 결정 사항`, decisionLines()),
+    ...packetSection(sinceSel ? `회의록 (${k.meetings}건 · ${since} 이후)` : `회의록 (${k.meetings}건)`, meetingPacketLines(state, meetings.slice(0, k.meetings), today, k)),
+    ...(sinceSel ? packetSection("이전 회의록의 새 기록", k.older ? olderLines : []) : []),
+    ...packetSection("교육", meetingPacketLines(state, training.slice(0, k.training), today, k)),
+    ...packetSection(sinceSel ? `문서 (${since} 이후)` : "문서", docLines.slice(0, k.docs).flat()),
+  ].join("\n");
+  // The shared minutes reductions first, then this packet's own; each answers true when it tightened something.
+  const reductions = [
+    ...minutesReductions(k),
+    () => k.events > 0 && (k.events = 0, true),
+    () => k.docs > 0 && (k.docs = 0, true),
+    () => k.clip > 100 && (k.clip = 100, true),
+    () => k.older > 0 && (k.older = 0, true),
+    () => k.training > 0 && (k.training = 0, true),
+    () => k.work > 0 && (k.work = 0, true),
+    () => k.meetings > 0 && (k.meetings -= 1, true),
+  ];
+  let out = build();
+  for (const reduce of reductions) while (out.length > QUIZ_PACKET_MAX && reduce()) out = build();
+  return out;
+};
+
+// Reads the JSON block a quiz reply appends — `data.quiz` only; `tasks`, `work`, `checks`, `verdict` or any other key
+// is ignored (rule 7 amendment, the sixth packet). An item is kept whole or dropped, never repaired: a question, exactly
+// four distinct non-empty choices, an integer answer index 0–3 (a numeric string is not coerced) and an optional basis,
+// each clipped at its QUIZ_* cap; the first QUIZ_MAX valid items stay in reply order, and fewer than QUIZ_MIN refuses
+// the reply. Nothing here writes state, and the raw reply is never stored.
+const parseQuizReply = (text) => {
+  const raw = String(text || "");
+  const data = replyJson(raw);
+  const items = (Array.isArray(data?.quiz) ? data.quiz : []).flatMap((t) => {
+    const q = typeof t?.q === "string" ? t.q.trim().slice(0, QUIZ_Q_MAX) : "";
+    const choices = Array.isArray(t?.choices) && t.choices.length === 4 && t.choices.every((c) => typeof c === "string" && c.trim())
+      ? t.choices.map((c) => c.trim().slice(0, QUIZ_CHOICE_MAX)) : [];
+    const answer = Number.isInteger(t?.answer) && t.answer >= 0 && t.answer <= 3 ? t.answer : null;
+    if (!q || choices.length !== 4 || new Set(choices).size !== 4 || answer === null) return [];
+    return [{ q, choices, answer, basis: typeof t?.basis === "string" ? t.basis.trim().slice(0, QUIZ_BASIS_MAX) : "" }];
+  }).slice(0, QUIZ_MAX);
+  return items.length < QUIZ_MIN
+    ? { raw, items: [], refused: `퀴즈 문제가 ${QUIZ_MIN}개 미만이에요 — 답변을 다시 받아요` }
+    : { raw, items, refused: null };
+};
+// A fresh order of every item's choices (Fisher–Yates), the answer remapped to the correct text's new index — for
+// `같은 문제 다시 풀기`. Pure; `rand` is injectable so smoke-logic can fix the order.
+const shuffleQuiz = (items, rand = Math.random) => items.map((it) => {
+  const order = it.choices.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  return { ...it, choices: order.map((i) => it.choices[i]), answer: order.indexOf(it.answer) };
+});
 
 /* ── Weekly review facts and the `주간 회고` packet (v28, the fourth packet) ── */
 /* The weekly review's per-track facts, derived at render (rule 9). TD-71: no completion stamp exists for a follow-up or
@@ -6215,6 +6365,92 @@ function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onR
           className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs disabled:opacity-40">통과</button>
       </div>
     </div>
+  );
+}
+
+/* ── Quiz sheet — `오늘의 퀴즈` (rule 7 amendment 2026-09-24, the sixth packet): the quiz packet out, the reply's
+   `quiz` items back, every question on one screen, one submit, one local grading (`gradeQuiz`). The parsed items go
+   to the root's `quizHeld` through `onHold` (component state, never the save), and the score reaches the save through
+   `onResult` exactly once, at submit (`recordQuiz`). `retry` opens at the solve view with the held items' choices
+   reshuffled. The raw reply is never stored; the X and the backdrop return to the gate without a stamp. The result is
+   the numbers, the wrong items with their correct choice and basis, and on a fail the one line that both reads are
+   cleared — no praise, no icon, no colour for a pass (rule 13). ── */
+function QuizModal({ state, today, held, retry, onHold, onResult, onClose, onToast }) {
+  const again = !!(retry && held);
+  const [view, setView] = useState(again ? "solve" : "send");
+  const [items, setItems] = useState(() => (again ? shuffleQuiz(held.items) : []));
+  const [reply, setReply] = useState("");
+  const [refused, setRefused] = useState("");
+  const [answers, setAnswers] = useState({});
+  const [result, setResult] = useState(null);
+  const taRef = useRef(null);
+  const packet = useMemo(() => buildQuizPacket(state, today), [state, today]);
+  const total = items.length, need = quizNeed(total);
+  const answered = items.filter((_, i) => answers[i] != null).length;
+  const check = () => {
+    const r = parseQuizReply(reply);
+    if (r.refused) { setRefused(r.refused); return; }
+    setRefused("");
+    onHold({ items: r.items });
+    setItems(r.items);
+    setAnswers({});
+    setView("solve");
+  };
+  const submit = () => {
+    const picks = items.map((_, i) => (answers[i] == null ? null : answers[i]));
+    const g = gradeQuiz(items, picks);
+    onResult({ total: g.total, score: g.score, passed: g.passed });
+    setResult({ ...g, picks });
+    setView("result");
+  };
+  const title = { send: "오늘의 퀴즈 — 요청문", paste: "AI 답변 붙여넣기", solve: `오늘의 퀴즈 — ${total}문제`, result: "퀴즈 결과" }[view];
+  return (
+    <Modal title={title} onClose={onClose}>
+      {view === "send" && (
+        <PacketSendPane packet={packet} taRef={taRef} onCopy={() => copyPacket(taRef, packet, onToast)} onPaste={() => setView("paste")}
+          caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 오늘 읽을 것과 이슈 목록에 실린 내용이 실려요 — 녹취록·이름·연락처는 실리지 않아요.${workInAiOf(state) ? "" : " 직장 트랙 기록은 실리지 않아요."}`} />
+      )}
+      {view === "paste" && (
+        <>
+          <ReplyPastePane reply={reply} setReply={setReply} onCheck={check} />
+          {refused && <p className="text-xs text-rose-400 mt-2">{refused}</p>}
+        </>
+      )}
+      {view === "solve" && (
+        <div className="space-y-3">
+          <p className="text-xs font-mono text-zinc-300">기준 {need}개 이상 정답</p>
+          {items.map((it, i) => (
+            <div key={i} className="bg-zinc-950 rounded-xl p-3 space-y-1.5">
+              <div className="text-sm font-semibold text-zinc-200 break-words">{i + 1}. {it.q}</div>
+              {it.choices.map((c, j) => (
+                <label key={j} className="flex items-start gap-2 text-sm text-zinc-300">
+                  <input type="radio" name={`quiz-${i + 1}`} checked={answers[i] === j} onChange={() => setAnswers((a) => ({ ...a, [i]: j }))} className="mt-1" />
+                  <span className="flex-1 min-w-0 break-words">{c}</span>
+                </label>
+              ))}
+            </div>
+          ))}
+          <p className="text-xs font-mono text-zinc-400">{answered}/{total} 답함</p>
+          <button onClick={submit} disabled={answered < total}
+            className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm disabled:opacity-40">제출</button>
+        </div>
+      )}
+      {view === "result" && result && (
+        <div className="space-y-3">
+          <p className="text-sm font-mono font-bold text-zinc-100">{result.score}/{result.total} · {result.passed ? "통과" : "미통과"} (기준 {result.need}개)</p>
+          {items.map((it, i) => (result.picks[i] === it.answer ? null : (
+            <div key={i} className="bg-zinc-950 rounded-xl p-3 space-y-1 text-xs">
+              <div className="text-sm font-semibold text-zinc-200 break-words">{i + 1}. {it.q}</div>
+              <div className="text-zinc-400 break-words">내 답: {it.choices[result.picks[i]]}</div>
+              <div className="text-zinc-300 break-words">정답: {it.choices[it.answer]}</div>
+              {it.basis && <div className="text-zinc-500 break-words">근거: {it.basis}</div>}
+            </div>
+          )))}
+          {!result.passed && <p className="text-xs text-zinc-400">읽기 완료 표시가 지워졌어요 — 두 화면을 다시 끝까지 읽어야 해요.</p>}
+          <button onClick={onClose} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm">관문으로 ›</button>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -12455,8 +12691,8 @@ export default function LifeManager() {
     if (which === "reader") markBriefingSeen();
     setModal(null);
   };
-  // A quiz submit (the sheet lands in Phase 2): the attempt is counted across pastes and retries; a fail clears both
-  // read stamps (user decision 1). The result view stays up — nothing closes here.
+  // A quiz submit (`QuizModal`'s `onResult`, once per submit): the attempt is counted across pastes and retries; a fail
+  // clears both read stamps (user decision 1). The result view stays up — nothing closes here.
   const recordQuiz = ({ total, score, passed }) => writeGate((e) => {
     e.quiz = { total, score, passed, attempts: (e.quiz?.attempts || 0) + 1, at: hhmm() };
     if (!passed) { delete e.readReaderAt; delete e.readIssuesAt; }
@@ -12874,6 +13110,11 @@ export default function LifeManager() {
           caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. 회의록 요약과 진행사항이 실려요 — 녹취록은 실리지 않아요. 보내지 않을 회의록은 회의록 수정에서 'AI에 보내지 않기'를 켜요.${workInAiOf(state) ? "" : " 직장 트랙 기록은 실리지 않아요."}`}
           importDate={today} importTrack={null} since={state.act?.workRefreshedAt || null} onClose={() => setModal(null)}
           onImport={(list, date) => importWork(list, date, { stamp: true })} onToast={(msg) => showToast({ msg })} />
+      )}
+      {/* The gate's quiz (rule 7 amendment 2026-09-24): the parsed items live in `quizHeld`, the score is stamped by `recordQuiz` */}
+      {modal?.type === "quiz" && (
+        <QuizModal state={state} today={today} held={quizHeld} retry={!!modal.retry} onHold={setQuizHeld} onResult={recordQuiz}
+          onClose={() => setModal(null)} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "reviewBridge" && (
         <WorkBridgeModal state={state} today={today} build={buildReviewPacket} title="주간 회고 — AI에게 묻기"

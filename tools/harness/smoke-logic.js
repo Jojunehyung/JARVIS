@@ -551,15 +551,16 @@ console.log("calendar file: 19 check groups");
 }
 
 // 9) the daily gate (2026-09-24) — the pass rule, local grading, the gate's standing and steps, and the settings month
-// line, all derived from `act.gate` stamps and `work[].createdAt` (rule 9). Phase 1 of the gate plan lifts the helpers
-// it landed; Phase 2 adds `parseQuizReply` and `shuffleQuiz` here.
+// line, all derived from `act.gate` stamps and `work[].createdAt` (rule 9), plus the quiz reply parser (`quiz` key only,
+// items kept whole or dropped, the refusal below QUIZ_MIN) and the reshuffle that keeps the correct text at the remapped answer.
 {
   let n = 0;
   const check = (cond, msg) => { n++; ok(cond, `daily gate: ${msg}`); };
   const GATE = new Function([
     ...["dstr", "shiftDay", "GATE_KEEP_DAYS", "GATE_PASS_RATIO", "GATE_MODAL_TYPES", "gateEntryOf", "gateRefreshedOf", "gateActiveOf",
-      "gateStepsOf", "quizNeed", "gradeQuiz", "gateMonthOf", "gateMonthLine"].map(lift),
-  ].join("\n") + "\nreturn { GATE_KEEP_DAYS, GATE_PASS_RATIO, GATE_MODAL_TYPES, gateEntryOf, gateRefreshedOf, gateActiveOf, gateStepsOf, quizNeed, gradeQuiz, gateMonthOf, gateMonthLine };")();
+      "gateStepsOf", "quizNeed", "gradeQuiz", "gateMonthOf", "gateMonthLine",
+      "QUIZ_MIN", "QUIZ_MAX", "QUIZ_Q_MAX", "QUIZ_CHOICE_MAX", "QUIZ_BASIS_MAX", "replyJson", "parseQuizReply", "shuffleQuiz"].map(lift),
+  ].join("\n") + "\nreturn { GATE_KEEP_DAYS, GATE_PASS_RATIO, GATE_MODAL_TYPES, gateEntryOf, gateRefreshedOf, gateActiveOf, gateStepsOf, quizNeed, gradeQuiz, gateMonthOf, gateMonthLine, QUIZ_MIN, QUIZ_MAX, QUIZ_Q_MAX, QUIZ_CHOICE_MAX, QUIZ_BASIS_MAX, parseQuizReply, shuffleQuiz };")();
   const today = "2026-09-24";
 
   // (a) the pass threshold: ceil(0.8 × total) — 5 → 4, 6 → 5, 7 → 6, 8 → 7, 10 → 8 (user decision 1)
@@ -615,6 +616,56 @@ console.log("calendar file: 19 check groups");
   check(GATE.gateMonthLine({ act: { gate: { "2026-09-20": { passedAt: "08:00" } } } }, today) === "이번 달 관문 통과 1일 · 미통과 0일 · 퀴즈 없음", "no quiz → 퀴즈 없음");
   check(GATE.gateMonthLine({ act: {} }, today) === "이번 달 관문 통과 0일 · 미통과 0일 · 퀴즈 없음", "no entry → zeros");
   check(GATE.gateMonthOf({ act: { gate: { "2026-09-01": { quiz: { total: 7, score: 6 } }, "2026-09-02": { quiz: { total: 7, score: 6 } }, "2026-09-03": { quiz: { total: 7, score: 5 } } } } }, today).quiz.score === 5.7, "the average is rounded to one decimal");
+
+  // (f) the reply parser: `quiz` only; an item is kept whole (four distinct non-empty choices, an integer answer 0–3) or
+  // dropped; caps; the first QUIZ_MAX in order; fewer than QUIZ_MIN valid → the exact refusal and no items
+  const item = (i, extra = {}) => ({ q: `문제 ${i}`, choices: [`a${i}`, `b${i}`, `c${i}`, `d${i}`], answer: i % 4, basis: `근거 ${i}`, ...extra });
+  const seven = Array.from({ length: 7 }, (_, i) => item(i));
+  const fenced = "분석 두 줄\n둘째 줄\n```json\n" + JSON.stringify({ quiz: seven, work: [{ title: "업무" }], tasks: [{ title: "실행" }], checks: [{ text: "확인" }], verdict: { summary: "x" } }) + "\n```";
+  const p7 = GATE.parseQuizReply(fenced);
+  check(GATE.QUIZ_MIN === 5 && GATE.QUIZ_MAX === 10, `QUIZ_MIN ${GATE.QUIZ_MIN} / QUIZ_MAX ${GATE.QUIZ_MAX}`);
+  check(p7.refused === null && p7.items.length === 7 && p7.items.every((it, i) => it.q === `문제 ${i}` && it.answer === i % 4 && it.basis === `근거 ${i}` && it.choices.join() === seven[i].choices.join()),
+    `a fenced reply with 7 valid items keeps 7 in order (${p7.items.length}, refused ${JSON.stringify(p7.refused)})`);
+  check(Object.keys(p7).join() === "raw,items,refused" && p7.raw === fenced, "the parser returns raw, items and refused only");
+  const bad = [
+    ["three choices", item(0, { choices: ["a", "b", "c"] })],
+    ["five choices", item(1, { choices: ["a", "b", "c", "d", "e"] })],
+    ["an empty choice", item(2, { choices: ["a", " ", "c", "d"] })],
+    ["two equal choices", item(3, { choices: ["a", "b", "a ", "d"] })],
+    ["answer 4", item(0, { answer: 4 })],
+    ["answer -1", item(0, { answer: -1 })],
+    ["a numeric-string answer", item(1, { answer: "1" })],
+    ["a missing q", { choices: ["a", "b", "c", "d"], answer: 0 }],
+    ["a non-string choice", item(2, { choices: ["a", 2, "c", "d"] })],
+  ];
+  for (const [name, it] of bad) {
+    const r = GATE.parseQuizReply(JSON.stringify({ quiz: [...seven, it] }));
+    check(r.items.length === 7, `an item with ${name} is dropped, not repaired (${r.items.length} kept)`);
+  }
+  check(GATE.parseQuizReply(JSON.stringify({ quiz: [...seven.slice(0, 4), ...bad.map(([, it]) => it)] })).refused !== null, "invalid items do not count toward the minimum");
+  const capped = GATE.parseQuizReply(JSON.stringify({ quiz: [...seven.slice(0, 6), item(6, { q: "q".repeat(300), choices: ["x".repeat(100), "b", "c", "d"], basis: "b".repeat(300) })] })).items[6];
+  check(capped.q.length === GATE.QUIZ_Q_MAX && capped.choices[0].length === GATE.QUIZ_CHOICE_MAX && capped.basis.length === GATE.QUIZ_BASIS_MAX,
+    `clipped at ${GATE.QUIZ_Q_MAX}/${GATE.QUIZ_CHOICE_MAX}/${GATE.QUIZ_BASIS_MAX}: ${capped.q.length}/${capped.choices[0].length}/${capped.basis.length}`);
+  check(GATE.parseQuizReply(JSON.stringify({ quiz: [item(0, { basis: 5 }), ...seven.slice(1)] })).items[0].basis === "", "a non-string basis reads as empty, the item stays");
+  const four = GATE.parseQuizReply(JSON.stringify({ quiz: seven.slice(0, 4) }));
+  check(four.items.length === 0 && four.refused === "퀴즈 문제가 5개 미만이에요 — 답변을 다시 받아요", `4 valid → refused with no items: ${JSON.stringify(four)}`);
+  const fiveOk = GATE.parseQuizReply(JSON.stringify({ quiz: seven.slice(0, 5) }));
+  check(fiveOk.refused === null && fiveOk.items.length === 5, "5 valid → kept");
+  const twelve = GATE.parseQuizReply(JSON.stringify({ quiz: Array.from({ length: 12 }, (_, i) => item(i)) }));
+  check(twelve.items.length === GATE.QUIZ_MAX && twelve.items[9].q === "문제 9" && twelve.refused === null, `12 valid → the first ${GATE.QUIZ_MAX} in order`);
+  const other = GATE.parseQuizReply(JSON.stringify({ work: seven, tasks: seven, checks: seven, verdict: seven }));
+  check(other.items.length === 0 && other.refused !== null, "work / tasks / checks / verdict keys are ignored — without a quiz key the reply is refused");
+  check(GATE.parseQuizReply("").refused !== null && GATE.parseQuizReply("no json here").items.length === 0 && GATE.parseQuizReply(null).items.length === 0, "an empty, null or non-JSON reply is refused");
+
+  // (g) the reshuffle: a fixed `rand` changes the order, the correct text sits at the remapped answer for every item, the input is untouched
+  let seed = 7;
+  const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const shuffled = GATE.shuffleQuiz(seven, rand);
+  check(shuffled.length === 7 && shuffled.every((it, i) => it.choices[it.answer] === seven[i].choices[seven[i].answer] && [...it.choices].sort().join() === [...seven[i].choices].sort().join() && it.q === seven[i].q && it.basis === seven[i].basis),
+    "shuffleQuiz keeps the correct text at the remapped answer with the same four choices");
+  check(shuffled.some((it, i) => it.choices.join() !== seven[i].choices.join()), "the fixed rand changes at least one order");
+  check(seven.every((it, i) => it.choices.join() === `a${i},b${i},c${i},d${i}` && it.answer === i % 4), "shuffleQuiz does not mutate its input");
+  check(GATE.gradeQuiz(shuffled, shuffled.map((it) => it.answer)).score === 7 && GATE.gradeQuiz(shuffled, seven.map((it) => it.answer)).score === shuffled.filter((it, i) => it.answer === seven[i].answer).length, "grading follows the shuffled indexes, not the original ones");
   console.log(`daily gate: ${n} checks`);
 }
 

@@ -1,0 +1,17 @@
+# `오늘의 관문` — the daily gate
+
+**Stub (2026-09-24, written by the Phase 2 implementer so the Rule 7 amendment's link resolves).** Phase 3 of the exec plan `2026-09-24-daily-gate-quiz.md` (docs-syncer) replaces this file with the full spec: the gate, its steps and copy, `gateStepsOf`, the read sentinel, the quiz flow and grading, the stamps, the settings line, the boot-param routing, what the gate never does, demo content, E2E coverage.
+
+## What it is
+A full-screen layer (`GateModal`, rendered in place of `<main>` and `<nav>` while `gateActiveOf(state, today)` holds — a profile exists and `act.gate[today].passedAt` is absent) with three steps, all derived at render from the stamps below ([Rule 9](../design-docs/core-beliefs.md#rule-9)):
+1. **Read** — `오늘 읽을 것` and `이슈 목록` opened above the gate in gate-read mode (no route, rows inert) and read to their end: a sentinel at the very end of each sheet must enter the viewport before `다 읽었어요` enables; one stamp per screen per day (`readReaderAt`, `readIssuesAt`; the reader's tap also marks `act.briefingSeen`). The header X returns to the gate without a stamp.
+2. **Quiz** — the sixth bridge packet (`buildQuizPacket`: today's and tomorrow's meeting preparation, the open work items, the two-week schedule, the last seven days' decisions, the newest or post-stamp minutes with their progress, the newest training records as content, the documents; on the packet tracks, a hidden meeting its date and title only, never a transcript, an event's place or note, a document's `source` or a profile identifier; at most 12,000 chars) is copied to an external chat; the pasted reply's `quiz` items (`parseQuizReply`: 5–10 four-choice items kept whole or dropped, fewer than 5 refused with `퀴즈 문제가 5개 미만이에요 — 답변을 다시 받아요`) are solved on one screen and graded **locally** (`gradeQuiz`: pass = at least `Math.ceil(0.8 × total)` correct). A fail stamps the attempt and clears both read stamps; `같은 문제 다시 풀기` reshuffles the held items' choices (`shuffleQuiz`; the items live in root component state only and are lost on reload), `새 퀴즈 요청 ›` starts a new packet. The result view states the numbers, the wrong items with `정답:` and `근거:`, and on a fail `읽기 완료 표시가 지워졌어요 — 두 화면을 다시 끝까지 읽어야 해요.` — no praise ([Rule 13](../design-docs/core-beliefs.md#rule-13)).
+3. **Refresh** — at least one `work[]` item with `createdAt === today`, through `AI로 만들기 ›` (the work bridge) or `업무 추가 ›` (the work sheet); never stored, derived from the records.
+
+`통과` (enabled only when all three hold) stamps `passedAt`, closes the gate and restores the app; the same day reopens nothing, the next day opens the gate again. No close, no skip, no settings while it stands (user decision 2, 2026-09-24): a day without access to an external AI chat cannot be passed.
+
+## What it stores
+`act.gate[date] = { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt? }` — `HH:MM` local times and a locally graded score; entries older than `GATE_KEEP_DAYS` (60) are pruned on the next gate write. Schema still v28, no migrate block; `freshState` unchanged. Nothing here pays, promotes, completes a task or creates a record ([Rule 7](../design-docs/core-beliefs.md#rule-7), amendment 2026-09-24).
+
+## Elsewhere
+`SettingsModal` states `gateMonthLine` (`이번 달 관문 통과 {n}일 · 미통과 {m}일 · 퀴즈 평균 {s}/{t}` or `퀴즈 없음`) under `오늘의 관문`; `?open=issues|reader` opens the named screen in gate-read mode above the gate; the E2E flow `tools/e2e/flow12.js` (written, not run) and smoke section 9 cover the gate and the quiz.
