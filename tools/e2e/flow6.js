@@ -60,12 +60,6 @@ module.exports = async (h) => {
     const fresh = await ctx.newPage();
     // Polling, not an event: `controllerchange` fires inside the page, and a reload from the pre-fix
     // build destroys the execution context mid-evaluate, which must not read as a passing step.
-    // Every check step ends here: the save it started from, no permission override, a fresh load.
-  const restore = async (saved) => {
-    await writeState(saved);
-    await page.browser().defaultBrowserContext().clearPermissionOverrides();
-    await h.reload();
-  };
   const until = async (ms, fn) => {
       const t0 = Date.now();
       while (Date.now() - t0 < ms) { try { if (await fn()) return true; } catch {} await sleep(250); }
@@ -102,6 +96,13 @@ module.exports = async (h) => {
   const KEY = "liferpg-state-v1";
   const readState = () => page.evaluate((k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, KEY);
   const writeState = (st) => page.evaluate((k, s) => localStorage.setItem(k, JSON.stringify(s)), KEY, st);
+  // Every check step ends here: the save it started from, no permission override, a fresh load. Used by the check
+  // steps' `finally`; it must live at file level — 2026-09-25 (it was declared inside the takeover step's callback).
+  const restore = async (saved) => {
+    await writeState(saved);
+    await page.browser().defaultBrowserContext().clearPermissionOverrides();
+    await h.reload();
+  };
   const dstrIn = (delta) => page.evaluate((d) => {
     const t = new Date(); t.setHours(12, 0, 0, 0); t.setDate(t.getDate() + d);
     const pad = (n) => String(n).padStart(2, "0");
@@ -199,6 +200,92 @@ module.exports = async (h) => {
     }
   });
 
+  // ── The first-open stamp (2026-09-25): `act.opened[today]` written once at boot, pruned to 60 days, never overwritten
+  // the same day; the settings sheet's `자동 실행` section and the gate's first-open line. Written, not run.
+  const ROUTINE_STEPS = [
+    "설정 › 모드 및 루틴 › 루틴 › + 를 눌러요",
+    "조건: 시간 — 08:00, 매일 (두 번째 루틴은 20:00)",
+    "실행: 앱 열기 — 인생 관리를 골라요",
+    "저장하고 루틴을 켜요",
+    "배터리 › 백그라운드 사용 제한 › 절전 예외 앱에 인생 관리를 더해요",
+  ];
+  const ROUTINE_CAPTIONS = [
+    "앱은 스스로 열리지 않아요 — 정해진 시각에 여는 것은 폰의 루틴이에요.",
+    "첫 실행 시각은 앱이 열릴 때 기록돼요. 루틴이 연 것인지 직접 연 것인지는 구분하지 못해요.",
+  ];
+  // The `자동 실행` section's `<ol>` items, read off the settings sheet.
+  const routineItems = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const label = ov && [...ov.querySelectorAll("div")].find((d) => (d.innerText || "").trim() === "자동 실행");
+    const ol = label?.parentElement?.querySelector("ol");
+    return ol ? [...ol.querySelectorAll("li")].map((li) => (li.innerText || "").trim()) : null;
+  });
+
+  await step("the first open of a day stamps act.opened[today] once as HH:MM, prunes keys older than 60 days, keeps a same-day stamp on reload, and the settings sheet states the line and the five routine steps", async () => {
+    const saved = await readState();
+    const today = await dstrIn(0);
+    try {
+      // Two planted stamps, one just outside the keep window and one on its edge; today's key is absent.
+      const old = await dstrIn(-61), edge = await dstrIn(-60);
+      const planted = structuredClone(saved);
+      planted.act = { ...planted.act, opened: { [old]: "07:00", [edge]: "07:00" } };
+      await writeState(planted);
+      await h.reload();
+      const after = await readState();
+      const stamp = after.act?.opened?.[today];
+      if (!/^\d\d:\d\d$/.test(stamp || "")) throw new Error("no HH:MM stamp for today after the load: " + JSON.stringify(after.act?.opened));
+      if (old in after.act.opened) throw new Error("the 61-day-old key survived the stamp write: " + JSON.stringify(after.act.opened));
+      if (after.act.opened[edge] !== "07:00") throw new Error("the 60-day-old key was dropped: " + JSON.stringify(after.act.opened));
+      if (JSON.stringify(changedKeys(planted, after)) !== JSON.stringify(["act"])) throw new Error("the stamp moved another key: " + JSON.stringify(changedKeys(planted, after)));
+      const actSansOpened = (a) => { const { opened, ...rest } = a || {}; return JSON.stringify(rest); };
+      if (actSansOpened(after.act) !== actSansOpened(planted.act)) throw new Error("the stamp moved another act key: " + actSansOpened(after.act));
+
+      // A same-day reload never overwrites the stamp.
+      after.act.opened[today] = "00:01";
+      await writeState(after);
+      await h.reload();
+      const again = await readState();
+      if (again.act?.opened?.[today] !== "00:01") throw new Error("a same-day reload overwrote the stamp: " + again.act?.opened?.[today]);
+
+      // The settings sheet: the line, the five steps in order, both captions, the section between `AI 요청문` and `확인 알림`.
+      const month = Object.keys(again.act.opened).filter((d) => d.startsWith(today.slice(0, 7))).length;
+      await h.openSettings();
+      const text = await h.overlayText();
+      if (!text.includes("자동 실행")) throw new Error("the settings sheet lacks the section: " + text.slice(0, 200));
+      if (!text.includes(`오늘 첫 실행 00:01 · 이번 달 실행 ${month}일`)) throw new Error("the first-open line is missing or wrong: " + text.slice(0, 600));
+      const items = await routineItems();
+      if (JSON.stringify(items) !== JSON.stringify(ROUTINE_STEPS)) throw new Error("the routine steps differ: " + JSON.stringify(items));
+      for (const cap of ROUTINE_CAPTIONS) if (!text.includes(cap)) throw new Error("a caption is missing: " + cap);
+      const order = ["AI 요청문", "자동 실행", "확인 알림"].map((t) => text.indexOf(t));
+      if (!(order[0] >= 0 && order[0] < order[1] && order[1] < order[2])) throw new Error("the section order is wrong: " + JSON.stringify(order));
+      await closeModal();
+    } finally {
+      await restore(saved);
+    }
+  });
+
+  await step("the gate states today's first-open time under its title, from the stamp the same load wrote", async () => {
+    const saved = await readState();
+    const today = await dstrIn(0);
+    try {
+      const planted = structuredClone(saved);
+      if (planted.act?.gate) delete planted.act.gate[today];
+      if (planted.act?.opened) delete planted.act.opened[today];
+      await writeState(planted);
+      await h.reload({}, { keepModal: true, keepGate: true });
+      await sleep(400);
+      const gate = await page.evaluate(() => (document.querySelector(".fixed.inset-0")?.innerText || "").trim());
+      if (!gate.startsWith(`오늘의 관문 — ${today}`)) throw new Error("the gate is not the first overlay: " + gate.slice(0, 80));
+      const line = gate.split("\n").map((l) => l.trim()).filter(Boolean)[1] || "";
+      if (!/^오늘 첫 실행 \d\d:\d\d$/.test(line)) throw new Error("the second line is not the first-open line: " + line);
+      const st = await readState();
+      if (st.act?.opened?.[today] !== line.slice(-5)) throw new Error("the shown time differs from the stamp: " + JSON.stringify(st.act?.opened));
+    } finally {
+      await writeState(saved);
+      await h.reload();
+    }
+  });
+
   await step("?open=issues and ?open=reader open the named screen and strip the query; the served worker routes a tap to issues", async () => {
     const saved = await readState();
     const base = page.url().split("?")[0];
@@ -219,7 +306,7 @@ module.exports = async (h) => {
       await h.reload({ waitUntil: "networkidle2" }, { keepModal: true });
       if (await page.evaluate(() => document.querySelectorAll(".fixed.inset-0").length)) throw new Error("a reload without the param opened a screen on a seen-today save");
       const sw = await page.evaluate(async () => (await fetch("./sw.js", { cache: "no-store" })).text());
-      for (const t of ['open: "issues"', '"./?open=issues"', "periodicsync", "notificationclick", "k !== CHECK_CACHE"]) {
+      for (const t of ['open: "issues"', '"./?open=issues"', "periodicsync", "notificationclick", "k !== CHECK_CACHE", 'addEventListener("push"', "const showCheck", "showCheck(true)"]) {
         if (!sw.includes(t)) throw new Error("the served sw.js lacks " + t);
       }
       if (sw.includes("location.reload") || sw.includes("controllerchange")) throw new Error("the served sw.js reloads a client");

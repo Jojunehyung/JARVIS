@@ -3178,6 +3178,30 @@ const gateMonthLine = (state, today) => {
   return `이번 달 관문 통과 ${m.passed}일 · 미통과 ${m.failed}일 · ${m.quiz ? `퀴즈 평균 ${m.quiz.score}/${m.quiz.total}` : "퀴즈 없음"}`;
 };
 
+/* ── The first-open stamp (2026-09-25) — `act.opened[date] = "HH:MM"`: the day's first open, written once by the root
+   effect on every path that brings the app up (boot, a day change while open, onboarding's finish, the demo entry, a
+   backup import). Its own map, never under `act.gate` — `gateMonthOf` counts every gate entry as a day. A stamp of a
+   user action, never progress (rule 9); pruned like the gate's stamps (user decision). The settings sheet's `자동 실행`
+   section states it beside the routine steps; the app cannot open itself, a phone routine can. ── */
+const OPENED_KEEP_DAYS = 60; // stamps older than this are dropped on the next stamp write — the app's own stamps, never a record
+const openedOf = (state, today) => state?.act?.opened?.[today] || null;
+// Days this month with a first-open stamp — `act.opened` only, never `act.gate`.
+const openedMonthOf = (state, today) => Object.keys(state?.act?.opened || {}).filter((d) => d.startsWith(today.slice(0, 7))).length;
+const openedLine = (state, today) => {
+  const at = openedOf(state, today);
+  return `${at ? `오늘 첫 실행 ${at}` : "오늘 아직 열지 않음"} · 이번 달 실행 ${openedMonthOf(state, today)}일`;
+};
+// Returns the same object when today is already stamped (the root effect's idempotence under StrictMode's double run);
+// otherwise a shallow copy with today's stamp and every key older than OPENED_KEEP_DAYS before today dropped. `at` is
+// injectable so smoke can pin the time.
+const stampOpened = (s, today, at = hhmm()) => {
+  if (s?.act?.opened?.[today]) return s;
+  const floor = shiftDay(today, -OPENED_KEEP_DAYS);
+  const opened = Object.fromEntries(Object.entries(s?.act?.opened || {}).filter(([d]) => d >= floor));
+  opened[today] = at;
+  return { ...s, act: { ...(s?.act || {}), opened } };
+};
+
 // The three facts, all tracks (the notification never leaves the device): whether today was refreshed (a work item
 // created today, the reader seen today), which project appointments of the last CHECK_MINUTES_DAYS days have no linked
 // minutes (a done occurrence still counts — it happened), and which work items are carried. Pure, derived at render.
@@ -4709,11 +4733,15 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *          workRefreshedAt?,                                   // (2026-09-22, still v28, no migrate block) the day the work bridge last
  *                                                              // registered ≥ 1 AI proposal — a user-action stamp like `briefingSeen`,
  *                                                              // never read as progress (rule 9)
- *          gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt? } } },
+ *          gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt? } },
  *                                                              // (2026-09-24, still v28, no migrate block) the daily gate's user-action
  *                                                              // stamps (`HH:MM` local times; `quiz` a locally graded score), newest
  *                                                              // `GATE_KEEP_DAYS` days; `refreshed` is derived from `work[].createdAt`,
  *                                                              // never stored (rule 9)
+ *          opened?: { [date]: "HH:MM" } },                    // (2026-09-25, still v28, no migrate block) the day's first-open time,
+ *                                                              // stamped once by the root effect on every path that brings the app up;
+ *                                                              // its own map, never under `gate` (`gateMonthOf` counts entries as days);
+ *                                                              // newest `OPENED_KEEP_DAYS` days; a user-action stamp, never progress (rule 9)
  *   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -5163,6 +5191,8 @@ const demoState = () => {
     [shiftDay(today, -1)]: { readReaderAt: "08:31", readIssuesAt: "08:37", quiz: { total: 7, score: 5, passed: false, attempts: 1, at: "08:52" } },
     [today]: { readReaderAt: "08:12", readIssuesAt: "08:19", quiz: { total: 7, score: 6, passed: true, attempts: 1, at: "08:33" }, passedAt: "08:40" },
   };
+  // The first-open stamp (2026-09-25): yesterday and today, before each day's gate reads — the settings line reads both days when they share a month.
+  s.act.opened = { [shiftDay(today, -1)]: "08:01", [today]: "08:04" };
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
@@ -6324,12 +6354,14 @@ function BriefingModal({ state, today, onClose, onAction }) {
 const GATE_BTN = "py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs disabled:opacity-40";
 function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onRetry, onBridge, onAddWork, onPass }) {
   const st = gateStepsOf(state, today);
+  const opened = openedOf(state, today);
   const readAt = (t) => (t ? `완료 ${t}` : "미완료");
   const quizLine = st.quiz ? `${st.quiz.passed ? "통과" : "미통과"} ${st.quiz.score}/${st.quiz.total} · 시도 ${st.quiz.attempts}` : "아직";
   return (
     <div className="fixed inset-0 z-40 bg-zinc-950 overflow-y-auto">
       <div className="max-w-md mx-auto p-5 space-y-4">
         <h3 className="text-base font-bold text-zinc-100">오늘의 관문 — {today}</h3>
+        {opened && <p className="font-mono text-xs text-zinc-400">오늘 첫 실행 {opened}</p>}
         <p className="text-xs text-zinc-400">세 단계를 마쳐야 앱이 열려요. 닫기와 건너뛰기는 없어요.</p>
         <p className="text-xs text-zinc-500">퀴즈는 외부 AI 채팅의 답변을 붙여넣어야 해요. AI를 쓸 수 없는 날은 통과할 수 없어요.</p>
         <div className="bg-zinc-900 rounded-xl p-3 space-y-2">
@@ -7907,6 +7939,20 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
               ? "직장 트랙 회의록·업무·일정도 AI 요청문에 실려요. 회사 자료를 보내면 안 되는 날엔 꺼요. 회의록마다 'AI에 보내지 않기'는 그대로 적용돼요."
               : "직장 트랙 기록은 AI 요청문에 실리지 않아요."}
           </p>
+        </div>
+        {/* 2026-09-25: the first-open stamp and the phone-routine guide — `act.opened` read only; no switch, no write */}
+        <div>
+          <SectionLabel tone="text-cyan-400">자동 실행</SectionLabel>
+          <p className="font-mono text-xs text-zinc-300">{openedLine(state, today)}</p>
+          <ol className="text-xs text-zinc-400 mt-1.5 space-y-1 list-decimal list-inside">
+            <li>설정 › 모드 및 루틴 › 루틴 › + 를 눌러요</li>
+            <li>조건: 시간 — 08:00, 매일 (두 번째 루틴은 20:00)</li>
+            <li>실행: 앱 열기 — 인생 관리를 골라요</li>
+            <li>저장하고 루틴을 켜요</li>
+            <li>배터리 › 백그라운드 사용 제한 › 절전 예외 앱에 인생 관리를 더해요</li>
+          </ol>
+          <p className="text-xs text-zinc-500 mt-1.5">앱은 스스로 열리지 않아요 — 정해진 시각에 여는 것은 폰의 루틴이에요.</p>
+          <p className="text-xs text-zinc-500 mt-1.5">첫 실행 시각은 앱이 열릴 때 기록돼요. 루틴이 연 것인지 직접 연 것인지는 구분하지 못해요.</p>
         </div>
         {/* 2026-09-22: the local notification — absent reads as off (`checkNotifyOf`); disabled without the browser APIs */}
         <div>
@@ -11624,6 +11670,15 @@ export default function LifeManager() {
   }, [day, state]);
   // The held quiz belongs to the day it was pasted on.
   useEffect(() => { setQuizHeld(null); }, [day]);
+
+  // The first-open stamp (2026-09-25): once per day, on whatever brought the app up — boot, a day change while open,
+  // onboarding's finish, the demo entry, a backup import. `stampOpened` returns `prev` when today is stamped, so
+  // StrictMode's double run and the re-render this write causes stamp once and stop; a save that already carries
+  // today's stamp (the demo's, a reload's) is left as it is.
+  useEffect(() => {
+    if (phase !== "main" || !state || openedOf(state, today)) return;
+    setState((prev) => stampOpened(prev, today));
+  }, [phase, state, today]);
 
   // A tap on the notification while the app is open: the worker focuses this window and names the screen to open.
   useEffect(() => {

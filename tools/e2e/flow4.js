@@ -295,7 +295,9 @@ module.exports = async (h) => {
     const st = await migrateFixture(s18);
     if ("metrics" in st) throw new Error("v19 kept the life-metric store: " + JSON.stringify(st.metrics));
     if ("lastCheckin" in (st.act || {})) throw new Error("v19 kept the check-in stamp: " + JSON.stringify(st.act));
-    const actKeys = Object.keys(st.act || {}).sort().join(",");
+    // The harness's `plantGate` writes `gate` before every reload (2026-09-24) and the app stamps `opened` at boot
+    // (2026-09-25); both are stamps, not migration output, so the key set is read without them.
+    const actKeys = Object.keys(st.act || {}).filter((k) => k !== "gate" && k !== "opened").sort().join(",");
     if (actKeys !== "briefingSeen,lastActive,lastReview,shieldMonth,shieldsLeft,streak") throw new Error("v19 changed the act key set: " + actKeys);
     if (st.act?.streak !== 3 || st.act?.shieldsLeft !== 1) throw new Error("v19 changed the streak counters: " + JSON.stringify(st.act));
     if (st.act?.briefingSeen !== now || st.act?.lastReview !== "2026-01-02") throw new Error("v19 dropped an act stamp it must keep: " + JSON.stringify(st.act));

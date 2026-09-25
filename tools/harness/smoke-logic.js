@@ -464,6 +464,10 @@ console.log("calendar file: 19 check groups");
   check(sw.includes("k !== CHECK_CACHE"), "activate keeps the summary cache");
   check(sw.includes('open: "issues"') && sw.includes('"./?open=issues"') && CHECK.OPEN_PARAM_TYPES.includes("issues"), "a tap names the issue list, which the app routes");
   check(!sw.includes("location.reload") && !sw.includes("controllerchange") && !/\.navigate\(/.test(sw), "the worker reloads no client");
+  // (2026-09-25) the daily push: the same routine as the periodic sync, with a re-alert; the payload is never read
+  check(sw.includes('addEventListener("push"') && sw.includes("const showCheck") && sw.includes("showCheck(true)") && sw.includes("showCheck(false)"), "the push handler and the periodic sync share showCheck; the push re-alerts");
+  const pushBlock = sw.slice(sw.indexOf('addEventListener("push"'), sw.indexOf("});", sw.indexOf('addEventListener("push"')));
+  check(!/e\.data|fetch\(|\.json\(/.test(pushBlock), "the push handler reads no payload and makes no request");
   console.log(`check summary: ${n} checks`);
 }
 
@@ -667,6 +671,50 @@ console.log("calendar file: 19 check groups");
   check(seven.every((it, i) => it.choices.join() === `a${i},b${i},c${i},d${i}` && it.answer === i % 4), "shuffleQuiz does not mutate its input");
   check(GATE.gradeQuiz(shuffled, shuffled.map((it) => it.answer)).score === 7 && GATE.gradeQuiz(shuffled, seven.map((it) => it.answer)).score === shuffled.filter((it, i) => it.answer === seven[i].answer).length, "grading follows the shuffled indexes, not the original ones");
   console.log(`daily gate: ${n} checks`);
+}
+
+// 10) the first-open stamp (2026-09-25) — `act.opened[date] = "HH:MM"`: stamped once per day by the root effect, the same
+// object back when today is stamped (idempotent under StrictMode's double run), keys older than OPENED_KEEP_DAYS dropped on
+// a write, the month count from `act.opened` only (never `act.gate`), and the settings line's two wordings.
+{
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `first-open stamp: ${msg}`); };
+  const OPEN = new Function([
+    ...["dstr", "hhmm", "shiftDay", "OPENED_KEEP_DAYS", "openedOf", "openedMonthOf", "openedLine", "stampOpened"].map(lift),
+  ].join("\n") + "\nreturn { shiftDay, OPENED_KEEP_DAYS, openedOf, openedMonthOf, openedLine, stampOpened };")();
+  const today = "2026-09-25";
+
+  // (a) a first stamp: a new object, `act.opened` alone added, the other act keys kept by reference, the input untouched
+  const gate = { "2026-09-25": { passedAt: "08:40" } };
+  const base = { profile: { name: "x" }, act: { briefingSeen: "2026-09-24", gate } };
+  const stamped = OPEN.stampOpened(base, today, "08:05");
+  check(stamped !== base && JSON.stringify(stamped.act.opened) === '{"2026-09-25":"08:05"}', `a first stamp writes today only: ${JSON.stringify(stamped.act?.opened)}`);
+  check(stamped.act.gate === gate && stamped.act.briefingSeen === "2026-09-24" && stamped.profile === base.profile, "the other act keys and the rest of the save are kept by reference");
+  check(!("opened" in base.act), "the input is not mutated");
+
+  // (b) idempotent: a second call the same day returns the same object and keeps the first time
+  check(OPEN.stampOpened(stamped, today, "09:00") === stamped && stamped.act.opened[today] === "08:05", "a second stamp the same day is a no-op (same reference, first time kept)");
+  check(OPEN.openedOf(stamped, today) === "08:05" && OPEN.openedOf(base, today) === null && OPEN.openedOf(null, today) === null, "openedOf reads today's stamp or null");
+
+  // (c) the prune: keys older than OPENED_KEEP_DAYS before today are dropped on a write; the 60-day key, yesterday and today stay
+  const old = OPEN.shiftDay(today, -61), edge = OPEN.shiftDay(today, -60), yday = OPEN.shiftDay(today, -1);
+  const pruned = OPEN.stampOpened({ act: { opened: { [old]: "07:00", "2026-01-01": "07:00", [edge]: "07:01", [yday]: "07:02" } } }, today, "08:05").act.opened;
+  check(!(old in pruned) && !("2026-01-01" in pruned), `keys older than ${OPEN.OPENED_KEEP_DAYS} days are dropped: ${Object.keys(pruned).join()}`);
+  check(pruned[edge] === "07:01" && pruned[yday] === "07:02" && pruned[today] === "08:05" && Object.keys(pruned).length === 3, `the 60-day key, yesterday and today are kept: ${JSON.stringify(pruned)}`);
+
+  // (d) the month count reads `act.opened` only — never `act.gate`
+  check(OPEN.openedMonthOf({ act: { opened: { "2026-09-01": "08:00", "2026-09-25": "08:05", "2026-08-31": "08:00" } } }, today) === 2, "openedMonthOf counts this month's opened keys only");
+  check(OPEN.openedMonthOf({ act: { gate: { "2026-09-22": { passedAt: "08:40" }, "2026-09-23": { passedAt: "08:40" }, "2026-09-24": { readReaderAt: "08:12" } }, opened: { "2026-09-25": "08:05" } } }, today) === 1, "gate entries never count as opens");
+
+  // (e) the settings line: stamped, unstamped with an earlier day this month, empty
+  const line = (opened) => OPEN.openedLine({ act: opened ? { opened } : {} }, today);
+  check(line({ "2026-09-01": "08:00", "2026-09-25": "08:05" }) === "오늘 첫 실행 08:05 · 이번 달 실행 2일", `the stamped line: ${line({ "2026-09-01": "08:00", "2026-09-25": "08:05" })}`);
+  check(line({ "2026-09-01": "08:00" }) === "오늘 아직 열지 않음 · 이번 달 실행 1일", `an unstamped today: ${line({ "2026-09-01": "08:00" })}`);
+  check(line(null) === "오늘 아직 열지 않음 · 이번 달 실행 0일", `an empty act: ${line(null)}`);
+
+  // (f) the keep window
+  check(OPEN.OPENED_KEEP_DAYS === 60, `OPENED_KEEP_DAYS ${OPEN.OPENED_KEEP_DAYS}`);
+  console.log(`first-open stamp: ${n} checks`);
 }
 
 console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");
