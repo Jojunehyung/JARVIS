@@ -1,8 +1,10 @@
 # Calendar export — the phone-calendar file (RFC 5545)
 
-The app sends no notification of its own: there is no push server (the app is local-only) and no browser API
-schedules a local alarm while the app is closed (Notification Triggers was abandoned; Periodic Background Sync
-is browser-timed, skips days, and a service worker cannot read `localStorage`). Instead, `CalendarExportModal`
+No browser API schedules a local alarm while the app is closed (Notification Triggers was abandoned; Periodic
+Background Sync is browser-timed, skips days, and a service worker cannot read `localStorage`) — the calendar
+file below is what fills that gap, not the daily push (2026-09-25,
+[../product-specs/notifications.md](../product-specs/notifications.md#the-daily-push-2026-09-25)), which is
+contentless and carries no alarm or schedule of its own. Instead, `CalendarExportModal`
 ([../product-specs/schedule.md](../product-specs/schedule.md)) downloads a `.ics` file the user imports once
 into their phone's own calendar, which then raises the alarms — at the exact time, app closed, no server, no
 network ([Rule 7](core-beliefs.md#rule-7)). The file is a **snapshot**, built in memory from records at export

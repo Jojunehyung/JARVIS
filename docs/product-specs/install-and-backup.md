@@ -15,7 +15,9 @@ The build is a progressive web app: an Android phone installs it to the home scr
 - **The document** is network-first with a cache fallback. A deploy is picked up as soon as the phone has a connection, and airplane mode still opens the last build.
 - On activate, every cache whose name does not match this build id is deleted, then `clients.claim()` takes over the open page. `src/main.jsx` does **not** react to `controllerchange`: the running page keeps the bundle it loaded and the new build applies on the next open. Reloading a page in use resets the tab and discards a half-typed form, and because every build stamps a fresh `BUILD` id it fired once per deploy (reported 2026-09-13). One exception (2026-09-22): `activate` also keeps a second cache, `life-check` (`k !== CACHE && k !== CHECK_CACHE`), which belongs to the [`확인 필요 notification`](../product-specs/notifications.md), not to any one build — without the exception, every deploy would evict it.
 
-**The `확인 필요` notification (2026-09-22).** The worker gains two more handlers, both still never reloading a client: `notificationclick` closes the notification, focuses an open window and posts it `{ open: "issues" }`, or, with none open, calls `clients.openWindow("./?open=issues")`; `periodicsync` (fired by Chrome's own schedule, an installed app only) re-shows the text the page last mirrored into the `life-check` Cache API entry when it is under 48 hours old, else a generic pair. The worker cannot read `localStorage`, so the page — not the worker — computes the notification's text and writes it to that cache on every state change; the worker only reads it back. Full mechanics: [../product-specs/notifications.md](../product-specs/notifications.md).
+**The `확인 필요` notification (2026-09-22).** The worker gains two more handlers, both still never reloading a client: `notificationclick` closes the notification, focuses an open window and posts it `{ open: "issues" }`, or, with none open, calls `clients.openWindow("./?open=issues")`; `periodicsync` (fired by Chrome's own schedule, an installed app only) calls a shared routine, `showCheck(renotify)`, that re-shows the text the page last mirrored into the `life-check` Cache API entry when it is under 48 hours old, else a generic pair. The worker cannot read `localStorage`, so the page — not the worker — computes the notification's text and writes it to that cache on every state change; the worker only reads it back. Full mechanics: [../product-specs/notifications.md](../product-specs/notifications.md).
+
+**The daily push (2026-09-25).** A third handler, `push`, also calls `showCheck(renotify)` — with `renotify: true`, since a push is a deliberate wake-up, unlike the periodic sync's own moment — and never reads the delivery's payload (`e.data` is untouched); what it shows is always the cached on-device text, never anything the push carried. The push itself is sent by the app's own repository (below, "Deploying"), not by the worker or the page. See [../product-specs/notifications.md](../product-specs/notifications.md#the-daily-push-2026-09-25) and [../SECURITY.md](../SECURITY.md#the-daily-push-2026-09-25).
 
 Registration happens in production only (`import.meta.env.PROD`), from `./sw.js` resolved against the document, so a subpath deploy works. The single-file demo (`vite.demo.config.js`) has no service worker and is unaffected. The app also calls `navigator.storage.persist()` on start, which asks the browser not to evict the records under storage pressure.
 
@@ -32,6 +34,28 @@ Service workers need a secure context. `localhost` counts, which is why the E2E 
 
 The address is what the phone opens; nothing about the records leaves the device just because the code is hosted.
 
+**Daily push (2026-09-25).** `.github/workflows/notify.yml` runs on this same repository's Actions — cron
+`0 23 * * *` and `0 11 * * *` UTC (08:00 and 20:00 Asia/Seoul) plus `workflow_dispatch`, `permissions: contents:
+read` only — and sends the contentless push through `tools/push/send.mjs` (its own npm package, installed with
+`npm ci --prefix tools/push`). It needs two repository secrets, set once through the GitHub web UI (Settings ›
+Secrets and variables › Actions › New repository secret — `gh` is not required):
+- `PUSH_SUBSCRIPTION` — the subscription JSON copied from `설정 › 푸시 알림 › 구독 정보 보기 › 복사` once the
+  switch is on, on the phone (or the desktop build) that should receive the wake-up.
+- `VAPID_PRIVATE_KEY` — generated once, together with the app's public key, with
+  `npx --package web-push web-push generate-vapid-keys --json`; the **public** key is pasted into both
+  `PUSH_VAPID_PUBLIC` in `src/LifeManager.jsx` and the same constant in `tools/push/send.mjs` (smoke section
+  7(f) pins the two equal) and is part of the deployed build; the **private** key is pasted into this secret and
+  nowhere else — never a commit, a doc, a log, or the app's own storage. Losing it means generating a new pair,
+  re-pasting the public key into both sources, redeploying, and every phone re-subscribing (an old subscription
+  is bound to the old key).
+
+Without either secret the workflow still succeeds — `send.mjs` logs `daily push: secrets not set — nothing
+sent` and exits 0. After both are set, `Actions › Daily push › Run workflow` sends one push immediately, which
+is the way to prove the phone actually receives it before waiting for the next cron slot. See
+[../SECURITY.md](../SECURITY.md#the-daily-push-2026-09-25) for what the secrets protect and
+[../RELIABILITY.md](../RELIABILITY.md#known-limits) for cron lateness, the 60-day schedule disable and
+subscription-expiry handling.
+
 ## Packaging as a downloadable APK
 The installed web app is already a real Android app: Chrome generates a WebAPK, so it appears in the app drawer and in Settings with its own storage. To hand out an installable `.apk` file instead, feed the deployed address to [PWABuilder](https://www.pwabuilder.com), which wraps the site in a Trusted Web Activity and signs it. The manifest carries what that needs: `id`, `scope`, `description`, maskable and 512 px icons, and five narrow-form-factor screenshots (`home`, `tasks`, `goals`, `calendar`, `meetings` since 2026-09-16) generated by `tools/harness/gen-screenshots.js` from the demo save — each entry names a tab to open, and since the 일정 tab became calendar-only (2026-09-16) every shot is a plain tab switch, with no follow-up click. Every generated file is listed in the manifest; a screenshot nothing references would only make the build bigger.
 
@@ -42,6 +66,28 @@ One catch specific to project pages: a Trusted Web Activity verifies its site th
 2. Menu → `앱 설치` (or `홈 화면에 추가`).
 3. Launch it from the home screen: no address bar, portrait, its own icon.
 4. Turn on airplane mode and open it again — it should start normally. That is the check that the service worker took.
+
+## Opening the app at fixed times — a Samsung routine (2026-09-25)
+
+A web app cannot launch itself on Android, so `설정` carries a guide instead — a new section, `자동 실행`,
+between `AI 요청문` and `확인 알림`:
+1. `설정 › 모드 및 루틴 › 루틴 › + 를 눌러요`
+2. `조건: 시간 — 08:00, 매일 (두 번째 루틴은 20:00)`
+3. `실행: 앱 열기 — 인생 관리를 골라요`
+4. `저장하고 루틴을 켜요`
+5. `배터리 › 백그라운드 사용 제한 › 절전 예외 앱에 인생 관리를 더해요`
+
+Two captions state what the guide cannot promise: `앱은 스스로 열리지 않아요 — 정해진 시각에 여는 것은 폰의
+루틴이에요.` and `첫 실행 시각은 앱이 열릴 때 기록돼요. 루틴이 연 것인지 직접 연 것인지는 구분하지 못해요.`
+
+**The proof** is `act.opened[date] = "HH:MM"` — the day's first-open time, written once by a root effect on
+whatever brings the app up (boot, a day change while open, onboarding's finish, the demo entry, a backup
+import), pruned to the newest 60 days on the app's own write. The same section states
+`{오늘 첫 실행 HH:MM | 오늘 아직 열지 않음} · 이번 달 실행 {n}일`, and the [daily gate](daily-gate.md) states
+`오늘 첫 실행 HH:MM` under its own title once the stamp exists that day. The stamp is a record of a user action
+only — never a streak, a score or a reward ([Rule 9](../design-docs/core-beliefs.md#rule-9)) — and it cannot
+tell a routine open from a manual one. See [../product-specs/notifications.md](notifications.md#the-daily-push-2026-09-25)
+for the complementary daily push, which reaches the phone even on a day no routine opened the app.
 
 ## Backup — `백업 내보내기` / `백업 불러오기`
 Both sit in `SettingsModal`, opened from the `설정` button in the corner of home's CV card (2026-09-15, alongside the reset button — [home.md](home.md); previously behind the growth tab's collapsed `데이터 — 백업 · 초기화` line), with the same line as before: `기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.`

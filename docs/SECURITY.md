@@ -1,6 +1,6 @@
 # Security
 
-Life Manager is a local-only, single-user web app with no backend, no accounts, and no network calls at runtime. The threat model is small; the notes below record what is stored, what could leak, and what the harness may execute.
+Life Manager is a local-only, single-user web app with no backend and no accounts. The production build makes no network call of its own; since 2026-09-25 there is one narrow exception, entirely under the user's own hand — the app's own repository sends a contentless daily Web Push to a subscription the user copies into a repository secret ("The daily push", below). The threat model is small; the notes below record what is stored, what could leave the device, and what the harness may execute.
 
 ## Data at rest
 - All state lives in the browser's `localStorage` of the origin the app is served from (`liferpg-state-v1` and `liferpg-img-*`). Anyone with access to the browser profile can read it. There is no encryption; the app does not promise confidentiality beyond the device.
@@ -28,6 +28,15 @@ Life Manager is a local-only, single-user web app with no backend, no accounts, 
   time-tracking records with no personal-identifier field of their own. Every project, document, event, work
   item, memo and deal also carries a `track` (`직장`/`사업`/`개인`) — see "Tracks" below. All of it sits in the
   same unencrypted `liferpg-state-v1` key, with no separate handling.
+- Since 2026-09-25 (no schema bump): `act.opened?` holds the day's first-open stamp — one `HH:MM` per date,
+  pruned to the newest 60 days on the app's own write, a record of a user action only, never progress
+  ([Rule 9](design-docs/core-beliefs.md#rule-9)). `settings.pushNotify?` is a boolean, absent = off, the daily
+  Web Push switch; it is written `true` only once a browser push subscription exists. The subscription itself —
+  an opaque `endpoint` and two keys — is **never** written here: it lives only in the browser's `pushManager`
+  and in `SettingsModal`'s own component state, read back with `pushSubscriptionGet()` whenever the sheet needs
+  it, so it is absent from both the raw `localStorage` string and the backup file. Both fields sit in the same
+  unencrypted `liferpg-state-v1` key as everything else, with no separate handling. See "The daily push" below
+  and [product-specs/notifications.md](product-specs/notifications.md#the-daily-push-2026-09-25).
 
 ## The `확인 필요` notification (2026-09-22)
 
@@ -41,19 +50,39 @@ is turned off, and may be evicted by the browser at any time with no consequence
 ([Rule 9](design-docs/core-beliefs.md#rule-9)) — the app rebuilds it on the next open regardless. See
 [product-specs/notifications.md](product-specs/notifications.md).
 
-**Data in transit: still none.** The notification is entirely local — no push server, no subscription, no
-network request of any kind. Periodic Background Sync wakes the service worker on Chrome's own internal
-schedule; it makes no request of its own, it only reads the Cache API entry the page already wrote and calls
-`showNotification`. **Android may show the notification's title and body on the lock screen** while the phone is
-locked — the settings caption states this explicitly before the switch is turned on
-(`Android는 잠금 화면에 제목이 보일 수 있어요.`). The notification's `data.open` value (`"issues"`) and the tap
-routing it drives are the only other facts it carries; tapping it opens the on-device
-[`이슈 목록`](product-specs/issue-list.md) screen, itself making no network call.
+**Data in transit: the notification's own re-display is still local.** Whether it is Periodic Background Sync or
+the daily push below that wakes the service worker, the handler itself makes no request of its own — it only
+reads the Cache API entry the page already wrote and calls `showNotification`. **Android may show the
+notification's title and body on the lock screen** while the phone is locked — the settings caption states this
+explicitly before either switch is turned on (`Android는 잠금 화면에 제목이 보일 수 있어요.`). The notification's
+`data.open` value (`"issues"`) and the tap routing it drives are the only other facts it carries; tapping it
+opens the on-device [`이슈 목록`](product-specs/issue-list.md) screen, itself making no network call.
 
 - Since 2026-09-22: `meetings[].kind?` (`"training"`, absent = a meeting) reuses every meeting field under
   different labels — a training record carries no field a meeting record does not already carry, so it adds no
   new sensitivity of its own, only a different set of labels on the same unencrypted key. `act.workRefreshedAt?`
   (a date) is a user-action stamp, not free text.
+
+## The daily push (2026-09-25)
+
+The app's own repository (`.github/workflows/notify.yml`, cron `0 23 * * *` and `0 11 * * *` UTC — 08:00 and
+20:00 Asia/Seoul — plus `workflow_dispatch`, `permissions: contents: read` only) sends one **contentless** Web
+Push a day through `tools/push/send.mjs`. What leaves the device, once, by the user's own hand: the push
+subscription — an opaque `endpoint` and two keys (`keys.p256dh`, `keys.auth`) — shown in `설정 › 푸시 알림`
+behind `구독 정보 보기 ›` and pasted by the user into the repository secret `PUSH_SUBSCRIPTION`; the private
+signing key (`VAPID_PRIVATE_KEY`) the user pastes into a second secret, which never touches the repository, a
+commit, a log, or this app's own storage — the app carries the matching **public** key only
+(`PUSH_VAPID_PUBLIC`), which is public by design. The subscription itself is never written to `state`, so it is
+absent from the backup file too — it lives only in the browser's `pushManager`, read back by
+`pushSubscriptionGet()` when the settings sheet needs it. `send.mjs` prints status codes only — `sent (201)`,
+`secrets not set — nothing sent`, `failed (…)`, or, on a 404/410, `subscription expired — copy it again from the
+app` — and never the endpoint, the keys, a response body or a stack, because the repository and its Actions
+logs are public (smoke section 7(f) pins this with a regex over every `console.` call in the file). The push
+payload it sends, `{ "open": "issues" }`, carries no record, title or identifier, and the service worker's
+`push` handler never reads it — it shows the `확인 필요` text the page already mirrored into the `life-check`
+cache (or the generic pair), through the same `showCheck` the periodic-sync path uses. See
+[product-specs/notifications.md](product-specs/notifications.md#the-daily-push-2026-09-25) for the switch and
+every string, and [RELIABILITY.md](RELIABILITY.md#known-limits) for delivery limits.
 
 ## Tracks — the day-job switch (2026-09-22)
 
@@ -84,7 +113,15 @@ on so the feature works out of the box, and a user who must keep a specific day'
 turns it off for that session.
 
 ## Data in transit
-None by the app. The production build makes no fetch/XHR; fonts and icons are bundled. Manifest and favicon are inline/static. The calendar export ("The calendar file", below) is the one other place item titles leave the app, through a file the user hands to their own calendar app.
+The production build makes no fetch/XHR of its own; fonts and icons are bundled; manifest and favicon are
+inline/static. Since 2026-09-25 there are exactly two contacts with anything outside the device, both under the
+user's own hand or the browser's own push service, never the app fetching or polling anything: (1) turning
+`매일 푸시 알림` on registers the subscription with the browser's push service (`pushManager.subscribe`), and (2)
+the repository's cron delivers the contentless wake-up to that subscription twice a day ("The daily push",
+above). Nothing about the user's records — no title, no name, no state — is ever in either contact; what
+crosses is the opaque subscription (copied by hand into a secret) and the fixed payload `{ "open": "issues" }`.
+The calendar export ("The calendar file", below) is the one other place item titles leave the app, through a
+file the user hands to their own calendar app.
 
 The assistant bridge carries **six** packets, all text, all copy/paste only, all making no network call ([Rule 7](design-docs/core-beliefs.md#rule-7)):
 
@@ -189,11 +226,18 @@ and a payment amount, exports, and asserts none of their values — including th
 - Runtime: React renders user text as text (no `dangerouslySetInnerHTML`); links entered as study artifacts are stored as strings and rendered as text.
 - Harness scripts (`tools/harness/*.js`) call `eval` on `const NAME = <literal>` blocks extracted from `src/LifeManager.jsx` to read data tables. This runs only on trusted local source in the developer's shell, never in the app.
 - Claude Code hooks (`.claude/settings.json`) run `node tools/harness/*.js` with the project as working directory. They read stdin JSON from Claude Code, touch only `.claude/harness-state/`, `tools/harness/out/`, and never modify `src/`. `data-guard` can only deny an edit; it cannot perform one.
+- Since 2026-09-25, `.github/workflows/notify.yml` runs `web-push` (installed from a committed lockfile via
+  `npm ci --prefix tools/push`, no other dependency) with two repository secrets in its environment and
+  `permissions: contents: read` only — no write scope, no deploy step. It runs on GitHub's own infrastructure,
+  never on this machine.
 
 ## Rules that are also safety properties
 - Frozen data tables and payout formulas ([Rules 1–6](design-docs/core-beliefs.md#rule-1)) prevent silent score inflation.
 - Frozen storage keys and append-only migrations ([Rule 12](design-docs/core-beliefs.md#rule-12)) prevent data loss on upgrade.
-- No in-app AI and no network calls ([Rule 7](design-docs/core-beliefs.md#rule-7)); the approved assistant bridge moves text only through the clipboard, under user action, and is described under "Data in transit".
+- No in-app AI and no network calls the app makes on its own ([Rule 7](design-docs/core-beliefs.md#rule-7)); the
+  approved assistant bridge moves text only through the clipboard, under user action; the one exception, since
+  2026-09-25, is the contentless daily push subscription — under the user's own hand, described under "The
+  daily push" and "Data in transit" above.
 
 ## Reporting
 There is no external bug bounty; open an entry in `docs/exec-plans/tech-debt-tracker.md` with severity S1 for data-loss or exposure issues.

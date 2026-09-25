@@ -125,6 +125,24 @@ this field; nothing about the gate's three step lines, its settings-sheet month 
 save simply has no `gate` key until the first gate write. Mechanics:
 [../product-specs/daily-gate.md](../product-specs/daily-gate.md).
 
+**2026-09-25 additions (the routine guide and the daily push) — schema stays v28, no migration block, no `v`
+bump.** `act` gains one more optional field, `opened?: { [date]: "HH:MM" }` — the day's first-open stamp,
+written once by a root effect on every path that brings the app up (boot, a day change while open, onboarding's
+finish, the demo entry, a backup import); its own map, never under `act.gate` (`gateMonthOf` counts every gate
+entry as a day, so a stamp there would inflate `미통과`). `stampOpened` prunes every date key older than
+`OPENED_KEEP_DAYS` (60) before today on each write, the same bound shape as `act.gate` above, and returns the
+same object when today is already stamped — the idempotence that stops the effect re-firing under StrictMode's
+double run. `settings` gains one more optional field, `pushNotify?` (boolean, absent = off, `pushNotifyOf`) —
+the daily-push switch, written `true` only once `pushManager.subscribe` resolves with a live subscription; the
+subscription itself is **not** a state field at all — it lives only in the browser's `pushManager` and in
+`SettingsModal`'s own component state (`pushSub`), read back with `pushSubscriptionGet()`, so it never appears
+in the save or the backup file. `freshState` is unchanged for both fields, and `demoState` seeds `act.opened`
+(two entries, yesterday and today) but leaves `settings.pushNotify` absent. Neither field is progress or a
+mechanic — a stamp of a user action and a setting, both derived at render everywhere else they are read
+([Rule 9](core-beliefs.md#rule-9)). Mechanics:
+[../product-specs/install-and-backup.md](../product-specs/install-and-backup.md#opening-the-app-at-fixed-times--a-samsung-routine-2026-09-25),
+[../product-specs/notifications.md](../product-specs/notifications.md#the-daily-push-2026-09-25).
+
 **2026-09-18 additions (role story, verdicts, stage progress) — schema stays v28, no migration block, no `v`
 bump.** `role` gains three more optional fields, tolerated by every reader exactly the same shape as `role.stages`
 above and the v26 `meetings[].transcript`/`events[].projectId` change (no backfill, since the form or handler

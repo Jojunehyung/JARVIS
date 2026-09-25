@@ -37,11 +37,16 @@ Home (one quantitative CV — identity, education/career/certification/exam/port
 - In-app AI: generation, judgement, scoring (user decision 2026-08-29). The only AI touchpoint is the copy/paste assistant bridge approved 2026-09-09 ([Rule 7](design-docs/core-beliefs.md#rule-7)): no key, no network, proposals only.
 - Game mechanics: XP, levels, gold, random rewards, story, dating-sim elements ([Rule 7](design-docs/core-beliefs.md#rule-7)).
 - Social features, rankings, sharing.
-- Encouraging copy, streak guilt, notifications that nag. The app still sends none of its own — there is no
-  push server and no browser API that schedules a local alarm while it is closed. The only reminder path is a
-  calendar file the user exports (`캘린더로 내보내기`, [product-specs/schedule.md](product-specs/schedule.md)):
-  its alarms are raised by the phone's own calendar, at times the user chose in the export sheet, stating facts
-  only (a title and a date) — never a guilt line about a streak or a miss.
+- Encouraging copy, streak guilt, notifications that nag. The app itself sends no push of its own — there is no
+  browser API that schedules a local alarm while it is closed. Since 2026-09-25, by the user's own decision
+  (reversing the two earlier records above), the app's own repository sends a **contentless** wake-up push twice
+  a day: it carries nothing the app knows, shows only the on-device `확인 필요` facts the page already rendered,
+  and asks for no more than the push subscription the user copies into a repository secret by hand
+  ([Rule 7](design-docs/core-beliefs.md#rule-7) amendment, [SECURITY.md](SECURITY.md#the-daily-push-2026-09-25)).
+  A separate reminder path stays the calendar file the user exports (`캘린더로 내보내기`,
+  [product-specs/schedule.md](product-specs/schedule.md)): its alarms are raised by the phone's own calendar, at
+  times the user chose in the export sheet, stating facts only (a title and a date) — never a guilt line about a
+  streak or a miss.
 - Automatically estimated scores — every number comes from evidence, a formula, or a check-in.
 - Cloud sync or accounts: state lives in the browser's `localStorage` under `liferpg-*` keys.
 

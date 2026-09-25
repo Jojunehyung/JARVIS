@@ -87,7 +87,16 @@ Opened by the CV's corner button. Title `설정`, a bottom sheet like every othe
   switch is the single source every assistant-bridge packet reads (`packetTracks(state)`); mechanics:
   [assistant-bridge.md](../design-docs/assistant-bridge.md#tracks--what-leaves-the-device-and-the-day-job-switch-v28-the-switch-2026-09-22),
   [SECURITY.md](../SECURITY.md#tracks--the-day-job-switch-2026-09-22).
-- `확인 알림` (2026-09-22, between `AI 요청문` and `데이터`): `SectionLabel`, a checkbox row `확인 필요 알림`
+- `자동 실행` (2026-09-25, between `AI 요청문` and `확인 알림`): `SectionLabel`, a `font-mono text-xs
+  text-zinc-300` line, `openedLine(state, today)` — `오늘 첫 실행 {HH:MM} · 이번 달 실행 {n}일`, or
+  `오늘 아직 열지 않음 · 이번 달 실행 {n}일` before the day's first stamp — then an `<ol>` of five Samsung
+  `모드 및 루틴` steps (`설정 › 모드 및 루틴 › 루틴 › + 를 눌러요` / `조건: 시간 — 08:00, 매일 (두 번째 루틴은
+  20:00)` / `실행: 앱 열기 — 인생 관리를 골라요` / `저장하고 루틴을 켜요` / `배터리 › 백그라운드 사용 제한 ›
+  절전 예외 앱에 인생 관리를 더해요`), and two captions: `앱은 스스로 열리지 않아요 — 정해진 시각에 여는 것은
+  폰의 루틴이에요.` and `첫 실행 시각은 앱이 열릴 때 기록돼요. 루틴이 연 것인지 직접 연 것인지는 구분하지
+  못해요.` No checkbox, no state write — the stamp itself (`act.opened[date]`) is written by a root effect at
+  boot, not from this sheet. Mechanics: [install-and-backup.md](install-and-backup.md#opening-the-app-at-fixed-times--a-samsung-routine-2026-09-25).
+- `확인 알림` (2026-09-22, between `자동 실행` and `푸시 알림`): `SectionLabel`, a checkbox row `확인 필요 알림`
   (`checked={checkNotifyOf(state)}`) → `onSetCheckNotify(e.target.checked)` (root `setCheckNotify`, writes
   `settings.checkNotify` only), then a capability caption (`이 브라우저에서는 알림을 쓸 수 없어요` when the
   browser or an unregistered worker cannot use the notification APIs at all — the checkbox is disabled too;
@@ -96,7 +105,18 @@ Opened by the CV's corner button. Title `설정`, a bottom sheet like every othe
   the always-shown fact caption naming the three facts, the on-device scope, the Android lock-screen note and the
   ≈ 12-hour periodic floor Chrome itself decides. Mechanics, the three facts and the service-worker handlers:
   [notifications.md](notifications.md).
-- `오늘의 관문` (2026-09-24, between `확인 알림` and `데이터`): `SectionLabel`, a `font-mono text-xs text-zinc-300`
+- `푸시 알림` (2026-09-25, between `확인 알림` and `오늘의 관문`): `SectionLabel`, a checkbox row `매일 푸시 알림`
+  (`checked={pushNotifyOf(state)}`, disabled while `!caps.push`) → `togglePush` → `onSetPushNotify(on)` (root
+  `setPushNotify`, writes `settings.pushNotify` only, `true` only once a subscription exists, never touching
+  `settings.checkNotify`), a capability caption (`이 브라우저에서는 푸시를 쓸 수 없어요` with no `PushManager`,
+  else `설치된 앱이 아니에요 — 알림을 누르면 Chrome 탭으로 열려요` when the page is a tab, not an installed
+  app), two rose notices (`알림 권한이 꺼져 있어요 — 폰 설정에서 허용해요` on a refusal, `푸시 구독에 실패했어요
+  — 설치된 앱(Chrome)에서 다시 켜요` on a failed subscribe), and, while on, a status line (`구독 등록됨 ·
+  …{endpoint tail}` or `구독 없음 — 껐다 켜면 다시 등록돼요`) with a `구독 정보 보기 ›` toggle to a read-only
+  subscription textarea, a `복사` button (`copyPacket`, toast `복사했어요 — 저장소 비밀에 붙여넣어요`), the four
+  repository-secret steps, and the always-shown fact caption naming what leaves the device, the contentless
+  payload, the two send times and the tap routing. Mechanics: [notifications.md](notifications.md#the-daily-push-2026-09-25).
+- `오늘의 관문` (2026-09-24, between `푸시 알림` and `데이터` since 2026-09-25, previously between `확인 알림` and `데이터`): `SectionLabel`, a `font-mono text-xs text-zinc-300`
   line, `gateMonthLine(state, today)` — `이번 달 관문 통과 {n}일 · 미통과 {m}일 · 퀴즈 평균 {s}/{t}` or, with no
   quiz entries this month, `… · 퀴즈 없음` — then a caption, `관문은 매일 첫 실행에 열려요. 끄는 설정은 없어요.`
   No checkbox: unlike every other section here, there is no switch, by the user's own decision (decision 2,
