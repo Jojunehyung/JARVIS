@@ -1,5 +1,7 @@
 // Installable app — the service worker registers and controls the page, the app still opens with the
 // network disabled, and a backup round-trips. Runs last: it toggles offline mode and reloads.
+const fs = require("fs");
+const path = require("path");
 module.exports = async (h) => {
   const { step, expectText, closeModal, captureDownload, sleep, page, errors } = h;
 
@@ -115,15 +117,18 @@ module.exports = async (h) => {
   const checkEntry = () => page.evaluate(async () => {
     try { const r = await (await caches.open("life-check")).match("./__check-summary"); return r ? await r.json() : null; } catch { return null; }
   });
-  // The settings sheet's check-notification row: its checkbox state, and a click on it.
-  const checkBox = (click = false) => page.evaluate((c) => {
+  // A settings-sheet switch row by its label: the checkbox state, and a click on it. `checkBox` is the check-notification
+  // row; `pushBox` (2026-09-25) the daily-push row.
+  const switchBox = (labelText, click = false) => page.evaluate((t, c) => {
     const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
-    const label = ov && [...ov.querySelectorAll("label")].find((l) => (l.innerText || "").trim() === "확인 필요 알림");
+    const label = ov && [...ov.querySelectorAll("label")].find((l) => (l.innerText || "").trim() === t);
     const box = label?.querySelector('input[type="checkbox"]');
     if (!box) return null;
     if (c) box.click();
     return { checked: box.checked, disabled: box.disabled };
-  }, click);
+  }, labelText, click);
+  const checkBox = (click = false) => switchBox("확인 필요 알림", click);
+  const pushBox = (click = false) => switchBox("매일 푸시 알림", click);
   const until = async (ms, fn) => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(250); }
@@ -283,6 +288,218 @@ module.exports = async (h) => {
     } finally {
       await writeState(saved);
       await h.reload();
+    }
+  });
+
+  // ── The daily push (2026-09-25): headless Chrome has no push service, so `pushManager` is stubbed at document start and
+  // a push is delivered through CDP; the steps assert what the app controls — the subscribe options and key bytes, the
+  // write order, the settings copy, the raw save, the cache entry, no navigation and no request. The real path was proven
+  // once on desktop (the plan's throwaway (f)). Written, not run.
+  const SECRET_STEPS = [
+    "GitHub 저장소의 Settings › Secrets and variables › Actions를 열어요",
+    "New repository secret을 누르고 Name에 PUSH_SUBSCRIPTION을 적어요",
+    "Secret 칸에 복사한 구독 정보를 그대로 붙여넣고 Add secret을 눌러요",
+    "Actions › Daily push › Run workflow로 한 번 보내 봐요",
+  ];
+  // The key send.mjs signs with, decoded the way the app decodes it (base64url → bytes): the subscribe call must carry it.
+  const sendKey = (fs.readFileSync(path.join(__dirname, "..", "push", "send.mjs"), "utf8").match(/PUSH_VAPID_PUBLIC = "([^"]+)"/) || [])[1];
+  const keyBytes = (key) => {
+    const pad = "=".repeat((4 - (key.length % 4)) % 4);
+    return Array.from(Buffer.from((key + pad).replace(/-/g, "+").replace(/_/g, "/"), "base64"));
+  };
+  // A push-manager stub installed before the app loads: records every call into `window.__pushCalls`, resolves `subscribe`
+  // after 800 ms (so the write order is observable) or rejects when `refuse`; `window.__pushSub` is the one subscription.
+  const installPushStub = (pg, { refuse = false } = {}) => pg.evaluateOnNewDocument((refuseIt) => {
+    window.PushManager = window.PushManager || function PushManager() {};
+    window.__pushSub = null;
+    window.__pushCalls = [];
+    const stub = {
+      getSubscription() { return Promise.resolve(window.__pushSub); },
+      subscribe(opts) {
+        window.__pushCalls.push({ userVisibleOnly: opts.userVisibleOnly, key: Array.from(new Uint8Array(opts.applicationServerKey)) });
+        if (refuseIt) return Promise.reject(new Error("e2e refuse"));
+        return new Promise((resolve) => setTimeout(() => {
+          window.__pushSub = {
+            endpoint: "https://push.example/send/e2e-abcdef123456",
+            toJSON() { return { endpoint: this.endpoint, expirationTime: null, keys: { p256dh: "e2e-p256dh", auth: "e2e-auth" } }; },
+            unsubscribe() { window.__pushCalls.push({ unsubscribe: true }); window.__pushSub = null; return Promise.resolve(true); },
+          };
+          resolve(window.__pushSub);
+        }, 800));
+      },
+    };
+    Object.defineProperty(ServiceWorkerRegistration.prototype, "pushManager", { configurable: true, get() { return stub; } });
+  }, refuse);
+  const pushCalls = () => page.evaluate(() => window.__pushCalls || []);
+  const subscribeCount = (calls) => calls.filter((c) => "userVisibleOnly" in c).length;
+  const toastText = () => page.evaluate(() => (document.querySelector(".fixed.bottom-16")?.innerText || "").trim());
+
+  await step("the push switch subscribes with the app's public key, writes settings.pushNotify only after the subscription resolved, states the subscription, copies it, and never lets it into the save", async () => {
+    const saved = await readState();
+    try {
+      await page.browser().defaultBrowserContext().overridePermissions(origin(), ["notifications"]);
+      await installPushStub(page);
+      await page.evaluateOnNewDocument(() => { navigator.clipboard.writeText = (t) => { window.__copied = t; return Promise.resolve(); }; });
+      const planted = structuredClone(saved);
+      if (planted.settings) delete planted.settings.pushNotify;
+      await writeState(planted);
+      await h.reload();
+      await h.openSettings();
+      const text = await h.overlayText();
+      const order = ["확인 알림", "푸시 알림", "오늘의 관문"].map((t) => text.indexOf(t));
+      if (!(order[0] >= 0 && order[0] < order[1] && order[1] < order[2])) throw new Error("the section order is wrong: " + JSON.stringify(order));
+      if (!text.includes("설치된 앱이 아니에요 — 알림을 누르면 Chrome 탭으로 열려요")) throw new Error("the tab caption is missing (headless Chrome is not an installed app)");
+      if (text.includes("이 브라우저에서는 푸시를 쓸 수 없어요")) throw new Error("the no-push caption is shown although the stubbed push manager exists");
+      const box0 = await pushBox();
+      if (!box0 || box0.checked || box0.disabled) throw new Error("the push switch is not an enabled, unchecked box: " + JSON.stringify(box0));
+
+      // The write waits for `subscribe`: nothing at 400 ms, `true` once the 800 ms stub resolved.
+      const before = await readState();
+      await pushBox(true);
+      await sleep(400);
+      const mid = await readState();
+      if (mid.settings && "pushNotify" in mid.settings) throw new Error("settings.pushNotify was written before subscribe resolved: " + mid.settings.pushNotify);
+      await sleep(900);
+      const after = await readState();
+      if (after.settings?.pushNotify !== true) throw new Error("settings.pushNotify is " + after.settings?.pushNotify);
+      if (JSON.stringify(changedKeys(before, after)) !== JSON.stringify(["settings"])) throw new Error("switch-on moved: " + JSON.stringify(changedKeys(before, after)));
+      if (after.settings.checkNotify !== before.settings.checkNotify || after.settings.workInAi !== before.settings.workInAi) throw new Error("switch-on moved another setting: " + JSON.stringify(after.settings));
+      const calls = await pushCalls();
+      if (subscribeCount(calls) !== 1 || calls[0].userVisibleOnly !== true) throw new Error("subscribe options: " + JSON.stringify(calls));
+      const expected = keyBytes(sendKey || "");
+      if (expected.length !== 65 || expected[0] !== 4) throw new Error("send.mjs's key is not a 65-byte uncompressed point: " + expected.length);
+      if (JSON.stringify(calls[0].key) !== JSON.stringify(expected)) throw new Error("the subscribe key differs from send.mjs's public key");
+
+      // The sheet states the subscription, shows it on request and copies it; the save never carries it.
+      if (!(await h.overlayText()).includes("구독 등록됨 · …abcdef123456")) throw new Error("the status line is missing: " + (await h.overlayText()).slice(0, 800));
+      await h.clickInModalExact("구독 정보 보기 ›");
+      const shown = await page.evaluate(() => {
+        const ta = document.querySelector('textarea[aria-label="푸시 구독 정보"]');
+        const ol = ta?.closest("div")?.querySelector("ol");
+        return ta ? { value: ta.value, items: ol ? [...ol.querySelectorAll("li")].map((li) => (li.innerText || "").trim()) : null } : null;
+      });
+      if (!shown) throw new Error("the subscription textarea did not open");
+      let subJson = null;
+      try { subJson = JSON.parse(shown.value); } catch { throw new Error("the textarea is not JSON: " + shown.value.slice(0, 120)); }
+      if (!subJson.endpoint || !subJson.keys?.p256dh || !subJson.keys?.auth) throw new Error("the subscription JSON lacks a field: " + shown.value.slice(0, 200));
+      if (JSON.stringify(shown.items) !== JSON.stringify(SECRET_STEPS)) throw new Error("the secret steps differ: " + JSON.stringify(shown.items));
+      await h.clickInModalExact("복사");
+      const copied = await page.evaluate(() => window.__copied);
+      if (copied !== shown.value) throw new Error("the copied text differs from the textarea");
+      if (!(await toastText()).includes("복사했어요 — 저장소 비밀에 붙여넣어요")) throw new Error("the copy toast is missing: " + (await toastText()));
+      const raw = await page.evaluate((k) => localStorage.getItem(k) || "", KEY);
+      if (raw.includes("push.example") || raw.includes("e2e-p256dh")) throw new Error("the subscription entered the save");
+
+      // Off: unsubscribe first, then `false`; the status line goes.
+      const before2 = await readState();
+      await pushBox(true);
+      await sleep(600);
+      const after2 = await readState();
+      if (after2.settings?.pushNotify !== false) throw new Error("switch-off left settings.pushNotify " + after2.settings?.pushNotify);
+      if (JSON.stringify(changedKeys(before2, after2)) !== JSON.stringify(["settings"])) throw new Error("switch-off moved: " + JSON.stringify(changedKeys(before2, after2)));
+      const calls2 = await pushCalls();
+      if (JSON.stringify(calls2[calls2.length - 1]) !== JSON.stringify({ unsubscribe: true })) throw new Error("switch-off did not unsubscribe: " + JSON.stringify(calls2));
+      if ((await h.overlayText()).includes("구독 등록됨")) throw new Error("the status line survived switch-off");
+      await closeModal();
+    } finally {
+      await restore(saved);
+    }
+  });
+
+  await step("a refused subscribe leaves the push switch off and writes nothing; a denied permission does the same and never touches checkNotify", async () => {
+    const saved = await readState();
+    try {
+      await page.browser().defaultBrowserContext().overridePermissions(origin(), ["notifications"]);
+      await installPushStub(page, { refuse: true });
+      const planted = structuredClone(saved);
+      if (planted.settings) delete planted.settings.pushNotify;
+      await writeState(planted);
+      await h.reload();
+      await h.openSettings();
+      const before = await readState();
+      await pushBox(true);
+      await sleep(600);
+      const after = await readState();
+      if (after.settings && "pushNotify" in after.settings) throw new Error("a refused subscribe wrote settings.pushNotify = " + after.settings.pushNotify);
+      if (JSON.stringify(changedKeys(before, after)) !== "[]") throw new Error("a refused subscribe moved: " + JSON.stringify(changedKeys(before, after)));
+      await expectText("푸시 구독에 실패했어요 — 설치된 앱(Chrome)에서 다시 켜요");
+      const box = await pushBox();
+      if (!box || box.checked) throw new Error("the switch reads checked after a refused subscribe: " + JSON.stringify(box));
+      const n1 = subscribeCount(await pushCalls());
+      if (n1 !== 1) throw new Error("subscribe was called " + n1 + " time(s)");
+
+      // A denied permission: the stub stands in for the prompt; nothing is written and `subscribe` is never reached.
+      await page.browser().defaultBrowserContext().overridePermissions(origin(), []);
+      await page.evaluate(() => { Notification.requestPermission = () => Promise.resolve("denied"); });
+      await pushBox(true);
+      await sleep(600);
+      const after2 = await readState();
+      await expectText("알림 권한이 꺼져 있어요 — 폰 설정에서 허용해요");
+      if (after2.settings && "pushNotify" in after2.settings) throw new Error("a refused permission wrote settings.pushNotify = " + after2.settings.pushNotify);
+      if (JSON.stringify(changedKeys(before, after2)) !== "[]") throw new Error("a refused permission moved: " + JSON.stringify(changedKeys(before, after2)));
+      if (after2.settings?.checkNotify !== before.settings?.checkNotify) throw new Error("checkNotify moved: " + after2.settings?.checkNotify);
+      if (subscribeCount(await pushCalls()) !== n1) throw new Error("subscribe was called after a refused permission");
+      await closeModal();
+    } finally {
+      await restore(saved);
+    }
+  });
+
+  await step("a delivered push shows the cached text only: no payload read, no request, no navigation, the cache entry unchanged", async () => {
+    const saved = await readState();
+    const today = await dstrIn(0);
+    let cdp = null;
+    let navs = 0, reqs = 0;
+    const onNav = (f) => { if (f === page.mainFrame()) navs++; };
+    const onReq = () => { reqs++; };
+    try {
+      // No push stub is needed: the worker handles the push; the earlier steps' document scripts are harmless here.
+      await page.browser().defaultBrowserContext().overridePermissions(origin(), ["notifications"]);
+      const planted = structuredClone(saved);
+      planted.settings = { ...(planted.settings || {}), checkNotify: true };
+      planted.work = [{ id: "e2e-push-carried", date: await dstrIn(-1), title: "E2E 푸시 이월", done: false, createdAt: await dstrIn(-1), track: "biz" }];
+      planted.act = { ...planted.act, briefingSeen: today };
+      await writeState(planted);
+      await h.reload();
+      await sleep(2500); // the refresh effect's debounce, then the cache write
+      const entryBefore = await until(4000, checkEntry);
+      if (!entryBefore) throw new Error("no life-check cache entry to show");
+      cdp = await page.createCDPSession();
+      const regs = [];
+      cdp.on("ServiceWorker.workerRegistrationUpdated", (e) => regs.push(...e.registrations));
+      await cdp.send("ServiceWorker.enable");
+      await sleep(500);
+      const reg = regs.find((r) => r.scopeURL.startsWith(origin()) && !r.isDeleted);
+      if (!reg) throw new Error("no worker registration for the origin: " + JSON.stringify(regs.map((r) => r.scopeURL)));
+      page.on("framenavigated", onNav);
+      page.on("request", onReq);
+      await cdp.send("ServiceWorker.deliverPushMessage", { origin: origin(), registrationId: reg.registrationId, data: JSON.stringify({ open: "issues", secret: "PUSH-PAYLOAD-SENTINEL" }) });
+      await sleep(1500);
+      page.off("framenavigated", onNav);
+      page.off("request", onReq);
+      if (navs !== 0) throw new Error("the push navigated the page " + navs + " time(s)");
+      if (reqs !== 0) throw new Error("the push made " + reqs + " request(s) from the page");
+      if (JSON.stringify(await checkEntry()) !== JSON.stringify(entryBefore)) throw new Error("the push changed the cache entry");
+      // Soft: headless Chrome may not surface shown notifications; the number is recorded, and asserted only when above zero.
+      const notes = await page.evaluate(async () => {
+        try { return (await (await navigator.serviceWorker.ready).getNotifications({ tag: "life-check" })).map((n) => ({ title: n.title, body: n.body, data: n.data })); } catch { return null; }
+      });
+      h.metrics.pushNotificationsShown = notes ? notes.length : -1;
+      if (notes && notes.length) {
+        const n0 = notes[0];
+        if (n0.title !== entryBefore.title || n0.body !== entryBefore.body) throw new Error("the shown notification is not the cached text: " + JSON.stringify(n0));
+        if (n0.data?.open !== "issues") throw new Error("the notification does not name the issue list: " + JSON.stringify(n0.data));
+        if (JSON.stringify(n0).includes("PUSH-PAYLOAD-SENTINEL")) throw new Error("the payload reached the notification");
+      }
+      const sw = await page.evaluate(async () => (await fetch("./sw.js", { cache: "no-store" })).text());
+      const at = sw.indexOf('addEventListener("push"');
+      const pushBlock = at >= 0 ? sw.slice(at, sw.indexOf("});", at)) : "";
+      if (!pushBlock || /e\.data|fetch\(|\.json\(/.test(pushBlock)) throw new Error("the served push handler reads the payload or makes a request: " + pushBlock);
+    } finally {
+      page.off("framenavigated", onNav);
+      page.off("request", onReq);
+      if (cdp) { try { await cdp.detach(); } catch { /* already detached */ } }
+      await restore(saved);
     }
   });
 

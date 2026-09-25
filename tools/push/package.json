@@ -1,0 +1,9 @@
+{
+  "name": "life-manager-push",
+  "private": true,
+  "type": "module",
+  "description": "Sends the daily contentless Web Push from GitHub Actions (.github/workflows/notify.yml). No app code lives here.",
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}

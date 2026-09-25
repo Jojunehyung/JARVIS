@@ -2253,6 +2253,9 @@ const PACKET_TRACKS_NO_WORK = ["biz", "personal"];                // the tracks 
 const workInAiOf = (state) => state?.settings?.workInAi !== false;
 // Whether the local `확인 필요` notification is on (2026-09-22): absent reads as off — no migrate block.
 const checkNotifyOf = (state) => state?.settings?.checkNotify === true;
+// Whether the daily push is on (2026-09-25): absent reads as off — no migrate block; true is written only after a
+// subscription exists.
+const pushNotifyOf = (state) => state?.settings?.pushNotify === true;
 // The tracks a packet may carry: every track while the switch is on, else business and private only.
 const packetTracks = (state) => (workInAiOf(state) ? TRACKS : PACKET_TRACKS_NO_WORK);
 const trackOf = (rec, fallback = "work") => (TRACKS.includes(rec?.track) ? rec.track : fallback);
@@ -3128,6 +3131,9 @@ const CHECK_CACHE_REQ = "./__check-summary"; // relative, so a subpath deploy an
 const CHECK_STALE_MS = 48 * 3600 * 1000;   // an entry older than this no longer suppresses a re-alert (the worker shows generic text past it)
 const CHECK_SYNC_MIN_MS = 12 * 3600 * 1000; // the periodic sync floor asked of Chrome
 const CHECK_DEBOUNCE_MS = 1500;            // a burst of edits writes the entry once
+// The daily push (2026-09-25): the app's VAPID public key — the same string tools/push/send.mjs signs with (smoke 7(f)
+// pins them equal); the private key lives only in the repository secret VAPID_PRIVATE_KEY
+const PUSH_VAPID_PUBLIC = "BNY_5NIX_6aiCRhaKXmthcAcsgQlfupE2lHo_MSKyHemYEOfxke83RjUYk1SPs55JC7GWeSF3IDcV4WhRYc8agM";
 
 /* ── The daily gate (2026-09-24) — `오늘의 관문`: read both screens to the end, pass a locally graded quiz, refresh
    today's work. Everything stored is a stamp of a user action under `act.gate[date]` (`HH:MM` times, a quiz score);
@@ -4761,8 +4767,11 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *   settings: { bizHoursPerWeek,     // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
  *               workInAi?,           // (2026-09-22, still v28, no migrate block) whether day-job records go into AI packets;
  *                                    // absent reads as true, the settings checkbox writes true/false (`workInAiOf`)
- *               checkNotify? },      // (2026-09-22, still v28, no migrate block) the `확인 필요` notification switch; absent reads
+ *               checkNotify?,        // (2026-09-22, still v28, no migrate block) the `확인 필요` notification switch; absent reads
  *                                    // as off (`checkNotifyOf`). The Cache API entry it feeds is a mirror, not state (rule 9)
+ *               pushNotify? },       // (2026-09-25, still v28, no migrate block) the daily Web Push switch; absent reads as off
+ *                                    // (`pushNotifyOf`); written true only after `pushManager.subscribe` resolved. The subscription
+ *                                    // itself is browser state — never in the save, never in the backup file
  *   lastTick, dModel
  * }
  * Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), the role-model gap facts (`roleAreas`),
@@ -6716,13 +6725,14 @@ function JournalModal({ state, today, onClose, onSave }) {
    are shared by `BridgeModal` (the daily check-in) and `WorkBridgeModal` (`오늘 업무 만들기`); each modal owns its
    packet, its parser and its confirm view. ── */
 // Copies the packet text: the clipboard API first, then `select()` + `execCommand("copy")` on the read-only textarea.
-const copyPacket = async (taRef, text, onToast) => {
+// `msg` is the success toast (2026-09-25): the packets keep the default, the push section passes its own.
+const copyPacket = async (taRef, text, onToast, msg = "복사했어요 — AI 채팅에 붙여넣어요") => {
   const ta = taRef.current;
   try {
-    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); onToast("복사했어요 — AI 채팅에 붙여넣어요"); return; }
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); onToast(msg); return; }
     throw new Error("no clipboard");
   } catch {
-    try { ta?.select(); document.execCommand("copy"); onToast("복사했어요 — AI 채팅에 붙여넣어요"); }
+    try { ta?.select(); document.execCommand("copy"); onToast(msg); }
     catch { onToast("자동 복사 불가 — 글을 길게 눌러 복사해요"); }
   }
 };
@@ -7872,15 +7882,21 @@ function StudyVerifyModal({ task, onClose, onDone }) {
    the CV states the counts and this sheet holds every earned item, so nothing earned becomes unreachable (rule 13).
    Both live in the one `modal` slot and write nothing to the save (rule 9). */
 
-function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSetWorkInAi, onSetCheckNotify, onExport, onImport, onReset }) {
+function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSetWorkInAi, onSetCheckNotify, onSetPushNotify, onToast, onExport, onImport, onReset }) {
   const [hours, setHours] = useState(String(bizHoursOf(state)));
   const [hoursErr, setHoursErr] = useState("");
   // What this browser can do for the `확인 필요` notification: the APIs plus a registered worker (the single-file demo and
   // the dev server have none), and whether periodic sync is usable — desktop Chrome exposes `periodicSync` on every
-  // registration but grants the permission to an installed app only, so both are read.
+  // registration but grants the permission to an installed app only, so both are read. For the daily push (2026-09-25):
+  // a push manager on the registration, and whether this is the installed app (a tap from a tab opens a Chrome tab).
   const hasApi = typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator;
-  const [caps, setCaps] = useState({ api: hasApi, periodic: false });
+  const [caps, setCaps] = useState({ api: hasApi, periodic: false, push: false, standalone: false });
   const [denied, setDenied] = useState(false);
+  // The push subscription: read back from the browser's push manager, held here only — never the save (planner decision 7).
+  const [pushSub, setPushSub] = useState(null);
+  const [pushErr, setPushErr] = useState("");
+  const [showSub, setShowSub] = useState(false);
+  const subRef = useRef(null);
   useEffect(() => {
     if (!hasApi) return undefined;
     let live = true;
@@ -7889,13 +7905,22 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
       try { reg = (await navigator.serviceWorker.getRegistration()) || null; } catch {}
       let periodic = false;
       try { periodic = !!reg && "periodicSync" in reg && (await navigator.permissions.query({ name: "periodic-background-sync" })).state === "granted"; } catch {}
-      if (live) setCaps({ api: !!reg, periodic });
+      const push = !!reg && "pushManager" in reg && typeof PushManager !== "undefined";
+      let standalone = false;
+      try { standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch {}
+      if (live) setCaps({ api: !!reg, periodic, push, standalone });
+      if (push) { const sub = await pushSubscriptionGet(); if (live) setPushSub(sub); }
     })();
     return () => { live = false; };
   }, [hasApi]);
   const toggleCheck = async (e) => {
     const res = await onSetCheckNotify(e.target.checked);
     setDenied(res === "denied");
+  };
+  const togglePush = async (e) => {
+    const res = await onSetPushNotify(e.target.checked);
+    setPushErr(res);
+    setPushSub(await pushSubscriptionGet());
   };
   // The weekly business budget (v28): a whole number of hours in one week, 0 to 168.
   const saveHours = () => {
@@ -7966,6 +7991,42 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
             : !caps.periodic && <p className="text-xs text-zinc-500 mt-1.5">설치된 앱에서만 주기 갱신이 돼요</p>}
           {denied && <p className="text-xs text-rose-400 mt-1.5">알림 권한이 꺼져 있어요 — 폰 설정에서 허용해요</p>}
           <p className="text-xs text-zinc-500 mt-1.5">켜면 앱을 열 때마다 세 가지를 확인해 알림 하나로 보여줘요 — 오늘 할 일 미갱신, 회의록 없는 지난 일정(14일), 이월 업무. 내용은 이 기기에만 있어요. Android는 잠금 화면에 제목이 보일 수 있어요. 앱을 닫아 둔 동안은 Chrome이 약 12시간마다 한 번까지만 갱신하고, 시점은 Chrome이 정해요.</p>
+        </div>
+        {/* 2026-09-25: the daily push — `settings.pushNotify` is written by the root only after a subscription exists; the
+            subscription itself is component state read back from the browser, never the save */}
+        <div>
+          <SectionLabel tone="text-cyan-400">푸시 알림</SectionLabel>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={pushNotifyOf(state)} disabled={!caps.push} onChange={togglePush} className="mt-0.5 shrink-0" />
+            <span className={`text-sm ${caps.push ? "text-zinc-200" : "text-zinc-500"}`}>매일 푸시 알림</span>
+          </label>
+          {!caps.push
+            ? <p className="text-xs text-zinc-500 mt-1.5">이 브라우저에서는 푸시를 쓸 수 없어요</p>
+            : !caps.standalone && <p className="text-xs text-zinc-500 mt-1.5">설치된 앱이 아니에요 — 알림을 누르면 Chrome 탭으로 열려요</p>}
+          {pushErr === "denied" && <p className="text-xs text-rose-400 mt-1.5">알림 권한이 꺼져 있어요 — 폰 설정에서 허용해요</p>}
+          {pushErr === "failed" && <p className="text-xs text-rose-400 mt-1.5">푸시 구독에 실패했어요 — 설치된 앱(Chrome)에서 다시 켜요</p>}
+          {pushNotifyOf(state) && (
+            <p className="font-mono text-xs text-zinc-300 mt-1.5">{pushSub ? `구독 등록됨 · ${pushEndpointTail(pushSub)}` : "구독 없음 — 껐다 켜면 다시 등록돼요"}</p>
+          )}
+          {pushNotifyOf(state) && pushSub && (
+            <div className="mt-1.5">
+              <button onClick={() => setShowSub((v) => !v)} className="text-xs text-cyan-400">구독 정보 보기 ›</button>
+              {showSub && (
+                <div className="mt-1.5 space-y-1.5">
+                  <textarea ref={subRef} readOnly aria-label="푸시 구독 정보" value={JSON.stringify(pushSub.toJSON())} className="w-full h-24 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs font-mono" />
+                  <button onClick={() => copyPacket(subRef, JSON.stringify(pushSub.toJSON()), onToast, "복사했어요 — 저장소 비밀에 붙여넣어요")}
+                    className="shrink-0 px-3 py-2 rounded-xl border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">복사</button>
+                  <ol className="text-xs text-zinc-400 mt-1.5 space-y-1 list-decimal list-inside">
+                    <li>GitHub 저장소의 Settings › Secrets and variables › Actions를 열어요</li>
+                    <li>New repository secret을 누르고 Name에 PUSH_SUBSCRIPTION을 적어요</li>
+                    <li>Secret 칸에 복사한 구독 정보를 그대로 붙여넣고 Add secret을 눌러요</li>
+                    <li>Actions › Daily push › Run workflow로 한 번 보내 봐요</li>
+                  </ol>
+                </div>
+              )}
+            </div>
+          )}
+          <p className="text-xs text-zinc-500 mt-1.5">이 기기를 떠나는 것은 구독 정보(주소와 키 두 개)뿐이고, 저장소 비밀에 직접 붙여넣을 때만 나가요. 알림에는 내용이 실리지 않아요 — 앱이 마지막으로 남긴 확인 필요 문구를 보여줘요. 매일 08:00·20:00에 보내지만 GitHub 사정으로 몇 분에서 수십 분 늦을 수 있어요. 알림을 누르면 앱이 열려요.</p>
         </div>
         {/* 2026-09-24: the daily gate's month line — stamps read from `act.gate`, no switch (user decision 2) */}
         <div>
@@ -11603,6 +11664,35 @@ const checkRefresh = async (state, today) => {
   } catch { /* a refused notification changes nothing in the app */ }
 };
 
+/* The daily push's browser side (2026-09-25). The subscription is browser state (`pushManager`), read back when the
+   settings sheet needs it and never written to the save; the app makes no request of its own — the browser's push
+   service does, on subscribe. `askNotificationPermission` is shared with the `확인 필요` switch. */
+const askNotificationPermission = async () => {
+  try { return (await Notification.requestPermission()) === "granted"; } catch { return false; }
+};
+// base64url → bytes, the shape `applicationServerKey` takes (a 65-byte uncompressed P-256 point).
+const pushKeyBytes = (key) => {
+  const pad = "=".repeat((4 - (key.length % 4)) % 4);
+  const raw = atob((key + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+};
+const pushSubscriptionGet = async () => {
+  const reg = await checkRegistration();
+  try { return (await reg?.pushManager?.getSubscription?.()) || null; } catch { return null; }
+};
+// Subscribes with the app's own key; null when the browser refuses (a tab that is not an installed app may).
+const pushSubscribe = async () => {
+  const reg = await checkRegistration();
+  if (!reg?.pushManager?.subscribe) return null;
+  try { return await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: pushKeyBytes(PUSH_VAPID_PUBLIC) }); } catch { return null; }
+};
+const pushUnsubscribe = async () => {
+  const sub = await pushSubscriptionGet();
+  try { await sub?.unsubscribe?.(); } catch { /* already gone */ }
+};
+// The last 12 characters of the endpoint — enough to compare with the secret by eye, never the whole address on screen.
+const pushEndpointTail = (sub) => `…${String(sub?.endpoint || "").slice(-12)}`;
+
 export default function LifeManager() {
   const [phase, setPhase] = useState("loading");
   const [state, setState] = useState(null);
@@ -12671,12 +12761,28 @@ export default function LifeManager() {
       checkNotifyTeardown();
       return "";
     }
-    let res = "denied";
-    try { res = await Notification.requestPermission(); } catch { /* no API or refused */ }
-    if (res !== "granted") return "denied";
+    if (!(await askNotificationPermission())) return "denied";
     write(true);
     showToast({ msg: "확인 필요 알림 켜짐" });
     checkSyncRegister();
+    return "";
+  };
+  // The daily push switch (2026-09-25): on asks the notification permission, subscribes with the app's key and writes
+  // `settings.pushNotify: true` only once the subscription exists — a refusal or a failed subscribe writes nothing and
+  // returns what the sheet states; off unsubscribes first, then writes false. `checkNotify` is never touched.
+  const setPushNotify = async (on) => {
+    const write = (v) => setState((prev) => { const s = structuredClone(prev); s.settings = { ...(s.settings || {}), pushNotify: v }; return s; });
+    if (!on) {
+      await pushUnsubscribe();
+      write(false);
+      showToast({ msg: "매일 푸시 알림 꺼짐" });
+      return "";
+    }
+    if (!(await askNotificationPermission())) return "denied";
+    const sub = await pushSubscribe();
+    if (!sub) return "failed";
+    write(true);
+    showToast({ msg: "매일 푸시 알림 켜짐" });
     return "";
   };
   const removeWork = (id) => {
@@ -13220,7 +13326,7 @@ export default function LifeManager() {
       {modal?.type === "settings" && (
         <SettingsModal state={state} today={today} onClose={() => setModal(null)}
           onRoleModel={() => setModal({ type: "role" })} onSetBizHours={setBizHours} onSetWorkInAi={setWorkInAi} onSetCheckNotify={setCheckNotify}
-          onExport={exportBackup} onImport={askImport}
+          onSetPushNotify={setPushNotify} onToast={(msg) => showToast({ msg })} onExport={exportBackup} onImport={askImport}
           onReset={() => { setModal(null); resetAll(); }} />
       )}
       {modal?.type === "wall" && (

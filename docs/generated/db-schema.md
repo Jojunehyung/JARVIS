@@ -142,8 +142,11 @@
   settings: { bizHoursPerWeek,     // (v28) the weekly business time budget the user typed — a setting, never a measure (rule 8)
               workInAi?,           // (2026-09-22, still v28, no migrate block) whether day-job records go into AI packets;
                                    // absent reads as true, the settings checkbox writes true/false (`workInAiOf`)
-              checkNotify? },      // (2026-09-22, still v28, no migrate block) the `확인 필요` notification switch; absent reads
+              checkNotify?,        // (2026-09-22, still v28, no migrate block) the `확인 필요` notification switch; absent reads
                                    // as off (`checkNotifyOf`). The Cache API entry it feeds is a mirror, not state (rule 9)
+              pushNotify? },       // (2026-09-25, still v28, no migrate block) the daily Web Push switch; absent reads as off
+                                   // (`pushNotifyOf`); written true only after `pushManager.subscribe` resolved. The subscription
+                                   // itself is browser state — never in the save, never in the backup file
   lastTick, dModel
 }
 Derived values (never stored): KR/goal progress (`krProgress`/`goalProgress`), pace (`paceOf`), the role-model gap facts (`roleAreas`),
@@ -482,19 +485,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1332 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6886 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6886 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6886 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 9056 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 9479 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 11649 | App root |
-| `liferpg-img-${slot}` | 11734 | App root |
-| `liferpg-img-ev-${id}` | 11757 | App root |
-| `liferpg-img-ev-${q.id}` | 11939 | App root |
-| `liferpg-img-ev-${t.id}` | 12860 | App root |
-| `liferpg-img-study-${t.id}-1` | 12860 | App root |
-| `liferpg-img-study-${t.id}-2` | 12860 | App root |
-| `liferpg-img-folio-${f.id}` | 12866 | App root |
+| `liferpg-img-ev-${task.id}` | 6896 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6896 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6896 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 9117 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 9540 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 11739 | App root |
+| `liferpg-img-${slot}` | 11824 | App root |
+| `liferpg-img-ev-${id}` | 11847 | App root |
+| `liferpg-img-ev-${q.id}` | 12029 | App root |
+| `liferpg-img-ev-${t.id}` | 12966 | App root |
+| `liferpg-img-study-${t.id}-1` | 12966 | App root |
+| `liferpg-img-study-${t.id}-2` | 12966 | App root |
+| `liferpg-img-folio-${f.id}` | 12972 | App root |
 
 ## Demo data (`demoState`)
 

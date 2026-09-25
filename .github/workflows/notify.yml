@@ -1,0 +1,33 @@
+# The daily push (2026-09-25): two contentless wake-ups a day, 08:00 and 20:00 Asia/Seoul (23:00 and 11:00 UTC), sent by
+# tools/push/send.mjs to the one subscription the user pasted into the repository secret PUSH_SUBSCRIPTION, signed with
+# VAPID_PRIVATE_KEY. The service worker shows the text the app last cached; nothing about the records travels.
+# GitHub's cron may start minutes to over an hour late, and GitHub disables a schedule after 60 days without
+# repository activity — a manual run (Run workflow) re-enables it. Without the secrets the run logs and succeeds.
+name: Daily push
+
+on:
+  schedule:
+    - cron: "0 23 * * *"
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: push
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --prefix tools/push
+      - run: node tools/push/send.mjs
+        env:
+          PUSH_SUBSCRIPTION: ${{ secrets.PUSH_SUBSCRIPTION }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}

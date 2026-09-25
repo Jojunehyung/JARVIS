@@ -1,6 +1,8 @@
 // Engine smoke: pure-function checks on the data tables and payout logic, no browser.
 // Structure integrity → longest-name matching → ladder differential payouts → representative job × cert payouts.
 const S = require("./lib/source");
+const fs = require("fs");
+const path = require("path");
 
 const src = S.readSrc();
 const CERTS = S.evalConst("CERTS", src), CERT_CATS = S.evalConst("CERT_CATS", src), WEIGHT_MATRIX = S.evalConst("WEIGHT_MATRIX", src);
@@ -400,8 +402,8 @@ console.log("calendar file: 19 check groups");
   const CHECK = new Function([
     ...["dstr", "shiftDay", "daysBetween", "MAX_OCC", "occurrencesOf", "meetingOrder", "byCreated", "workOn", "eventProjectOf",
       "CHECK_MINUTES_DAYS", "CHECK_LIST_MAX", "CHECK_TAG", "CHECK_CACHE", "CHECK_CACHE_REQ", "CHECK_STALE_MS", "OPEN_PARAM_TYPES",
-      "gateRefreshedOf", "checkSummaryOf", "checkNotificationOf"].map(lift),
-  ].join("\n") + "\nreturn { checkSummaryOf, checkNotificationOf, CHECK_TAG, CHECK_CACHE, CHECK_CACHE_REQ, CHECK_STALE_MS, OPEN_PARAM_TYPES };")();
+      "gateRefreshedOf", "checkSummaryOf", "checkNotificationOf", "PUSH_VAPID_PUBLIC", "pushKeyBytes"].map(lift),
+  ].join("\n") + "\nreturn { checkSummaryOf, checkNotificationOf, CHECK_TAG, CHECK_CACHE, CHECK_CACHE_REQ, CHECK_STALE_MS, OPEN_PARAM_TYPES, PUSH_VAPID_PUBLIC, pushKeyBytes };")();
   const today = "2026-09-22";
   const sum = (st) => CHECK.checkSummaryOf({ work: [], events: [], meetings: [], meetingProjects: [{ id: "P", name: "프로젝트" }], ...st }, today);
   const text = (st) => CHECK.checkNotificationOf(sum(st));
@@ -468,6 +470,38 @@ console.log("calendar file: 19 check groups");
   check(sw.includes('addEventListener("push"') && sw.includes("const showCheck") && sw.includes("showCheck(true)") && sw.includes("showCheck(false)"), "the push handler and the periodic sync share showCheck; the push re-alerts");
   const pushBlock = sw.slice(sw.indexOf('addEventListener("push"'), sw.indexOf("});", sw.indexOf('addEventListener("push"')));
   check(!/e\.data|fetch\(|\.json\(/.test(pushBlock), "the push handler reads no payload and makes no request");
+
+  // (f) the daily push (2026-09-25): tools/push/send.mjs signs with the app's public key, prints fixed strings and status
+  // codes only (the repository and its Actions logs are public), and .github/workflows/notify.yml runs it at 23:00 and
+  // 11:00 UTC with the two secrets and read-only contents — none of these files is inside finish/lang-check's walk
+  const push = fs.readFileSync(path.join(__dirname, "..", "push", "send.mjs"), "utf8");
+  const wf = fs.readFileSync(path.join(__dirname, "..", "..", ".github", "workflows", "notify.yml"), "utf8");
+  const ignore = fs.readFileSync(path.join(__dirname, "..", "..", ".gitignore"), "utf8");
+  const keyOf = (t) => (t.match(/PUSH_VAPID_PUBLIC = "([^"]+)"/) || [])[1];
+  check(keyOf(push) === CHECK.PUSH_VAPID_PUBLIC, "send.mjs signs with the app's public key");
+  check(/^[A-Za-z0-9_-]{87}$/.test(CHECK.PUSH_VAPID_PUBLIC), "a base64url P-256 public key, 87 chars");
+  const kb = CHECK.pushKeyBytes(CHECK.PUSH_VAPID_PUBLIC);
+  check(kb.length === 65 && kb[0] === 4, `decodes to a 65-byte uncompressed point: ${kb.length} bytes, first ${kb[0]}`);
+  check(Array.from(CHECK.pushKeyBytes("AQID")).join() === "1,2,3", "base64url padding is restored");
+  for (const t of ["secrets not set", "subscription expired — copy it again from the app", 'urgency: "high"', 'topic: "life-check"', "TTL: TTL_SECONDS",
+    "process.exit(0)", "process.exit(2)", 'JSON.stringify({ open: "issues" })', "https://github.com/Jojunehyung/JARVIS"]) {
+    check(push.includes(t), `send.mjs has ${t}`);
+  }
+  // The no-print rule: every console call is a console.log of a fixed string or a template interpolating a status code only.
+  const calls = push.match(/console\.\w+\([^\n]*\)/g) || [];
+  const plain = /^console\.log\(("[^"]*"|`(?:[^`$]|\$\{(?:code \|\| "no status"|res\.statusCode)\})*`)\)$/;
+  check(calls.length >= 4 && calls.every((c) => plain.test(c)), `send.mjs prints fixed strings and status codes only: ${calls.filter((c) => !plain.test(c)).join(" | ")}`);
+  check(!/\bthrow\b/.test(push) && !/console\.(dir|table|error|warn)/.test(push)
+    && !/process\.env\.\w+\s*\)/.test(push.replace(/process\.env\.(PUSH_SUBSCRIPTION|VAPID_PRIVATE_KEY);/g, "")), "no throw, no error dump, no env echo");
+  for (const t of ['cron: "0 23 * * *"', 'cron: "0 11 * * *"', "workflow_dispatch", "contents: read", "group: push", "npm ci --prefix tools/push",
+    "node tools/push/send.mjs", "secrets.PUSH_SUBSCRIPTION", "secrets.VAPID_PRIVATE_KEY", "node-version: 20"]) {
+    check(wf.includes(t), `notify.yml has ${t}`);
+  }
+  check(!wf.includes("pages: write"), "notify.yml holds no write permission");
+  check(ignore.includes("tools/push/node_modules/"), "tools/push/node_modules/ is ignored");
+  const pushPkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "push", "package.json"), "utf8"));
+  check(!!pushPkg.dependencies && Object.keys(pushPkg.dependencies).join() === "web-push", "tools/push depends on web-push only");
+  check(fs.existsSync(path.join(__dirname, "..", "push", "package-lock.json")), "the lockfile is committed");
   console.log(`check summary: ${n} checks`);
 }
 
@@ -680,8 +714,9 @@ console.log("calendar file: 19 check groups");
   let n = 0;
   const check = (cond, msg) => { n++; ok(cond, `first-open stamp: ${msg}`); };
   const OPEN = new Function([
-    ...["dstr", "hhmm", "shiftDay", "OPENED_KEEP_DAYS", "openedOf", "openedMonthOf", "openedLine", "stampOpened"].map(lift),
-  ].join("\n") + "\nreturn { shiftDay, OPENED_KEEP_DAYS, openedOf, openedMonthOf, openedLine, stampOpened };")();
+    ...["dstr", "hhmm", "shiftDay", "OPENED_KEEP_DAYS", "openedOf", "openedMonthOf", "openedLine", "stampOpened",
+      "PUSH_VAPID_PUBLIC", "pushNotifyOf", "pushEndpointTail"].map(lift),
+  ].join("\n") + "\nreturn { shiftDay, OPENED_KEEP_DAYS, openedOf, openedMonthOf, openedLine, stampOpened, PUSH_VAPID_PUBLIC, pushNotifyOf, pushEndpointTail };")();
   const today = "2026-09-25";
 
   // (a) a first stamp: a new object, `act.opened` alone added, the other act keys kept by reference, the input untouched
@@ -714,6 +749,13 @@ console.log("calendar file: 19 check groups");
 
   // (f) the keep window
   check(OPEN.OPENED_KEEP_DAYS === 60, `OPENED_KEEP_DAYS ${OPEN.OPENED_KEEP_DAYS}`);
+
+  // (g) the daily push's pure reads (2026-09-25): the switch reads true only when written true; the endpoint tail
+  check(OPEN.pushNotifyOf({}) === false && OPEN.pushNotifyOf({ settings: { pushNotify: false } }) === false && OPEN.pushNotifyOf({ settings: { pushNotify: true } }) === true, "pushNotifyOf: absent and false read off, true on");
+  const tail = OPEN.pushEndpointTail({ endpoint: "https://push.example/send/abcdefghijklmnop" });
+  check(tail === "…efghijklmnop", `the endpoint tail: ${tail}`);
+  check(OPEN.pushEndpointTail(null) === "…", "no subscription → the ellipsis alone");
+  check(/^B[A-Za-z0-9_-]{86}$/.test(OPEN.PUSH_VAPID_PUBLIC), "the app's push key starts with the uncompressed-point byte (0x04 → 'B')");
   console.log(`first-open stamp: ${n} checks`);
 }
 

@@ -4,5 +4,6 @@ dist/
 release/
 tools/e2e/out/
 tools/e2e/node_modules/
+tools/push/node_modules/
 tools/harness/out/
 .claude/harness-state/
