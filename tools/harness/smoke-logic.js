@@ -597,12 +597,12 @@ console.log("calendar file: 19 check groups");
   let n = 0;
   const check = (cond, msg) => { n++; ok(cond, `daily gate: ${msg}`); };
   const GATE = new Function([
-    ...["dstr", "shiftDay", "daysBetween", "MAX_OCC", "occurrencesOf", "GATE_KEEP_DAYS", "GATE_PASS_RATIO", "GATE_MODAL_TYPES", "gateEntryOf", "gateRefreshedOf",
+    ...["dstr", "shiftDay", "daysBetween", "MAX_OCC", "occurrencesOf", "GATE_KEEP_DAYS", "GATE_PASS_RATIO", "GATE_MODAL_TYPES", "GATE_READONLY_TYPES", "gateAdmits", "gateEntryOf", "gateRefreshedOf",
       "GATE_MORNING_BEFORE", "GATE_MORNING_UNTIL", "GATE_DEFER_MINUTES", "GATE_DAY_END", "morningAppointmentsOf", "gateDeferredUntil", "gateActiveOf",
       "gateDeferTo", "gateCanDefer", "gateDeferLine",
       "gateStepsOf", "quizNeed", "gradeQuiz", "gateMonthOf", "gateMonthLine",
       "QUIZ_MIN", "QUIZ_MAX", "QUIZ_Q_MAX", "QUIZ_CHOICE_MAX", "QUIZ_BASIS_MAX", "replyJson", "parseQuizReply", "shuffleQuiz"].map(lift),
-  ].join("\n") + "\nreturn { GATE_KEEP_DAYS, GATE_PASS_RATIO, GATE_MODAL_TYPES, gateEntryOf, gateRefreshedOf, gateActiveOf, gateStepsOf, quizNeed, gradeQuiz, gateMonthOf, gateMonthLine, QUIZ_MIN, QUIZ_MAX, QUIZ_Q_MAX, QUIZ_CHOICE_MAX, QUIZ_BASIS_MAX, parseQuizReply, shuffleQuiz, GATE_MORNING_BEFORE, GATE_MORNING_UNTIL, GATE_DEFER_MINUTES, GATE_DAY_END, morningAppointmentsOf, gateDeferredUntil, gateDeferTo, gateCanDefer, gateDeferLine };")();
+  ].join("\n") + "\nreturn { GATE_KEEP_DAYS, GATE_PASS_RATIO, GATE_MODAL_TYPES, gateEntryOf, gateRefreshedOf, gateActiveOf, gateStepsOf, quizNeed, gradeQuiz, gateMonthOf, gateMonthLine, QUIZ_MIN, QUIZ_MAX, QUIZ_Q_MAX, QUIZ_CHOICE_MAX, QUIZ_BASIS_MAX, parseQuizReply, shuffleQuiz, GATE_MORNING_BEFORE, GATE_MORNING_UNTIL, GATE_DEFER_MINUTES, GATE_DAY_END, morningAppointmentsOf, gateDeferredUntil, gateDeferTo, gateCanDefer, gateDeferLine, GATE_READONLY_TYPES, gateAdmits };")();
   const today = "2026-09-24";
 
   // (a) the pass threshold: ceil(0.8 × total) — 5 → 4, 6 → 5, 7 → 6, 8 → 7, 10 → 8 (user decision 1)
@@ -773,6 +773,19 @@ console.log("calendar file: 19 check groups");
   const bm = GATE.gateMonthOf(both, today);
   check(bm.passed === 1 && bm.failed === 0 && bm.deferred === 1, `a passed entry with a deferral counts in 통과 and 미룸: ${JSON.stringify(bm)}`);
   check(GATE.gateMonthOf({ act: { gate: { "2026-08-30": { deferredUntil: "12:00" } } } }, today).deferred === 0, "a deferral in another month is not counted");
+
+  // (k) the root filter's admission (2026-09-26): the gate's own sheets always; the three viewing sheets only with
+  // `readOnly === true` (strict — a truthy string is refused); any other type, flag or not, never; null never
+  check(JSON.stringify(GATE.GATE_READONLY_TYPES) === JSON.stringify(["meetingView", "document", "eventDetail"]), "the three read-only sheet types");
+  for (const type of ["reader", "issues", "quiz", "workBridge", "work"]) check(GATE.gateAdmits({ type }) === true, `admits the gate's own ${type}`);
+  for (const type of ["meetingView", "document", "eventDetail"]) {
+    check(GATE.gateAdmits({ type }) === false, `refuses ${type} without the flag`);
+    check(GATE.gateAdmits({ type, readOnly: true }) === true, `admits ${type} with readOnly: true`);
+    check(GATE.gateAdmits({ type, readOnly: "true" }) === false, `refuses ${type} with readOnly: "true"`);
+  }
+  check(GATE.gateAdmits({ type: "taskDetail", readOnly: true }) === false, "refuses taskDetail even with readOnly: true");
+  check(GATE.gateAdmits({ type: "settings" }) === false, "refuses settings");
+  check(GATE.gateAdmits(null) === false, "refuses null");
   console.log(`daily gate: ${n} checks`);
 }
 

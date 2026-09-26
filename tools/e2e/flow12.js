@@ -8,7 +8,9 @@
 // (2026-09-26) run the deferrals on the E2E clock (`h.setClock` pins the page's HH:MM, `h.tickClock` fires the app's
 // focus re-check): a morning appointment holds the gate back until 22:00 with the home line before it and the gate's
 // line from it, untimed and deadline events defer nothing, the one manual `3시간 미루기` a day lifts the gate for three
-// hours (capped at 23:59) and the settings line counts it. Runs after flow11 and before flow4, which replaces the save.
+// hours (capped at 23:59) and the settings line counts it. Steps 15–17 (2026-09-26, Phase 2) open the issue list's minutes,
+// event and follow-up rows inside the gate as read-only sheets (no control that writes, the raw save unchanged, the X back
+// to the list) while a work row still opens nothing. Runs after flow11 and before flow4, which replaces the save.
 // Written under the standing instruction that the suite is not run: every step parses, none has been executed.
 module.exports = async (h) => {
   const { step, clickInModalExact, overlayText, openSettings, hasText, sleep, page, setValue, modalError, typeInto } = h;
@@ -88,6 +90,20 @@ module.exports = async (h) => {
       await sleep(400);
     }
   };
+  // Taps the issue-list row (a `TodoRow` button, `bg-zinc-950 rounded-xl`) whose text contains `text`, on the last
+  // overlay, optionally only inside `scope` (a selector); throws naming `what` when there is none.
+  const tapIssueRow = async (text, what, scope = null) => {
+    const tapped = await page.evaluate((t, sc) => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const roots = sc ? [...ov.querySelectorAll(sc)] : [ov];
+      const row = roots.flatMap((r) => [...r.querySelectorAll("button.bg-zinc-950.rounded-xl")]).find((b) => (b.innerText || "").includes(t));
+      if (!row) return false;
+      row.scrollIntoView({ block: "center" });
+      row.click();
+      return true;
+    }, text, scope);
+    if (!tapped) throw new Error(`no ${what} row on the issue list`);
+  };
   // The settings month line computed from the save by the app's rule: this month's entries, passed = with `passedAt`,
   // the quiz averages to one decimal or the no-quiz wording, and the entries carrying `deferredUntil` (2026-09-26).
   const monthLine = async () => {
@@ -114,6 +130,8 @@ module.exports = async (h) => {
     const s = structuredClone(saved);
     delete s.act.gate;
     s.work = (s.work || []).filter((w) => w.createdAt !== today);
+    // A carried work row for step 3's inert-row tap (created yesterday, so the gate's step 3 still reads `없음`)
+    s.work.push({ id: "e2e-gate-w", date: yesterday, title: "E2E 관문 업무 행", done: false, source: "manual", createdAt: yesterday });
     s.act.briefingSeen = yesterday;
     // Twelve meetings of the last seven days with 300-char decisions, so the reader overflows at 430 × 932 (step 2
     // asserts the disabled state on an overflowing sheet and would be meaningless on one that fits).
@@ -191,24 +209,16 @@ module.exports = async (h) => {
     if (st.act.briefingSeen !== today) throw new Error("the reader's read-done did not mark the day seen: " + st.act.briefingSeen);
   });
 
-  await step("the issue list inside the gate opens no sheet, shows no tab route, and stamps readIssuesAt", async () => {
+  await step("the issue list inside the gate keeps work rows inert, shows no tab route, and stamps readIssuesAt", async () => {
     await clickInModalExact("이슈 목록 열기 ›");
     await sleep(500);
     let ovs = await overlays();
     if (ovs.length !== 2 || !ovs[1].startsWith("이슈 목록")) throw new Error("the issue list did not open above the gate: " + brief(ovs));
-    // A row is a `TodoRow` button (`bg-zinc-950 rounded-xl`); the planted project's latest minutes guarantee one
-    const tapped = await page.evaluate(() => {
-      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
-      const row = ov.querySelector("button.bg-zinc-950.rounded-xl");
-      if (!row) return false;
-      row.scrollIntoView({ block: "center" });
-      row.click();
-      return true;
-    });
-    if (!tapped) throw new Error("no row on the issue list to tap");
+    // Step 1's carried work row; minutes and event rows open read-only sheets since 2026-09-26 (steps 15–17)
+    await tapIssueRow("E2E 관문 업무 행", "carried work");
     await sleep(400);
     ovs = await overlays();
-    if (ovs.length !== 2 || !ovs[1].startsWith("이슈 목록")) throw new Error("a row tap inside the gate opened a sheet: " + brief(ovs));
+    if (ovs.length !== 2 || !ovs[1].startsWith("이슈 목록")) throw new Error("a work row tap inside the gate opened a sheet: " + brief(ovs));
     const more = await page.evaluate(() => [...[...document.querySelectorAll(".fixed.inset-0")].pop().querySelectorAll("button")].some((b) => /건 더 ›$/.test((b.innerText || "").trim())));
     if (more) throw new Error("the issue list inside the gate still offers a tab route behind its more-button");
     await scrollToEnd();
@@ -473,6 +483,130 @@ module.exports = async (h) => {
     await h.closeModal();
     await deferSave((s) => { s.events = ev0; clearToday(s); });
     await h.setClock("22:30");
+  });
+
+  // Read-only viewing (2026-09-26, Phase 2), at the pinned 22:30. Each step plants on the current save — the memo group
+  // holds only the planted minutes, the work list only step 1's carried row, the schedule only what the step adds — opens
+  // the issue list inside the gate, and restores `events`, `meetings`, `meetingProjects` and `work` and deletes today's
+  // entry before it ends.
+  const RO_MEETING = { id: "e2e-ro-m", projectId: null, title: "E2E 읽기 전용 회의", date: today, attendees: "", summary: "E2E 요약", decisions: "E2E 결정",
+    actions: "E2E 조치 1\nE2E 조치 2", transcript: "E2E 녹취", followUps: [{ id: "e2e-ro-f", text: "E2E 후속", mine: true, done: false }],
+    progress: [{ id: "e2e-ro-p", date: today, text: "E2E 진행" }], taskIds: [], aiHidden: false, createdAt: today };
+  const RO_WORK = { id: "e2e-gate-w", date: yesterday, title: "E2E 관문 업무 행", done: false, source: "manual", createdAt: yesterday };
+  const openReadOnlyList = async (plant) => {
+    const s0 = await readState();
+    await deferSave((s) => {
+      clearToday(s);
+      s.meetings = [...(s.meetings || []).filter((m) => m.projectId != null), structuredClone(RO_MEETING)];
+      s.work = [structuredClone(RO_WORK)];
+      if (plant) plant(s);
+    });
+    await h.reload({}, { keepModal: true, keepGate: true });
+    await sleep(600);
+    await clickInModalExact("이슈 목록 열기 ›");
+    await sleep(500);
+    const ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith("이슈 목록")) throw new Error("the issue list did not open above the gate: " + brief(ovs));
+    return s0;
+  };
+  const restoreReadOnly = (s0) => deferSave((s) => {
+    s.events = s0.events; s.meetings = s0.meetings; s.meetingProjects = s0.meetingProjects; s.work = s0.work; clearToday(s);
+  });
+  const rawSave = () => page.evaluate((k) => localStorage.getItem(k), KEY);
+  // The sheet above the gate: its write surfaces — textareas, non-checkbox inputs, checkbox states, trimmed button texts
+  // and aria-labels
+  const sheetControls = () => page.evaluate(() => {
+    const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+    const inputs = [...ov.querySelectorAll("input")];
+    return {
+      textareas: ov.querySelectorAll("textarea").length,
+      fields: inputs.filter((i) => i.type !== "checkbox").length,
+      checkboxes: inputs.filter((i) => i.type === "checkbox").map((i) => i.disabled),
+      buttons: [...ov.querySelectorAll("button")].map((b) => (b.innerText || "").trim()),
+      labels: [...ov.querySelectorAll("[aria-label]")].map((el) => el.getAttribute("aria-label")),
+    };
+  });
+  const expectNoWrites = (c, banned, bannedLabels, what) => {
+    if (c.textareas || c.fields) throw new Error(`the read-only ${what} renders ${c.textareas} textarea(s) and ${c.fields} field(s)`);
+    if (c.checkboxes.some((d) => !d)) throw new Error(`the read-only ${what} has an enabled checkbox: ` + JSON.stringify(c.checkboxes));
+    const b = banned.filter((t) => c.buttons.includes(t));
+    if (b.length) throw new Error(`the read-only ${what} offers ` + JSON.stringify(b));
+    const l = bannedLabels.filter((t) => c.labels.includes(t));
+    if (l.length) throw new Error(`the read-only ${what} carries ` + JSON.stringify(l));
+  };
+  const MINUTES_BANNED = ["수정", "추가", "항목으로 나누기", "녹취록 지우기", "내 담당", "삭제"];
+  // The read-only minutes above the gate: the facts and blocks, no write control
+  const expectReadOnlyMinutes = async () => {
+    const ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith("E2E 읽기 전용 회의")) throw new Error("the minutes row did not open the minutes above the gate: " + brief(ovs));
+    for (const t of ["E2E 결정", "E2E 후속", "E2E 진행"]) if (!ovs[1].includes(t)) throw new Error(`the read-only minutes do not show "${t}"`);
+    const c = await sheetControls();
+    if (!c.checkboxes.length) throw new Error("the read-only minutes show no follow-up checkbox");
+    expectNoWrites(c, MINUTES_BANNED, ["진행사항 삭제"], "minutes");
+  };
+  // Opens the list inside the gate, keeps the raw save, taps a minutes or follow-up row and expects the read-only minutes
+  const minutesFromList = async (text, what, scope) => {
+    const s0 = await openReadOnlyList();
+    const raw0 = await rawSave();
+    await tapIssueRow(text, what, scope);
+    await sleep(500);
+    await expectReadOnlyMinutes();
+    return { s0, raw0 };
+  };
+  const backToList = async () => {
+    if (!(await tapHeaderX())) throw new Error("the read-only sheet has no header X");
+    await sleep(400);
+    const ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith("이슈 목록")) throw new Error("closing the read-only sheet did not return to the issue list: " + brief(ovs));
+  };
+
+  await step("inside the gate a minutes row opens a read-only sheet with no progress form, follow-up toggle, split, edit or delete, writes nothing, and closes back to the issue list", async () => {
+    const { s0, raw0 } = await minutesFromList("E2E 읽기 전용 회의", "project-card minutes", "[data-issue-project]");
+    const opened = await page.evaluate(() => {
+      const ov = [...document.querySelectorAll(".fixed.inset-0")].pop();
+      const b = [...ov.querySelectorAll("button")].find((x) => { const t = (x.innerText || "").trim(); return t.startsWith("녹취록 ") && t.endsWith("펼치기"); });
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    if (!opened) throw new Error("the read-only minutes have no transcript toggle");
+    await sleep(300);
+    if (!(await overlayText()).includes("E2E 녹취")) throw new Error("the transcript toggle did not show the transcript");
+    if ((await buttonOf("녹취록 지우기")).found) throw new Error("the read-only minutes offer the transcript clear button once the transcript is open");
+    if ((await rawSave()) !== raw0) throw new Error("the read-only minutes wrote to the save");
+    await backToList();
+    await restoreReadOnly(s0);
+  });
+
+  await step("an event row opens a read-only schedule sheet with no done, cancel, edit, check add or delete, and writes nothing", async () => {
+    const s0 = await openReadOnlyList((s) => {
+      if (!(s.meetingProjects || []).length) s.meetingProjects = [{ id: "gate-p", name: "E2E 관문 프로젝트", track: "biz", createdAt: yesterday }];
+      s.events = [{ id: "e2e-ro-e", title: "E2E 읽기 전용 일정", kind: "appt", date: today, time: "23:00", repeat: { freq: "weekly" },
+        projectId: s.meetingProjects[0].id, checks: [{ id: "e2e-ro-c", text: "E2E 확인", done: false, source: "manual" }], createdAt: yesterday }];
+    });
+    const raw0 = await rawSave();
+    await tapIssueRow("약속 · E2E 읽기 전용 일정", "planted event", '[data-issue-section="events"]');
+    await sleep(500);
+    const ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith("일정 — E2E 읽기 전용 일정")) throw new Error("the event row did not open the schedule sheet above the gate: " + brief(ovs));
+    for (const t of ["확인할 것", "E2E 확인", "목표 기여 없음"]) if (!ovs[1].includes(t)) throw new Error(`the read-only schedule sheet does not show "${t}"`);
+    const c = await sheetControls();
+    if (c.checkboxes.length !== 1) throw new Error("the read-only schedule sheet's checkboxes: " + JSON.stringify(c.checkboxes));
+    expectNoWrites(c, ["완료 표시", "완료 취소", "이번 회차 취소", "수정", "추가"], ["확인할 것 삭제"], "schedule sheet");
+    if ((await rawSave()) !== raw0) throw new Error("the read-only schedule sheet wrote to the save");
+    await backToList();
+    await restoreReadOnly(s0);
+  });
+
+  await step("inside the gate the follow-up row opens the same read-only minutes, and a work row opens nothing", async () => {
+    const { s0, raw0 } = await minutesFromList("E2E 읽기 전용 회의 · E2E 후속", "planted follow-up", '[data-issue-section="todo"]');
+    await backToList();
+    await tapIssueRow("E2E 관문 업무 행", "carried work", '[data-issue-section="todo"]');
+    await sleep(400);
+    const ovs = await overlays();
+    if (ovs.length !== 2 || !ovs[1].startsWith("이슈 목록")) throw new Error("a work row tap inside the gate opened a sheet: " + brief(ovs));
+    if ((await rawSave()) !== raw0) throw new Error("the follow-up and work rows wrote to the save");
+    await restoreReadOnly(s0);
   });
 
   await step("onboarding sees no gate; the saved state is restored", async () => {

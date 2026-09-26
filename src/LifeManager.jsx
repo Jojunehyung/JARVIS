@@ -3145,6 +3145,10 @@ const GATE_PASS_RATIO = 0.8; // pass = at least ceil(0.8 × total) correct (user
 // The `modal.type` values that may open above the gate — its own flows. Anything else `setModal` is asked for while
 // the gate stands is dropped by the root's derived `modal` line, not at the call sites.
 const GATE_MODAL_TYPES = ["reader", "issues", "quiz", "workBridge", "work"];
+// The sheets the gate's issue list may open read-only (2026-09-26): admitted only with `readOnly: true`, checked
+// strictly, so a sheet requested without the flag (or with a truthy non-boolean) is still dropped while the gate stands.
+const GATE_READONLY_TYPES = ["meetingView", "document", "eventDetail"];
+const gateAdmits = (m) => !!m && (GATE_MODAL_TYPES.includes(m.type) || (GATE_READONLY_TYPES.includes(m.type) && m.readOnly === true));
 const gateEntryOf = (state, today) => state?.act?.gate?.[today] || {};
 // Today was refreshed when at least one work item was created today — the one rule `checkSummaryOf` states too.
 const gateRefreshedOf = (state, today) => (state.work || []).some((w) => w.createdAt === today);
@@ -6657,8 +6661,9 @@ function IssueListModal({ state, today, onClose, onOpen, onTab, gateRead = false
   const { sections } = useMemo(() => issueListOf(state, today), [state, today]);
   const [shown, setShown] = useState({}); // project key → earlier minutes expanded
   const [endRef, seen] = useReadEnd(gateRead);
-  // Inside the gate (2026-09-24) every row is inert and `{n}건 더 ›` is plain text: the list is content to read, not a route.
-  const openRow = gateRead ? () => {} : onOpen;
+  // Inside the gate (2026-09-24) `{n}건 더 ›` is plain text: the list is content to read, not a route. Since 2026-09-26
+  // minutes, follow-up and event rows open their sheet read-only; work and task rows stay inert (rules 10, 18).
+  const openRow = gateRead ? (spec) => { if (spec && GATE_READONLY_TYPES.includes(spec.type)) onOpen({ ...spec, readOnly: true }); } : onOpen;
   const marker = (text) => (text ? <span className="text-xs font-mono text-zinc-500 shrink-0">{text}</span> : null);
   const tone = (r) => (r.lead === "기한 지남" || r.lead.startsWith("이월 ") ? `${TODO_TONE.overdue} border-zinc-700` : ISSUE_LEAD);
   const row = (r, k) => (
@@ -7421,7 +7426,8 @@ function TaskDetailModal({ state, taskId, today, onClose, onComplete, onRemove, 
 
 /* ── Event detail sheet — one occurrence, opened from the to-do list. Its only actions are the schedule's own
    `EventRow` buttons: an event is a record that pays nothing and moves no goal (rules 1, 13). ── */
-function EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit, onAddCheck, onToggleCheck, onRemoveCheck }) {
+// `readOnly` (2026-09-26, the gate's issue list): the row and the checklist without any control that writes.
+function EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit, onAddCheck, onToggleCheck, onRemoveCheck, readOnly = false }) {
   const ev = (state.events || []).find((x) => x.id === eventId);
   if (!ev) return null;
   // The `확인할 것` checklist (v27) belongs to an event of a meeting project only; a plain appointment's sheet is unchanged.
@@ -7430,11 +7436,11 @@ function EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, 
     <Modal title={`일정 — ${ev.title}`} onClose={onClose}>
       <div className="space-y-3">
         <EventRow ev={ev} date={date} done={(ev.doneDates || []).includes(date)} today={today}
-          onToggleDone={onToggleDone} onSkip={onSkip} onEdit={onEdit} />
+          onToggleDone={onToggleDone} onSkip={onSkip} onEdit={onEdit} readOnly={readOnly} />
         {project && (
           <>
             <p className="text-xs text-zinc-500 break-words">프로젝트 · {project.name}</p>
-            <EventChecks ev={ev} onAdd={onAddCheck} onToggle={onToggleCheck} onRemove={onRemoveCheck} />
+            <EventChecks ev={ev} onAdd={onAddCheck} onToggle={onToggleCheck} onRemove={onRemoveCheck} readOnly={readOnly} />
           </>
         )}
         <p className="text-xs text-zinc-500">목표 기여 없음 — 일정은 기록이라 점수와 목표에 반영되지 않아요.</p>
@@ -8590,7 +8596,8 @@ const HOLIDAY_YEARS = [...new Set(Object.keys(HOLIDAYS).map((d) => d.slice(0, 4)
 
 /* One occurrence row, rendered by the calendar's selected-day panel and by the to-do list's event detail sheet.
    The markup exists once so the two surfaces cannot drift apart. */
-function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
+// `readOnly` (2026-09-26) omits the whole button row; every other use renders it as before.
+function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit, readOnly = false }) {
   const due = ev.kind === "due";
   const lead = due ? ddayStr(date) : ev.time || "시간 미정";
   const leadTone = !due ? "text-zinc-300 border-zinc-700"
@@ -8613,26 +8620,29 @@ function EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit }) {
           {EVENT_KIND_LABEL[ev.kind]}
         </span>
       </div>
-      <div className="flex gap-1.5 mt-2">
-        <button onClick={() => onToggleDone(ev.id, date)}
-          className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold active:translate-y-0.5 ${done ? "border-emerald-700 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}>
-          {done ? "완료 취소" : "완료 표시"}
-        </button>
-        {ev.repeat && (
-          <button onClick={() => onSkip(ev.id, date)}
-            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">이번 회차 취소</button>
-        )}
-        <button onClick={() => onEdit(ev)}
-          className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">수정</button>
-      </div>
+      {!readOnly && (
+        <div className="flex gap-1.5 mt-2">
+          <button onClick={() => onToggleDone(ev.id, date)}
+            className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold active:translate-y-0.5 ${done ? "border-emerald-700 text-emerald-300" : "border-zinc-700 text-zinc-300"}`}>
+            {done ? "완료 취소" : "완료 표시"}
+          </button>
+          {ev.repeat && (
+            <button onClick={() => onSkip(ev.id, date)}
+              className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">이번 회차 취소</button>
+          )}
+          <button onClick={() => onEdit(ev)}
+            className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-400 text-xs font-bold active:translate-y-0.5">수정</button>
+        </div>
+      )}
     </div>
   );
 }
 
 /* The `확인할 것` checklist of one event (v27), rendered by the meeting-prep card and the event detail sheet, so the two
    surfaces cannot drift apart. `onAdd` answers "" when written or the refusal to show; the typed text is component
-   state only. A check pays nothing and completes nothing (rules 1, 18). */
-function EventChecks({ ev, onAdd, onToggle, onRemove }) {
+   state only. A check pays nothing and completes nothing (rules 1, 18). `readOnly` (2026-09-26): the checkboxes show their
+   state disabled, with no delete, no input and no add. */
+function EventChecks({ ev, onAdd, onToggle, onRemove, readOnly = false }) {
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
   const checks = ev.checks || [];
@@ -8653,21 +8663,28 @@ function EventChecks({ ev, onAdd, onToggle, onRemove }) {
         <p className="text-xs text-zinc-500">확인할 것이 없어요.</p>
       ) : checks.map((c) => (
         <div key={c.id} className="bg-zinc-950 rounded-xl px-3 py-2 flex items-start gap-2">
-          <input type="checkbox" aria-label="확인 완료" checked={!!c.done} onChange={() => onToggle(ev.id, c.id)} className="mt-0.5 shrink-0" />
+          <input type="checkbox" aria-label="확인 완료" checked={!!c.done} disabled={readOnly}
+            onChange={() => { if (!readOnly) onToggle(ev.id, c.id); }} className="mt-0.5 shrink-0" />
           <span className={`flex-1 min-w-0 text-sm break-words ${c.done ? "line-through text-zinc-500" : ""}`}>{c.text}</span>
           {c.source === "ai" && <span className="text-xs font-mono font-bold text-violet-300 shrink-0">AI</span>}
-          <button aria-label="확인할 것 삭제" onClick={() => { if (window.confirm("확인할 것을 삭제해요. 계속할까요?")) onRemove(ev.id, c.id); }}
-            className="text-zinc-500 shrink-0 active:opacity-70"><X size={14} /></button>
+          {!readOnly && (
+            <button aria-label="확인할 것 삭제" onClick={() => { if (window.confirm("확인할 것을 삭제해요. 계속할까요?")) onRemove(ev.id, c.id); }}
+              className="text-zinc-500 shrink-0 active:opacity-70"><X size={14} /></button>
+          )}
         </div>
       ))}
-      <div className="flex items-center gap-1.5">
-        <input value={text} onChange={(e) => setText(e.target.value)} disabled={atCap} placeholder="확인할 것 — 예: 단가표 회신 여부"
-          className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1 text-sm disabled:opacity-30" />
-        <button onClick={add} disabled={atCap}
-          className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">추가</button>
-      </div>
-      {err && <p className="text-xs text-rose-400">{err}</p>}
-      {atCap && <p className="text-xs text-zinc-400">확인할 것은 {EVENT_CHECKS_MAX}건까지예요.</p>}
+      {!readOnly && (
+        <>
+          <div className="flex items-center gap-1.5">
+            <input value={text} onChange={(e) => setText(e.target.value)} disabled={atCap} placeholder="확인할 것 — 예: 단가표 회신 여부"
+              className="flex-1 min-w-0 bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1 text-sm disabled:opacity-30" />
+            <button onClick={add} disabled={atCap}
+              className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">추가</button>
+          </div>
+          {err && <p className="text-xs text-rose-400">{err}</p>}
+          {atCap && <p className="text-xs text-zinc-400">확인할 것은 {EVENT_CHECKS_MAX}건까지예요.</p>}
+        </>
+      )}
     </div>
   );
 }
@@ -10388,7 +10405,8 @@ function ProjectPicker({ projects, pid, onPick, note }) {
 /* ── Document form (v27) — view and edit in one sheet. A document is a record of what a file says, in the user's words:
    no file is stored, `source` is text only, and nothing here pays, completes or moves a goal (rules 1, 18). `onAdd` /
    `onUpdate` answer with an error string ("" = saved), so the storage refusal keeps the form open. ── */
-function DocumentModal({ state, doc, projectId, onClose, onAdd, onUpdate, onRemove }) {
+// `readOnly` (2026-09-26, the gate): the stored facts and the summary only — no picker, no field, no save, no delete.
+function DocumentModal({ state, doc, projectId, onClose, onAdd, onUpdate, onRemove, readOnly = false }) {
   const projects = state.meetingProjects || [];
   // An explicit null (the memo group's button) is a document with no project.
   const [pid, setPid] = useState(doc?.projectId ?? projectId ?? null);
@@ -10414,6 +10432,27 @@ function DocumentModal({ state, doc, projectId, onClose, onAdd, onUpdate, onRemo
     const refused = doc ? onUpdate(doc.id, next) : onAdd(next);
     if (refused) setErr(refused);
   };
+  if (readOnly) {
+    if (!doc) return null;
+    return (
+      <Modal title="문서" onClose={onClose}>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <CvFact label="프로젝트">{project?.name || "없음 (긴급 메모)"}</CvFact>
+            <CvFact label="추가일"><span className="font-mono">{doc.addedAt}</span></CvFact>
+            <CvFact label="트랙">{TRACK_LABEL[trackOf(doc)]}</CvFact>
+            <CvFact label="제목">{doc.title}</CvFact>
+            <CvFact label="출처">{doc.source || "없음"}</CvFact>
+          </div>
+          <div>
+            <SectionLabel>요약</SectionLabel>
+            <p className="text-sm text-zinc-200 whitespace-pre-wrap break-words">{doc.summary}</p>
+          </div>
+          <p className="text-xs text-zinc-600">파일은 저장되지 않아요 — 요약 글만 저장돼요. 문서는 목표·실행·점수에 반영되지 않아요.</p>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal title={doc ? "문서" : "문서 추가"} onClose={onClose}>
       <div className="space-y-3">
@@ -10729,8 +10768,10 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
 
 /* ── Meeting view — the full minutes, read from the live record. The progress log (v25) is added and deleted only
    here: `onAddProgress(meetingId, text)` answers with an error string ("" = saved) like the meeting form's handlers. ── */
+// `readOnly` (2026-09-26, the gate's issue list): every fact and text block as usual, no control that writes — no split,
+// no follow-up toggle or owner chip, no progress form or delete, no transcript clear, no linked-task route, no edit.
 function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress,
-  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps, onClearTranscript }) {
+  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps, onClearTranscript, readOnly = false }) {
   const [entry, setEntry] = useState(""); // the progress textarea — view state only, never stored
   const [showTranscript, setShowTranscript] = useState(false); // the transcript block, collapsed by default — view state only
   const [err, setErr] = useState("");
@@ -10823,8 +10864,10 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
             {showTranscript && (
               <>
                 <p className="text-sm text-zinc-200 whitespace-pre-wrap break-words">{m.transcript}</p>
-                <button onClick={askClearTranscript}
-                  className="mt-2 px-2.5 py-1.5 rounded-lg border border-rose-800 text-rose-300 text-xs font-bold active:translate-y-0.5">녹취록 지우기</button>
+                {!readOnly && (
+                  <button onClick={askClearTranscript}
+                    className="mt-2 px-2.5 py-1.5 rounded-lg border border-rose-800 text-rose-300 text-xs font-bold active:translate-y-0.5">녹취록 지우기</button>
+                )}
               </>
             )}
           </div>
@@ -10842,12 +10885,12 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
                   <SectionLabel>후속 항목</SectionLabel>
                   <span className="text-xs font-mono text-zinc-500 shrink-0">{fuOpen}/{fus.length}</span>
                 </div>
-                {String(m.actions || "").trim() && (
+                {!readOnly && String(m.actions || "").trim() && (
                   <button onClick={openSplit}
                     className="shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold active:translate-y-0.5">항목으로 나누기</button>
                 )}
               </div>
-              {split && (
+              {!readOnly && split && (
                 <div className="border border-cyan-800 rounded-xl p-3 space-y-2 mb-2 mt-1">
                   <div className="text-sm font-bold">{labels.actions}에서 항목 나누기 — {split.length}건</div>
                   {split.length === 0 ? (
@@ -10886,7 +10929,8 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
                     const work = fuWorkText(fu);
                     return (
                       <div key={fu.id} className="bg-zinc-950 rounded-xl px-3 py-2 flex items-start gap-2">
-                        <input type="checkbox" aria-label="후속 완료" checked={fu.done === true} onChange={() => onToggleFollowUp(m.id, fu.id)} className="mt-1 shrink-0" />
+                        <input type="checkbox" aria-label="후속 완료" checked={fu.done === true} disabled={readOnly}
+                          onChange={() => { if (!readOnly) onToggleFollowUp(m.id, fu.id); }} className="mt-1 shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className={`text-sm break-words ${fu.done ? "line-through text-zinc-500" : "text-zinc-200"}`}>{fu.text}</p>
                           <p className="text-xs font-mono text-zinc-500">
@@ -10895,7 +10939,7 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
                             {work && <>{" · "}{work}</>}
                           </p>
                         </div>
-                        <div className="shrink-0"><Chip on={!!fu.mine} onClick={() => onSetFollowUpMine(m.id, fu.id, !fu.mine)}>내 담당</Chip></div>
+                        {!readOnly && <div className="shrink-0"><Chip on={!!fu.mine} onClick={() => onSetFollowUpMine(m.id, fu.id, !fu.mine)}>내 담당</Chip></div>}
                       </div>
                     );
                   })}
@@ -10915,16 +10959,18 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
                     <div key={e.id} className="flex items-start gap-2 bg-zinc-950 rounded-xl px-3 py-2">
                       <span className="font-mono text-xs text-zinc-500 shrink-0 leading-5">{e.date}</span>
                       <p className="flex-1 min-w-0 whitespace-pre-wrap break-words text-sm text-zinc-200">{e.text}</p>
-                      <button aria-label="진행사항 삭제" onClick={() => removeEntry(e.id)} className="text-zinc-500 shrink-0 mt-0.5 active:opacity-70"><X size={14} /></button>
+                      {!readOnly && <button aria-label="진행사항 삭제" onClick={() => removeEntry(e.id)} className="text-zinc-500 shrink-0 mt-0.5 active:opacity-70"><X size={14} /></button>}
                     </div>
                   ))}
                 </div>
               )}
-              <div className="mt-2 space-y-2">
-                <MeetingText value={entry} onChange={setEntry} placeholder="진행사항 추가 — 이 회의 뒤에 이어간 업무를 적어요" rows={2} cap={MEETING_LIMITS.progress} />
-                {err && <p className="text-xs text-rose-400">{err}</p>}
-                <button onClick={addEntry} className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">추가</button>
-              </div>
+              {!readOnly && (
+                <div className="mt-2 space-y-2">
+                  <MeetingText value={entry} onChange={setEntry} placeholder="진행사항 추가 — 이 회의 뒤에 이어간 업무를 적어요" rows={2} cap={MEETING_LIMITS.progress} />
+                  {err && <p className="text-xs text-rose-400">{err}</p>}
+                  <button onClick={addEntry} className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">추가</button>
+                </div>
+              )}
             </div>
             <div>
               <SectionLabel>연결된 할 일</SectionLabel>
@@ -10934,7 +10980,7 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
                 <div className="space-y-1.5">
                   {linked.map((q) => (
                     <TodoRow key={q.id} lead={linkedTaskLead(q, today)} title={q.title} done={taskClosedOn(q, today)}
-                      onOpen={() => onOpenTask(q.id)} />
+                      onOpen={() => { if (!readOnly) onOpenTask(q.id); }} />
                   ))}
                 </div>
               )}
@@ -10942,8 +10988,10 @@ function MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask
             </div>
           </>
         )}
-        <button onClick={() => onEdit(m.id)}
-          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">수정</button>
+        {!readOnly && (
+          <button onClick={() => onEdit(m.id)}
+            className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">수정</button>
+        )}
       </div>
     </Modal>
   );
@@ -11774,7 +11822,7 @@ export default function LifeManager() {
   // are not rendered and only the gate's own flows may open — every other `setModal` is dropped by the derived `modal`
   // line here rather than at the ~80 call sites (defence in depth: no tab handler can fire either).
   const gateActive = phase === "main" && !!state && gateActiveOf(state, today, nowHm);
-  const modal = gateActive && modalRaw && !GATE_MODAL_TYPES.includes(modalRaw.type) ? null : modalRaw;
+  const modal = gateActive && modalRaw && !gateAdmits(modalRaw) ? null : modalRaw;
 
   const showToast = (t) => toastRef.current?.show(t);
   useEffect(() => {
@@ -13256,7 +13304,8 @@ export default function LifeManager() {
           onOpenMeeting={(meetingId) => setModal({ type: "meetingView", meetingId })} />
       )}
       {modal?.type === "eventDetail" && (
-        <EventDetailModal state={state} eventId={modal.eventId} date={modal.date} today={today} onClose={() => setModal(null)}
+        <EventDetailModal state={state} eventId={modal.eventId} date={modal.date} today={today} readOnly={!!modal.readOnly}
+          onClose={() => setModal(modal.readOnly ? { type: "issues" } : null)}
           onToggleDone={toggleEventDone}
           onSkip={(id, d) => { skipOccurrence(id, d); setModal(null); }}
           onEdit={(ev) => setModal({ type: "event", event: ev })}
@@ -13320,7 +13369,8 @@ export default function LifeManager() {
           onClose={() => setModal(null)} onAdd={addMeeting} onUpdate={updateMeeting} onRemove={removeMeeting} />
       )}
       {modal?.type === "meetingView" && (
-        <MeetingViewModal state={state} meetingId={modal.meetingId} today={today} onClose={() => setModal(null)}
+        <MeetingViewModal state={state} meetingId={modal.meetingId} today={today} readOnly={!!modal.readOnly}
+          onClose={() => setModal(modal.readOnly ? { type: "issues" } : null)}
           onEdit={(meetingId) => setModal({ type: "meeting", meetingId })}
           onOpenTask={(taskId) => setModal({ type: "taskDetail", taskId })}
           onAddProgress={addProgress} onRemoveProgress={removeProgress}
@@ -13329,7 +13379,8 @@ export default function LifeManager() {
       )}
       {modal?.type === "document" && (
         <DocumentModal state={state} projectId={modal.projectId} doc={(state.documents || []).find((d) => d.id === modal.docId)}
-          onClose={() => setModal(null)} onAdd={addDocument} onUpdate={updateDocument} onRemove={removeDocument} />
+          readOnly={!!modal.readOnly} onClose={() => setModal(modal.readOnly ? { type: "issues" } : null)}
+          onAdd={addDocument} onUpdate={updateDocument} onRemove={removeDocument} />
       )}
       {/* Work items — records outside the goal ladder: no payout, no goal, no streak (rules 1, 9, 18) */}
       {modal?.type === "work" && (
