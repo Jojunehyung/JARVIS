@@ -4,8 +4,11 @@
 // into that read step, a same-day reload lands in the app once passed, a save re-dated to yesterday opens the gate
 // again, onboarding sees no gate, and the settings sheet states the month's counts. Steps 4–8 (Phase 2) run the quiz:
 // the sixth packet's content and privacy, a refused four-item reply, a 5/7 fail that clears both read stamps, the
-// same-questions retry after a re-read passing 6/7, a work item added inside the gate and the pass itself. Runs after
-// flow11 and before flow4, which replaces the save.
+// same-questions retry after a re-read passing 6/7, a work item added inside the gate and the pass itself. Steps 12–14
+// (2026-09-26) run the deferrals on the E2E clock (`h.setClock` pins the page's HH:MM, `h.tickClock` fires the app's
+// focus re-check): a morning appointment holds the gate back until 22:00 with the home line before it and the gate's
+// line from it, untimed and deadline events defer nothing, the one manual `3시간 미루기` a day lifts the gate for three
+// hours (capped at 23:59) and the settings line counts it. Runs after flow11 and before flow4, which replaces the save.
 // Written under the standing instruction that the suite is not run: every step parses, none has been executed.
 module.exports = async (h) => {
   const { step, clickInModalExact, overlayText, openSettings, hasText, sleep, page, setValue, modalError, typeInto } = h;
@@ -85,10 +88,27 @@ module.exports = async (h) => {
       await sleep(400);
     }
   };
+  // The settings month line computed from the save by the app's rule: this month's entries, passed = with `passedAt`,
+  // the quiz averages to one decimal or the no-quiz wording, and the entries carrying `deferredUntil` (2026-09-26).
+  const monthLine = async () => {
+    const gate = (await readState()).act.gate || {};
+    const month = today.slice(0, 7);
+    const entries = Object.entries(gate).filter(([d]) => d.startsWith(month)).map(([, v]) => v);
+    const passed = entries.filter((v) => v.passedAt).length;
+    const quizzes = entries.filter((v) => v.quiz);
+    const mean = (f) => Math.round((quizzes.reduce((n, v) => n + f(v.quiz), 0) / quizzes.length) * 10) / 10;
+    const deferred = entries.filter((v) => v.deferredUntil).length;
+    const want = `이번 달 관문 통과 ${passed}일 · 미통과 ${entries.length - passed}일 · ${quizzes.length ? `퀴즈 평균 ${mean((q) => q.score)}/${mean((q) => q.total)}` : "퀴즈 없음"} · 미룸 ${deferred}회`;
+    return { want, deferred };
+  };
   const saved = await readState();
   const boundary0 = JSON.stringify(h.recordBoundary(saved));
   const today = await dstrIn(0), yesterday = await dstrIn(-1);
   const base = page.url().split("?")[0];
+
+  // The pre-existing steps run after any morning deferral, so an appointment an earlier flow left for today cannot hold
+  // the gate back.
+  await h.setClock("22:30");
 
   await step("the gate opens on a save without today's stamp: no nav, no X, an inert backdrop, three steps stated, later steps disabled", async () => {
     const s = structuredClone(saved);
@@ -349,25 +369,114 @@ module.exports = async (h) => {
     if (left.length !== 1 || !left[0].startsWith("오늘의 관문")) throw new Error("closing the routed sheet did not leave the gate alone: " + brief(left));
     const e = (await readState()).act.gate?.[today] || {};
     if (e.readIssuesAt) throw new Error("the header X stamped readIssuesAt: " + JSON.stringify(e));
-    // The settings line, computed here from the save by the app's rule: this month's entries, passed = with
-    // `passedAt`, the quiz averages to one decimal or the no-quiz wording (yesterday's re-dated entry carries step 7's 6/7).
+    // The settings line, computed from the save by `monthLine` (yesterday's re-dated entry carries step 7's 6/7).
     await h.plantGate();
     await h.reload();
     await openSettings();
-    const gate = (await readState()).act.gate || {};
-    const month = today.slice(0, 7);
-    const entries = Object.entries(gate).filter(([d]) => d.startsWith(month)).map(([, v]) => v);
-    const passed = entries.filter((v) => v.passedAt).length;
-    const quizzes = entries.filter((v) => v.quiz);
-    const mean = (f) => Math.round((quizzes.reduce((n, v) => n + f(v.quiz), 0) / quizzes.length) * 10) / 10;
-    const want = `이번 달 관문 통과 ${passed}일 · 미통과 ${entries.length - passed}일 · ${quizzes.length ? `퀴즈 평균 ${mean((q) => q.score)}/${mean((q) => q.total)}` : "퀴즈 없음"}`;
+    const { want } = await monthLine();
     const sheet = await overlayText();
     if (!sheet.includes("오늘의 관문") || !sheet.includes(want)) throw new Error(`the settings sheet does not state "${want}": ` + sheet.slice(0, 400));
     if (!sheet.includes("끄는 설정은 없어요")) throw new Error("the settings sheet does not state that the gate has no switch");
     await h.closeModal();
   });
 
+  // The deferral steps (2026-09-26) plant on the current save and restore `events` and today's gate entry before they end.
+  const mainState = () => page.evaluate(() => ({ overlays: document.querySelectorAll(".fixed.inset-0").length, nav: document.querySelector("nav") !== null, text: document.body.innerText }));
+  const deferSave = async (fn) => { const s = await readState(); fn(s); await writeState(s); return s; };
+  const clearToday = (s) => { s.act.gate = { ...(s.act.gate || {}) }; delete s.act.gate[today]; };
+  // No events and no entry for today, the clock at `hm`, a reload: the gate must stand alone. Returns the events to restore.
+  const gateWithoutDeferral = async (hm) => {
+    const ev0 = (await readState()).events;
+    await deferSave((s) => { clearToday(s); s.events = []; });
+    await h.setClock(hm);
+    await h.reload({}, { keepModal: true, keepGate: true });
+    await sleep(600);
+    if ((await overlays()).length !== 1) throw new Error(`no gate at ${hm} on a day without a deferral`);
+    return ev0;
+  };
+
+  await step("a morning appointment holds the gate back until 22:00: the app opens with the home line before it, the gate stands with its deferral line from it, and untimed or deadline events defer nothing", async () => {
+    const ev0 = (await readState()).events;
+    const am = [
+      { id: "e2e-am-1", title: "E2E 오전 약속", kind: "appt", date: today, time: "09:30", doneDates: [today], createdAt: yesterday },
+      { id: "e2e-am-2", title: "E2E 매일 약속", kind: "appt", date: yesterday, time: "11:59", repeat: { freq: "daily" }, skip: [today], createdAt: yesterday },
+      { id: "e2e-am-3", title: "E2E 시간 미정 약속", kind: "appt", date: today, createdAt: yesterday },
+      { id: "e2e-am-4", title: "E2E 오전 마감", kind: "due", date: today, time: "08:00", createdAt: yesterday },
+      { id: "e2e-am-5", title: "E2E 정오 약속", kind: "appt", date: today, time: "12:00", createdAt: yesterday },
+    ];
+    await deferSave((s) => { clearToday(s); s.act.briefingSeen = today; s.events = am; });
+    await h.setClock("21:59");
+    await h.reload({}, { keepModal: true, keepGate: true });
+    await sleep(600);
+    let m = await mainState();
+    if (m.overlays !== 0 || !m.nav) throw new Error("before 22:00 on a morning day the app did not open: " + JSON.stringify({ overlays: m.overlays, nav: m.nav }));
+    if (!m.text.includes("오늘의 관문 22:00부터 — 오전 약속 2건")) throw new Error("the home line before 22:00 is missing (a done and a cancelled occurrence count; untimed, deadline and noon do not)");
+    if (!m.text.includes("영역 등급")) throw new Error("the home screen is not rendered");
+    await h.setClock("22:00");
+    await h.tickClock();
+    await sleep(400);
+    const ovs = await overlays();
+    if (ovs.length !== 1 || !ovs[0].startsWith(`오늘의 관문 — ${today}`)) throw new Error("the gate did not stand at 22:00: " + brief(ovs));
+    if (!ovs[0].includes("오전 약속으로 22:00까지 미뤄졌어요")) throw new Error("the gate does not state the morning deferral: " + ovs[0].slice(0, 300));
+    m = await mainState();
+    if (m.nav) throw new Error("the tab bar is rendered under the gate at 22:00");
+    if (m.text.includes("22:00부터")) throw new Error("the home line is still on the page at 22:00");
+    if ((await readState()).act.gate?.[today]?.deferredUntil) throw new Error("the morning deferral wrote a stamp");
+    // Only the untimed, the deadline and the noon appointment: nothing defers, the gate stands at 08:00 without the line
+    await deferSave((s) => { s.events = am.slice(2); });
+    await h.setClock("08:00");
+    await h.reload({}, { keepModal: true, keepGate: true });
+    await sleep(600);
+    const at8 = await overlays();
+    if (at8.length !== 1 || !at8[0].startsWith(`오늘의 관문 — ${today}`)) throw new Error("untimed, deadline or noon events held the gate back at 08:00: " + brief(at8));
+    if (at8[0].includes("오전 약속으로")) throw new Error("the morning line shows without a morning appointment");
+    await deferSave((s) => { s.events = ev0; clearToday(s); });
+  });
+
+  await step("the manual deferral lifts the gate for three hours from the tap, once a day, and is stated on home and on the gate", async () => {
+    const ev0 = await gateWithoutDeferral("10:07");
+    await expectButton("3시간 미루기", false, true);
+    await clickInModalExact("3시간 미루기");
+    await sleep(500);
+    let m = await mainState();
+    if (m.overlays !== 0 || !m.nav) throw new Error("the deferral did not lift the gate: " + JSON.stringify({ overlays: m.overlays, nav: m.nav }));
+    if ((await readState()).act.gate?.[today]?.deferredUntil !== "13:07") throw new Error("deferredUntil after a tap at 10:07: " + JSON.stringify((await readState()).act.gate?.[today]));
+    if (!m.text.includes("오늘의 관문 13:07부터 — 미룸")) throw new Error("the home line after the deferral is missing");
+    await h.setClock("13:06");
+    await h.tickClock();
+    await sleep(400);
+    if ((await overlays()).length !== 0) throw new Error("the gate stood before the deferral's end");
+    await h.setClock("13:07");
+    await h.tickClock();
+    await sleep(400);
+    let ovs = await overlays();
+    if (ovs.length !== 1 || !ovs[0].startsWith(`오늘의 관문 — ${today}`) || !ovs[0].includes("13:07까지 미뤘어요 · 오늘 1회 사용")) throw new Error("the gate at 13:07: " + brief(ovs));
+    if ((await buttonOf("3시간 미루기", true)).found) throw new Error("the deferral is offered a second time");
+    await h.reload({}, { keepModal: true, keepGate: true });
+    await sleep(600);
+    ovs = await overlays();
+    if (ovs.length !== 1 || !ovs[0].includes("13:07까지 미뤘어요 · 오늘 1회 사용") || (await buttonOf("3시간 미루기", true)).found) throw new Error("the stamp did not persist across a reload: " + brief(ovs));
+    if ((await readState()).act.gate?.[today]?.deferredUntil !== "13:07") throw new Error("deferredUntil changed after a reload");
+    await deferSave((s) => { s.events = ev0; clearToday(s); });
+  });
+
+  await step("the deferral is capped at 23:59, and the settings line counts the month's deferrals", async () => {
+    const ev0 = await gateWithoutDeferral("21:30");
+    await clickInModalExact("3시간 미루기");
+    await sleep(500);
+    if ((await readState()).act.gate?.[today]?.deferredUntil !== "23:59") throw new Error("deferredUntil after a tap at 21:30: " + JSON.stringify((await readState()).act.gate?.[today]));
+    if (!(await mainState()).text.includes("오늘의 관문 23:59부터 — 미룸")) throw new Error("the home line after the capped deferral is missing");
+    await openSettings();
+    const { want, deferred: n } = await monthLine();
+    const sheet = await overlayText();
+    if (n < 1 || !want.endsWith(` · 미룸 ${n}회`) || !sheet.includes(want)) throw new Error(`the settings sheet does not state "${want}": ` + sheet.slice(0, 400));
+    await h.closeModal();
+    await deferSave((s) => { s.events = ev0; clearToday(s); });
+    await h.setClock("22:30");
+  });
+
   await step("onboarding sees no gate; the saved state is restored", async () => {
+    await h.setClock(null);
     const st = await readState();
     if (JSON.stringify(h.recordBoundary(st)) !== boundary0) throw new Error(`the gate flow moved a record: ${boundary0} -> ${JSON.stringify(h.recordBoundary(st))}`);
     await page.evaluate(() => localStorage.clear());

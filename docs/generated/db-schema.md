@@ -114,11 +114,15 @@
          workRefreshedAt?,                                   // (2026-09-22, still v28, no migrate block) the day the work bridge last
                                                              // registered ≥ 1 AI proposal — a user-action stamp like `briefingSeen`,
                                                              // never read as progress (rule 9)
-         gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt? } },
+         gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt?,
+                            deferredUntil? } },
                                                              // (2026-09-24, still v28, no migrate block) the daily gate's user-action
                                                              // stamps (`HH:MM` local times; `quiz` a locally graded score), newest
                                                              // `GATE_KEEP_DAYS` days; `refreshed` is derived from `work[].createdAt`,
-                                                             // never stored (rule 9)
+                                                             // never stored (rule 9). (2026-09-26, still v28, no migrate block)
+                                                             // `deferredUntil` `HH:MM` — the day's one manual deferral (tap time + 3 h,
+                                                             // capped at 23:59); the morning-appointment deferral is derived from
+                                                             // `events[]` and the clock, never stored (rule 9)
          opened?: { [date]: "HH:MM" } },                    // (2026-09-25, still v28, no migrate block) the day's first-open time,
                                                              // stamped once by the root effect on every path that brings the app up;
                                                              // its own map, never under `gate` (`gateMonthOf` counts entries as days);
@@ -485,19 +489,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 | Key pattern | First use (line) | Section |
 |---|---|---|
 | `liferpg-state-v1` | 1332 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6896 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6896 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6896 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 9117 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 9540 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 11739 | App root |
-| `liferpg-img-${slot}` | 11824 | App root |
-| `liferpg-img-ev-${id}` | 11847 | App root |
-| `liferpg-img-ev-${q.id}` | 12029 | App root |
-| `liferpg-img-ev-${t.id}` | 12966 | App root |
-| `liferpg-img-study-${t.id}-1` | 12966 | App root |
-| `liferpg-img-study-${t.id}-2` | 12966 | App root |
-| `liferpg-img-folio-${f.id}` | 12972 | App root |
+| `liferpg-img-ev-${task.id}` | 6955 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 6955 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 6955 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 9176 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 9599 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 11800 | App root |
+| `liferpg-img-${slot}` | 11886 | App root |
+| `liferpg-img-ev-${id}` | 11909 | App root |
+| `liferpg-img-ev-${q.id}` | 12091 | App root |
+| `liferpg-img-ev-${t.id}` | 13037 | App root |
+| `liferpg-img-study-${t.id}-1` | 13037 | App root |
+| `liferpg-img-study-${t.id}-2` | 13037 | App root |
+| `liferpg-img-folio-${f.id}` | 13043 | App root |
 
 ## Demo data (`demoState`)
 

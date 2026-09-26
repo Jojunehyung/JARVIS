@@ -354,6 +354,33 @@ const typeInto = async (placeholder, value) => {
     localStorage.setItem("liferpg-state-v1", JSON.stringify(s));
     return true;
   });
+  // The E2E clock (2026-09-26): once hooked, every `new Date()` / `Date.now()` in the page returns the real date with the
+  // hours and minutes taken from sessionStorage "e2e-clock" (HH:MM; seconds stay real); without the key the real clock
+  // runs, so flows that never call setClock are unaffected. A test-only key, never read by the app, never `liferpg-*`.
+  let clockHooked = false;
+  const setClock = async (hm) => {
+    if (!clockHooked) {
+      await page.evaluateOnNewDocument(() => {
+        const Real = Date;
+        const pinned = () => { try { const v = sessionStorage.getItem("e2e-clock"); return /^\d\d:\d\d$/.test(v || "") ? v : null; } catch { return null; } };
+        class ClockDate extends Real {
+          constructor(...a) {
+            if (a.length) { super(...a); return; }
+            const v = pinned();
+            if (!v) { super(); return; }
+            const d = new Real(); d.setHours(Number(v.slice(0, 2)), Number(v.slice(3, 5)));
+            super(d.getTime());
+          }
+          static now() { return new ClockDate().getTime(); }
+        }
+        window.Date = ClockDate;
+      });
+      clockHooked = true;
+    }
+    await page.evaluate((v) => { if (v) sessionStorage.setItem("e2e-clock", v); else sessionStorage.removeItem("e2e-clock"); }, hm);
+  };
+  // A live page re-reads the clock in its focus handler (the app's tick listens to it) — no reload needed.
+  const tickClock = () => page.evaluate(() => window.dispatchEvent(new Event("focus")));
   // Split coverage around reloads and accumulate (V8 coverage resets on every navigation)
   // The app opens the daily briefing on the first load of each day; dismiss it so the next click
   // reaches the screen behind. Pass { keepModal: true } in steps that assert the briefing itself.
@@ -432,7 +459,7 @@ const typeInto = async (placeholder, value) => {
     tasks: (st.tasks || []).length,
     goals: JSON.stringify(st.goals || []),
   });
-  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, plantGate, passGate, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, plantGate, passGate, setClock, tickClock, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

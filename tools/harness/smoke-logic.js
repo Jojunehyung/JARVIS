@@ -591,14 +591,18 @@ console.log("calendar file: 19 check groups");
 // 9) the daily gate (2026-09-24) — the pass rule, local grading, the gate's standing and steps, and the settings month
 // line, all derived from `act.gate` stamps and `work[].createdAt` (rule 9), plus the quiz reply parser (`quiz` key only,
 // items kept whole or dropped, the refusal below QUIZ_MIN) and the reshuffle that keeps the correct text at the remapped answer.
+// (2026-09-26) The deferrals: the morning appointment derived from `events[]` and the clock, the manual `deferredUntil`
+// stamp capped at 23:59, the later of both, the fail-closed rule, the home line and the month line's `미룸` count.
 {
   let n = 0;
   const check = (cond, msg) => { n++; ok(cond, `daily gate: ${msg}`); };
   const GATE = new Function([
-    ...["dstr", "shiftDay", "GATE_KEEP_DAYS", "GATE_PASS_RATIO", "GATE_MODAL_TYPES", "gateEntryOf", "gateRefreshedOf", "gateActiveOf",
+    ...["dstr", "shiftDay", "daysBetween", "MAX_OCC", "occurrencesOf", "GATE_KEEP_DAYS", "GATE_PASS_RATIO", "GATE_MODAL_TYPES", "gateEntryOf", "gateRefreshedOf",
+      "GATE_MORNING_BEFORE", "GATE_MORNING_UNTIL", "GATE_DEFER_MINUTES", "GATE_DAY_END", "morningAppointmentsOf", "gateDeferredUntil", "gateActiveOf",
+      "gateDeferTo", "gateCanDefer", "gateDeferLine",
       "gateStepsOf", "quizNeed", "gradeQuiz", "gateMonthOf", "gateMonthLine",
       "QUIZ_MIN", "QUIZ_MAX", "QUIZ_Q_MAX", "QUIZ_CHOICE_MAX", "QUIZ_BASIS_MAX", "replyJson", "parseQuizReply", "shuffleQuiz"].map(lift),
-  ].join("\n") + "\nreturn { GATE_KEEP_DAYS, GATE_PASS_RATIO, GATE_MODAL_TYPES, gateEntryOf, gateRefreshedOf, gateActiveOf, gateStepsOf, quizNeed, gradeQuiz, gateMonthOf, gateMonthLine, QUIZ_MIN, QUIZ_MAX, QUIZ_Q_MAX, QUIZ_CHOICE_MAX, QUIZ_BASIS_MAX, parseQuizReply, shuffleQuiz };")();
+  ].join("\n") + "\nreturn { GATE_KEEP_DAYS, GATE_PASS_RATIO, GATE_MODAL_TYPES, gateEntryOf, gateRefreshedOf, gateActiveOf, gateStepsOf, quizNeed, gradeQuiz, gateMonthOf, gateMonthLine, QUIZ_MIN, QUIZ_MAX, QUIZ_Q_MAX, QUIZ_CHOICE_MAX, QUIZ_BASIS_MAX, parseQuizReply, shuffleQuiz, GATE_MORNING_BEFORE, GATE_MORNING_UNTIL, GATE_DEFER_MINUTES, GATE_DAY_END, morningAppointmentsOf, gateDeferredUntil, gateDeferTo, gateCanDefer, gateDeferLine };")();
   const today = "2026-09-24";
 
   // (a) the pass threshold: ceil(0.8 × total) — 5 → 4, 6 → 5, 7 → 6, 8 → 7, 10 → 8 (user decision 1)
@@ -619,10 +623,10 @@ console.log("calendar file: 19 check groups");
 
   // (c) the gate stands with a profile and no stamp; not without a profile; not once passed
   const stamped = { profile: { name: "x" }, act: { gate: { [today]: { passedAt: "08:40" } } } };
-  check(GATE.gateActiveOf({ profile: null }, today) === false && GATE.gateActiveOf(null, today) === false, "no profile → no gate");
-  check(GATE.gateActiveOf({ profile: { name: "x" }, act: {} }, today) === true, "a profile and no stamp → the gate");
-  check(GATE.gateActiveOf({ profile: { name: "x" }, act: { gate: { "2026-09-23": { passedAt: "08:40" } } } }, today) === true, "yesterday's stamp does not pass today");
-  check(GATE.gateActiveOf(stamped, today) === false, "today's passedAt lifts the gate");
+  check(GATE.gateActiveOf({ profile: null }, today, "08:00") === false && GATE.gateActiveOf(null, today, "08:00") === false, "no profile → no gate");
+  check(GATE.gateActiveOf({ profile: { name: "x" }, act: {} }, today, "08:00") === true, "a profile and no stamp → the gate");
+  check(GATE.gateActiveOf({ profile: { name: "x" }, act: { gate: { "2026-09-23": { passedAt: "08:40" } } } }, today, "08:00") === true, "yesterday's stamp does not pass today");
+  check(GATE.gateActiveOf(stamped, today, "08:00") === false, "today's passedAt lifts the gate");
   check(JSON.stringify(GATE.gateEntryOf({ act: {} }, today)) === "{}" && GATE.gateEntryOf(stamped, today).passedAt === "08:40", "gateEntryOf reads today's entry or {}");
 
   // (d) the steps: ready only with both reads, a passed quiz and a work item created today; a fail's cleared reads are not ready
@@ -650,9 +654,9 @@ console.log("calendar file: 19 check groups");
   } } };
   const mo = GATE.gateMonthOf(month, today);
   check(mo.passed === 2 && mo.failed === 1 && mo.quiz.score === 5.5 && mo.quiz.total === 7, `gateMonthOf ${JSON.stringify(mo)}`);
-  check(GATE.gateMonthLine(month, today) === "이번 달 관문 통과 2일 · 미통과 1일 · 퀴즈 평균 5.5/7", `month line: ${GATE.gateMonthLine(month, today)}`);
-  check(GATE.gateMonthLine({ act: { gate: { "2026-09-20": { passedAt: "08:00" } } } }, today) === "이번 달 관문 통과 1일 · 미통과 0일 · 퀴즈 없음", "no quiz → 퀴즈 없음");
-  check(GATE.gateMonthLine({ act: {} }, today) === "이번 달 관문 통과 0일 · 미통과 0일 · 퀴즈 없음", "no entry → zeros");
+  check(GATE.gateMonthLine(month, today) === "이번 달 관문 통과 2일 · 미통과 1일 · 퀴즈 평균 5.5/7 · 미룸 0회", `month line: ${GATE.gateMonthLine(month, today)}`);
+  check(GATE.gateMonthLine({ act: { gate: { "2026-09-20": { passedAt: "08:00" } } } }, today) === "이번 달 관문 통과 1일 · 미통과 0일 · 퀴즈 없음 · 미룸 0회", "no quiz → 퀴즈 없음");
+  check(GATE.gateMonthLine({ act: {} }, today) === "이번 달 관문 통과 0일 · 미통과 0일 · 퀴즈 없음 · 미룸 0회", "no entry → zeros");
   check(GATE.gateMonthOf({ act: { gate: { "2026-09-01": { quiz: { total: 7, score: 6 } }, "2026-09-02": { quiz: { total: 7, score: 6 } }, "2026-09-03": { quiz: { total: 7, score: 5 } } } } }, today).quiz.score === 5.7, "the average is rounded to one decimal");
 
   // (f) the reply parser: `quiz` only; an item is kept whole (four distinct non-empty choices, an integer answer 0–3) or
@@ -704,6 +708,71 @@ console.log("calendar file: 19 check groups");
   check(shuffled.some((it, i) => it.choices.join() !== seven[i].choices.join()), "the fixed rand changes at least one order");
   check(seven.every((it, i) => it.choices.join() === `a${i},b${i},c${i},d${i}` && it.answer === i % 4), "shuffleQuiz does not mutate its input");
   check(GATE.gradeQuiz(shuffled, shuffled.map((it) => it.answer)).score === 7 && GATE.gradeQuiz(shuffled, seven.map((it) => it.answer)).score === shuffled.filter((it, i) => it.answer === seven[i].answer).length, "grading follows the shuffled indexes, not the original ones");
+
+  // deferral (e) the morning appointments (2026-09-26): a timed `appt` today before 12:00; done and cancelled occurrences count;
+  // untimed, `due`, noon, another day, a malformed time and a missing list count nowhere
+  const yday = "2026-09-23", tmrw = "2026-09-25";
+  const ap = (o) => ({ id: "a", title: "약속", kind: "appt", date: today, createdAt: yday, ...o });
+  const am = (events) => GATE.morningAppointmentsOf({ events }, today).length;
+  check(GATE.GATE_MORNING_BEFORE === "12:00" && GATE.GATE_MORNING_UNTIL === "22:00" && GATE.GATE_DEFER_MINUTES === 180 && GATE.GATE_DAY_END === "23:59",
+    "deferral constants 12:00 / 22:00 / 180 / 23:59");
+  check(am([ap({ time: "09:30" })]) === 1 && am([ap({ time: "11:59" })]) === 1, "an appt at 09:30 or 11:59 today → 1");
+  check(am([ap({ time: "12:00" })]) === 0, "an appt at 12:00 is not a morning one");
+  check(am([ap({})]) === 0, "an untimed appt → 0");
+  check(am([ap({ kind: "due", time: "08:00" })]) === 0, "a due at 08:00 → 0");
+  check(am([ap({ time: "09:30", doneDates: [today] })]) === 1, "a done occurrence still counts");
+  check(am([ap({ date: yday, time: "10:00", repeat: { freq: "daily" }, skip: [today] })]) === 1, "a cancelled occurrence of a daily repeat still counts");
+  check(am([ap({ date: "2026-09-17", time: "10:00", repeat: { freq: "weekly" } })]) === 1, "a weekly repeat on today's weekday → 1");
+  check(am([ap({ date: "2026-09-18", time: "10:00", repeat: { freq: "weekly" } })]) === 0, "a weekly repeat on another weekday → 0");
+  check(am([ap({ date: tmrw, time: "09:30" })]) === 0, "an appt at 09:30 tomorrow → 0");
+  check(am([ap({ time: "9:30" })]) === 0, "a malformed time → 0");
+  check(GATE.morningAppointmentsOf({}, today).length === 0 && GATE.morningAppointmentsOf(null, today).length === 0, "no events → 0");
+
+  // deferral (f) the time the gate stands from: the later of both deferrals, or null
+  const P = { name: "x" };
+  const dsave = (events, entry) => ({ profile: P, events, act: { gate: entry ? { [today]: entry } : {} } });
+  const morningEv = [ap({ time: "09:30" })];
+  check(GATE.gateDeferredUntil(dsave([], null), today) === null, "no deferral → null");
+  check(GATE.gateDeferredUntil(dsave(morningEv, null), today) === "22:00", "a morning appointment → 22:00");
+  check(GATE.gateDeferredUntil(dsave([], { deferredUntil: "13:07" }), today) === "13:07", "a manual 13:07 → 13:07");
+  check(GATE.gateDeferredUntil(dsave(morningEv, { deferredUntil: "13:07" }), today) === "22:00", "morning + manual 13:07 → 22:00");
+  check(GATE.gateDeferredUntil(dsave(morningEv, { deferredUntil: "23:59" }), today) === "23:59", "morning + manual 23:59 → 23:59");
+
+  // deferral (g) the gate at a time: held back before the deferral's end, standing from it; passedAt still lifts it; fails closed
+  check(GATE.gateActiveOf(dsave(morningEv, null), today, "21:59") === false, "a morning day at 21:59 → no gate");
+  check(GATE.gateActiveOf(dsave(morningEv, null), today, "22:00") === true && GATE.gateActiveOf(dsave(morningEv, null), today, "23:30") === true, "a morning day at 22:00 and 23:30 → the gate");
+  check(GATE.gateActiveOf(dsave(morningEv, { passedAt: "07:10" }), today, "22:30") === false, "a morning day with passedAt → no gate");
+  check(GATE.gateActiveOf(dsave([], { deferredUntil: "13:07" }), today, "13:06") === false && GATE.gateActiveOf(dsave([], { deferredUntil: "13:07" }), today, "13:07") === true, "manual 13:07: 13:06 → no gate, 13:07 → the gate");
+  check(GATE.gateActiveOf(dsave([], { deferredUntil: "13:07" }), today, undefined) === true && GATE.gateActiveOf(dsave(morningEv, null), today) === true, "a deferral without nowHm fails closed");
+  check(GATE.gateActiveOf({ profile: null, events: morningEv }, today, "10:00") === false, "no profile → no gate");
+
+  // deferral (h) the manual deferral: +3 h capped at 23:59, once a day
+  const deferTo = ["10:07", "20:58", "20:59", "21:30", "23:59", "00:00"].map(GATE.gateDeferTo).join(",");
+  check(deferTo === "13:07,23:58,23:59,23:59,23:59,03:00", `gateDeferTo: ${deferTo}`);
+  check(GATE.gateCanDefer(dsave([], {}), today) === true && GATE.gateCanDefer(dsave([], null), today) === true && GATE.gateCanDefer(dsave([], { deferredUntil: "13:07" }), today) === false,
+    "gateCanDefer: true on an empty entry, false once deferredUntil exists");
+
+  // deferral (i) the home line: the deferral that decides the time; nothing once the time is reached, passed or without a profile
+  const twoAm = [ap({ id: "a1", time: "09:30" }), ap({ id: "a2", time: "10:30" })];
+  check(GATE.gateDeferLine(dsave(twoAm, null), today, "10:00") === "오늘의 관문 22:00부터 — 오전 약속 2건", `two morning appointments at 10:00: ${GATE.gateDeferLine(dsave(twoAm, null), today, "10:00")}`);
+  check(GATE.gateDeferLine(dsave(twoAm, null), today, "22:00") === null, "at 22:00 → null");
+  check(GATE.gateDeferLine(dsave([], { deferredUntil: "13:07" }), today, "10:07") === "오늘의 관문 13:07부터 — 미룸", "manual 13:07 at 10:07 → the 미룸 line");
+  check(GATE.gateDeferLine(dsave(morningEv, { deferredUntil: "23:59" }), today, "22:10") === "오늘의 관문 23:59부터 — 미룸", "morning + manual 23:59 at 22:10 → the 미룸 line");
+  check(GATE.gateDeferLine(dsave(twoAm, { passedAt: "07:00" }), today, "10:00") === null, "with passedAt → null");
+  check(GATE.gateDeferLine({ profile: null, events: twoAm }, today, "10:00") === null, "no profile → null");
+
+  // deferral (j) the month line's deferral count: a deferral-only entry is a day not passed; a pass with a deferral counts in both
+  const dm = { act: { gate: {
+    "2026-09-20": { passedAt: "08:00", quiz: { total: 7, score: 6, passed: true, attempts: 1, at: "07:50" } },
+    "2026-09-21": { quiz: { total: 7, score: 4, passed: false, attempts: 1, at: "08:10" } },
+    "2026-09-22": { deferredUntil: "11:00" },
+    "2026-08-30": { deferredUntil: "12:00" },
+  } } };
+  check(GATE.gateMonthLine(dm, today) === "이번 달 관문 통과 1일 · 미통과 2일 · 퀴즈 평균 5/7 · 미룸 1회", `deferral month line: ${GATE.gateMonthLine(dm, today)}`);
+  const both = { act: { gate: { "2026-09-20": { passedAt: "15:00", deferredUntil: "13:00" } } } };
+  const bm = GATE.gateMonthOf(both, today);
+  check(bm.passed === 1 && bm.failed === 0 && bm.deferred === 1, `a passed entry with a deferral counts in 통과 and 미룸: ${JSON.stringify(bm)}`);
+  check(GATE.gateMonthOf({ act: { gate: { "2026-08-30": { deferredUntil: "12:00" } } } }, today).deferred === 0, "a deferral in another month is not counted");
   console.log(`daily gate: ${n} checks`);
 }
 

@@ -3148,9 +3148,53 @@ const GATE_MODAL_TYPES = ["reader", "issues", "quiz", "workBridge", "work"];
 const gateEntryOf = (state, today) => state?.act?.gate?.[today] || {};
 // Today was refreshed when at least one work item was created today — the one rule `checkSummaryOf` states too.
 const gateRefreshedOf = (state, today) => (state.work || []).some((w) => w.createdAt === today);
-// The gate stands whenever a profile exists and today carries no `passedAt`: onboarding has no state, a restored backup
-// or a re-dated save opens it at once, and a day change while open re-evaluates by itself.
-const gateActiveOf = (state, today) => !!state?.profile && !gateEntryOf(state, today).passedAt;
+// The deferrals (2026-09-26): a day with an appointment before noon holds the gate back until 22:00 (derived from
+// `events[]` and the clock at render, never stored — rule 9); one manual deferral a day, tap time + 3 h capped at 23:59,
+// stamped as `deferredUntil`. Both combine as the later time. `HH:MM` strings are zero-padded, so string order is
+// time order. A deferral is not a reward: no streak, no badge, a count in settings only (rule 7).
+const GATE_MORNING_BEFORE = "12:00"; // an appointment starting before this is a morning one
+const GATE_MORNING_UNTIL = "22:00";  // a morning appointment holds the gate back until this time
+const GATE_DEFER_MINUTES = 180;      // the manual deferral's length
+const GATE_DAY_END = "23:59";        // no deferral reaches past the day
+// Today's timed appointments before noon. Done and cancelled occurrences count by the user's decision (the skip list is
+// ignored, `doneDates` never read); `createdAt` is not read, so an appointment added the same morning counts too.
+const morningAppointmentsOf = (state, today) => {
+  const morning = (ev) => ev.kind === "appt" && /^\d\d:\d\d$/.test(ev.time || "") && ev.time < GATE_MORNING_BEFORE;
+  return (state?.events || []).filter((ev) => morning(ev) && occurrencesOf({ ...ev, skip: [] }, today, today).length > 0);
+};
+// The time the gate stands from today — the later of both deferrals — or null when neither applies.
+const gateDeferredUntil = (state, today) => {
+  const morning = morningAppointmentsOf(state, today).length ? GATE_MORNING_UNTIL : null;
+  const d = gateEntryOf(state, today).deferredUntil;
+  const manual = /^\d\d:\d\d$/.test(d || "") ? d : null;
+  if (!morning) return manual;
+  if (!manual) return morning;
+  return manual > morning ? manual : morning;
+};
+// The gate stands whenever a profile exists, today carries no `passedAt` and no deferral holds it back at `nowHm`:
+// onboarding has no state, a restored backup or a re-dated save opens it at once, and a day change or the deferral's
+// end while open re-evaluates by itself. Fails closed: with a deferral and no valid `nowHm`, the gate stands.
+const gateActiveOf = (state, today, nowHm) => {
+  if (!state?.profile || gateEntryOf(state, today).passedAt) return false;
+  const until = gateDeferredUntil(state, today);
+  return !(until && /^\d\d:\d\d$/.test(nowHm || "") && nowHm < until);
+};
+// `nowHm` + 3 h as `HH:MM`, capped at the day's end.
+const gateDeferTo = (nowHm) => {
+  const cap = Number(GATE_DAY_END.slice(0, 2)) * 60 + Number(GATE_DAY_END.slice(3, 5));
+  const total = Math.min(Number(nowHm.slice(0, 2)) * 60 + Number(nowHm.slice(3, 5)) + GATE_DEFER_MINUTES, cap);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+};
+// One manual deferral a day.
+const gateCanDefer = (state, today) => !gateEntryOf(state, today).deferredUntil;
+// The home line while a deferral holds the gate back; it names the deferral that decides the time.
+const gateDeferLine = (state, today, nowHm) => {
+  if (!state?.profile || gateEntryOf(state, today).passedAt) return null;
+  const until = gateDeferredUntil(state, today);
+  if (!until || !(nowHm < until)) return null;
+  const n = morningAppointmentsOf(state, today).length;
+  return n && until === GATE_MORNING_UNTIL ? `오늘의 관문 ${GATE_MORNING_UNTIL}부터 — 오전 약속 ${n}건` : `오늘의 관문 ${until}부터 — 미룸`;
+};
 const gateStepsOf = (state, today) => {
   const e = gateEntryOf(state, today);
   const reader = e.readReaderAt || null, issues = e.readIssuesAt || null;
@@ -3169,19 +3213,20 @@ const gradeQuiz = (items, answers) => {
   const need = quizNeed(total);
   return { total, score, need, passed: score >= need };
 };
-// This month's stamps: days passed, days opened and not passed, the quiz averages to one decimal — a day with no entry
-// counts nowhere.
+// This month's stamps: days passed, days opened and not passed, the quiz averages to one decimal, the manual
+// deferrals — a day with no entry counts nowhere (a deferral-only entry is a day not passed).
 const gateMonthOf = (state, today) => {
   const month = today.slice(0, 7);
   const entries = Object.entries(state?.act?.gate || {}).filter(([d]) => d.startsWith(month)).map(([, e]) => e);
   const passed = entries.filter((e) => e.passedAt).length;
   const quizzes = entries.filter((e) => e.quiz);
   const avg = (f) => Math.round((quizzes.reduce((n, e) => n + f(e.quiz), 0) / quizzes.length) * 10) / 10;
-  return { passed, failed: entries.length - passed, quiz: quizzes.length ? { score: avg((q) => q.score), total: avg((q) => q.total) } : null };
+  return { passed, failed: entries.length - passed, quiz: quizzes.length ? { score: avg((q) => q.score), total: avg((q) => q.total) } : null,
+    deferred: entries.filter((e) => e.deferredUntil).length };
 };
 const gateMonthLine = (state, today) => {
   const m = gateMonthOf(state, today);
-  return `이번 달 관문 통과 ${m.passed}일 · 미통과 ${m.failed}일 · ${m.quiz ? `퀴즈 평균 ${m.quiz.score}/${m.quiz.total}` : "퀴즈 없음"}`;
+  return `이번 달 관문 통과 ${m.passed}일 · 미통과 ${m.failed}일 · ${m.quiz ? `퀴즈 평균 ${m.quiz.score}/${m.quiz.total}` : "퀴즈 없음"} · 미룸 ${m.deferred}회`;
 };
 
 /* ── The first-open stamp (2026-09-25) — `act.opened[date] = "HH:MM"`: the day's first open, written once by the root
@@ -4739,11 +4784,15 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *          workRefreshedAt?,                                   // (2026-09-22, still v28, no migrate block) the day the work bridge last
  *                                                              // registered ≥ 1 AI proposal — a user-action stamp like `briefingSeen`,
  *                                                              // never read as progress (rule 9)
- *          gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt? } },
+ *          gate?: { [date]: { readReaderAt?, readIssuesAt?, quiz?: { total, score, passed, attempts, at }, passedAt?,
+ *                             deferredUntil? } },
  *                                                              // (2026-09-24, still v28, no migrate block) the daily gate's user-action
  *                                                              // stamps (`HH:MM` local times; `quiz` a locally graded score), newest
  *                                                              // `GATE_KEEP_DAYS` days; `refreshed` is derived from `work[].createdAt`,
- *                                                              // never stored (rule 9)
+ *                                                              // never stored (rule 9). (2026-09-26, still v28, no migrate block)
+ *                                                              // `deferredUntil` `HH:MM` — the day's one manual deferral (tap time + 3 h,
+ *                                                              // capped at 23:59); the morning-appointment deferral is derived from
+ *                                                              // `events[]` and the clock, never stored (rule 9)
  *          opened?: { [date]: "HH:MM" } },                    // (2026-09-25, still v28, no migrate block) the day's first-open time,
  *                                                              // stamped once by the root effect on every path that brings the app up;
  *                                                              // its own map, never under `gate` (`gateMonthOf` counts entries as days);
@@ -5829,7 +5878,7 @@ function AreaGradeRow({ area: p, onPromote }) {
   );
 }
 
-function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRole, onWall, onReader, onIssues }) {
+function HomeTab({ state, today, nowHm, imgs, onProfile, onSettings, onPromote, onRole, onWall, onReader, onIssues }) {
   const cv = cvSummaryOf(state.profile, today);
   const held = heldCertsOf(state);
   const bests = Object.entries(state.exams?.best || {})
@@ -5837,6 +5886,7 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRole,
   const trophies = (state.room?.trophies || []).length;
   const achTotal = (state.areas || []).reduce((n, p) => n + (p.achievements || []).length, 0);
   const rs = roleStageOf(state, today);
+  const deferLine = gateDeferLine(state, today, nowHm);
   return (
     <>
       <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
@@ -5910,6 +5960,8 @@ function HomeTab({ state, today, imgs, onProfile, onSettings, onPromote, onRole,
       ) : (
         <p className="px-1 text-xs text-zinc-500">롤모델 미설정 — 설정에서 롤모델을 정해요</p>
       )}
+      {/* 2026-09-26: while a deferral holds the gate back — the time it stands from and why (rule 13) */}
+      {deferLine && <p className="px-1 font-mono text-xs text-zinc-400">{deferLine}</p>}
     </>
   );
 }
@@ -6361,9 +6413,11 @@ function BriefingModal({ state, today, onClose, onAction }) {
    no key handler. Every line is derived from `gateStepsOf` at render; the buttons only open sheets, and `통과` is
    the one write, through `onPass` (rules 9, 13). Disabled buttons stay visible, dimmed, so the order of steps reads. ── */
 const GATE_BTN = "py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs disabled:opacity-40";
-function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onRetry, onBridge, onAddWork, onPass }) {
+function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onRetry, onBridge, onAddWork, onPass, onDefer }) {
   const st = gateStepsOf(state, today);
   const opened = openedOf(state, today);
+  const entry = gateEntryOf(state, today);
+  const morning = morningAppointmentsOf(state, today).length;
   const readAt = (t) => (t ? `완료 ${t}` : "미완료");
   const quizLine = st.quiz ? `${st.quiz.passed ? "통과" : "미통과"} ${st.quiz.score}/${st.quiz.total} · 시도 ${st.quiz.attempts}` : "아직";
   return (
@@ -6371,6 +6425,7 @@ function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onR
       <div className="max-w-md mx-auto p-5 space-y-4">
         <h3 className="text-base font-bold text-zinc-100">오늘의 관문 — {today}</h3>
         {opened && <p className="font-mono text-xs text-zinc-400">오늘 첫 실행 {opened}</p>}
+        {morning > 0 && <p className="font-mono text-xs text-zinc-400">오전 약속으로 22:00까지 미뤄졌어요</p>}
         <p className="text-xs text-zinc-400">세 단계를 마쳐야 앱이 열려요. 닫기와 건너뛰기는 없어요.</p>
         <p className="text-xs text-zinc-500">퀴즈는 외부 AI 채팅의 답변을 붙여넣어야 해요. AI를 쓸 수 없는 날은 통과할 수 없어요.</p>
         <div className="bg-zinc-900 rounded-xl p-3 space-y-2">
@@ -6404,6 +6459,10 @@ function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onR
         </div>
         <button onClick={onPass} disabled={!st.ready}
           className="w-full py-2.5 rounded-xl bg-cyan-500 text-zinc-950 font-black text-xs disabled:opacity-40">통과</button>
+        {/* 2026-09-26: the day's one manual deferral — the button, then in its place the stamped time */}
+        {entry.deferredUntil
+          ? <p className="font-mono text-xs text-zinc-400">{entry.deferredUntil}까지 미뤘어요 · 오늘 1회 사용</p>
+          : <button onClick={onDefer} className={`w-full ${GATE_BTN}`}>3시간 미루기</button>}
       </div>
     </div>
   );
@@ -8032,7 +8091,7 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
         <div>
           <SectionLabel tone="text-cyan-400">오늘의 관문</SectionLabel>
           <p className="font-mono text-xs text-zinc-300">{gateMonthLine(state, today)}</p>
-          <p className="text-xs text-zinc-500 mt-1.5">관문은 매일 첫 실행에 열려요. 끄는 설정은 없어요.</p>
+          <p className="text-xs text-zinc-500 mt-1.5">관문은 매일 첫 실행에 열려요. 오전 약속이 있는 날은 22:00부터 열려요. 하루 한 번 3시간 미룰 수 있어요. 끄는 설정은 없어요.</p>
         </div>
         <div>
           <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
@@ -11709,10 +11768,12 @@ export default function LifeManager() {
   const [day, setDay] = useState(dstr());
   const dayRef = useRef(null);
   const today = day;
+  // The clock's `HH:MM` for the gate's deferrals (2026-09-26) — component state refreshed with `day`, never saved (rule 9).
+  const [nowHm, setNowHm] = useState(() => hhmm());
   // The daily gate (2026-09-24): derived from the save and the day, never a ref. While it stands, `<main>` and `<nav>`
   // are not rendered and only the gate's own flows may open — every other `setModal` is dropped by the derived `modal`
   // line here rather than at the ~80 call sites (defence in depth: no tab handler can fire either).
-  const gateActive = phase === "main" && !!state && gateActiveOf(state, today);
+  const gateActive = phase === "main" && !!state && gateActiveOf(state, today, nowHm);
   const modal = gateActive && modalRaw && !GATE_MODAL_TYPES.includes(modalRaw.type) ? null : modalRaw;
 
   const showToast = (t) => toastRef.current?.show(t);
@@ -11731,7 +11792,7 @@ export default function LifeManager() {
         if (OPEN_PARAM_TYPES.includes(open)) {
           setModal({ type: open });
           try { history.replaceState(null, "", location.pathname + location.hash); } catch { /* no history */ }
-        } else if (!gateActiveOf(m, dstr()) && m.act?.briefingSeen !== dstr()) setModal({ type: "reader" });
+        } else if (!gateActiveOf(m, dstr(), hhmm()) && m.act?.briefingSeen !== dstr()) setModal({ type: "reader" });
         if (checkNotifyOf(m) && typeof Notification !== "undefined" && Notification.permission === "granted") checkSyncRegister();
       }
       else setPhase("onboard");
@@ -11741,9 +11802,10 @@ export default function LifeManager() {
     })();
   }, []);
 
-  // The app can stay open past midnight; re-read the date on focus and on a slow tick so `today` stays real.
+  // The app can stay open past midnight; re-read the date on focus and on a slow tick so `today` stays real. The same
+  // tick refreshes `nowHm`, so a deferral's end stands the gate within a minute (an unchanged string skips the render).
   useEffect(() => {
-    const check = () => setDay((d) => (dstr() === d ? d : dstr()));
+    const check = () => { setDay((d) => (dstr() === d ? d : dstr())); setNowHm(hhmm()); };
     const id = setInterval(check, 60000);
     window.addEventListener("visibilitychange", check);
     window.addEventListener("focus", check);
@@ -11756,7 +11818,7 @@ export default function LifeManager() {
     if (!dayRef.current) { dayRef.current = day; return; }
     if (dayRef.current === day) return;
     dayRef.current = day;
-    if (state && !gateActiveOf(state, day) && state.act?.briefingSeen !== day) setModal({ type: "reader" });
+    if (state && !gateActiveOf(state, day, hhmm()) && state.act?.briefingSeen !== day) setModal({ type: "reader" });
   }, [day, state]);
   // The held quiz belongs to the day it was pasted on.
   useEffect(() => { setQuizHeld(null); }, [day]);
@@ -12868,6 +12930,15 @@ export default function LifeManager() {
     setQuizHeld(null);
     showToast({ msg: `오늘의 관문 통과 · 퀴즈 ${st.quiz.score}/${st.quiz.total}` });
   };
+  // `3시간 미루기` (2026-09-26): once a day, the tap time + 3 h capped at 23:59, a stamp of the tap. The time comes from
+  // the clock at the tap, not the up-to-a-minute-old `nowHm`; the gate's disappearing and the home line are the statement.
+  const deferGate = () => {
+    if (!gateCanDefer(state, today)) return;
+    const until = gateDeferTo(hhmm());
+    writeGate((e) => { if (!e.deferredUntil) e.deferredUntil = until; });
+    setNowHm(hhmm());
+    setModal(null);
+  };
   // Stores the pasted reply on today's journal entry. Text only — it never changes a score (rule 7 amendment).
   const upsertReply = (s, raw) => {
     if (!raw) return;
@@ -13063,12 +13134,12 @@ export default function LifeManager() {
           onOpenReader={() => setModal({ type: "reader" })} onOpenIssues={() => setModal({ type: "issues" })}
           onQuiz={() => setModal({ type: "quiz" })} onRetry={() => setModal({ type: "quiz", retry: true })}
           onBridge={() => setModal({ type: "workBridge" })} onAddWork={() => setModal({ type: "work", date: today })}
-          onPass={passGate} />
+          onPass={passGate} onDefer={deferGate} />
       ) : (
         <>
           <main className="px-4 pb-24 space-y-4">
             {tab === "home" && (
-              <HomeTab state={state} today={today} imgs={imgs} onProfile={() => setModal({ type: "profile" })}
+              <HomeTab state={state} today={today} nowHm={nowHm} imgs={imgs} onProfile={() => setModal({ type: "profile" })}
                 onSettings={() => setModal({ type: "settings" })}
                 onPromote={(area) => setModal({ type: "promote", area })}
                 onRole={() => setModal({ type: "role" })}
