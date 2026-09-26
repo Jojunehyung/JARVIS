@@ -125,7 +125,7 @@ user's own decision.
 
 ## When it opens
 
-- **At boot** and **on a day change**, in the briefing's former place: `if (!gateActiveOf(m, dstr()) && m.act?.briefingSeen !== dstr()) setModal({ type: "reader" })` — the same guard the briefing used to run, now opening the reader instead, and (2026-09-24) skipped entirely while the [daily gate](daily-gate.md) stands, since the gate is the first screen in that case and the reader is reached from its own `오늘 읽을 것 열기 ›` button, in gate-read mode. The
+- **At boot** and **on a day change**, in the briefing's former place: `if (!gateActiveOf(m, dstr(), hhmm()) && m.act?.briefingSeen !== dstr()) setModal({ type: "reader" })` (the clock argument since 2026-09-26 — a deferred gate does not block the reader) — the same guard the briefing used to run, now opening the reader instead, and (2026-09-24) skipped entirely while the [daily gate](daily-gate.md) stands, since the gate is the first screen in that case and the reader is reached from its own `오늘 읽을 것 열기 ›` button, in gate-read mode. The
   briefing no longer auto-opens on its own.
 - From the **profile tab's CV card**, a button `오늘 읽을 것 ›` next to `프로필 편집` (`HomeTab`'s `onReader`
   prop, root wires `() => setModal({ type: "reader" })`).

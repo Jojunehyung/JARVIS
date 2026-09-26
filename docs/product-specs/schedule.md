@@ -46,7 +46,7 @@ Missed deadlines the old `목록` view showed under `지난 마감` stay visible
 of the past 30 days.
 
 ## Row anatomy
-`EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit })` is a module-level component rendered by the
+`EventRow({ ev, date, done, today, onToggleDone, onSkip, onEdit, readOnly = false })` is a module-level component rendered by the
 calendar's selected-day panel **and** by `할 일`'s `EventDetailModal` ([tasks.md](tasks.md)), so the two surfaces
 cannot drift apart. The now-unused `tail` prop (a trailing fragment the old `할 일` row used to print
 `목표 기여 없음` on the same line) was removed in the same change that moved that marker onto the compact row shell
@@ -65,6 +65,8 @@ instead.
   repeating occurrence — skipping the single date of a one-off would leave a record that can never be rendered,
   edited or deleted again, so a one-off is removed with `삭제` in the modal; `수정` opens the modal in edit mode.
 - Ordering inside a date: `마감` first, then `약속` by time with untimed last, ties by title (`eventsOn`).
+- `readOnly` (2026-09-26, only from `EventDetailModal`'s read-only variant, below) omits the whole button row; the
+  calendar panel and every other use render it as before.
 
 ## The month grid and selected-day panel — `ScheduleCalendar`
 `ScheduleCalendar` props: `state, today, onAdd, onEdit, onToggleDone, onSkip`. Two sections under the header:
@@ -220,7 +222,7 @@ occurrence-keyed checklist would need a date map on the event for a use the user
 pays nothing and completes nothing ([Rule 1](../design-docs/core-beliefs.md#rule-1),
 [Rule 18](../design-docs/core-beliefs.md#rule-18)).
 
-**`EventChecks({ ev, onAdd, onToggle, onRemove })`** (Schedule region) renders the checklist for both surfaces
+**`EventChecks({ ev, onAdd, onToggle, onRemove, readOnly = false })`** (Schedule region) renders the checklist for both surfaces
 that show it — the meeting-prep card (`MeetingPrepCard`, [meetings.md](meetings.md)) and, below, the event
 detail sheet — so the two cannot drift apart. Header row: `확인할 것` on the left, a mono `{open}/{total}` on
 the right (`open` = `!done`). One row per check (`bg-zinc-950 rounded-xl`): a checkbox (`aria-label="확인
@@ -228,12 +230,19 @@ the right (`open` = `!done`). One row per check (`bg-zinc-950 rounded-xl`): a ch
 `X` button (`aria-label="확인할 것 삭제"`) → `window.confirm("확인할 것을 삭제해요. 계속할까요?")` →
 `onRemove`. Empty: `확인할 것이 없어요.` Add row: an input (`확인할 것 — 예: 단가표 회신 여부`, no `maxLength`)
 and a border button `추가`; a refusal from `onAdd` shows as a rose line and the input keeps its text; at the cap
-the input and button disable and the line `확인할 것은 30건까지예요.` shows.
+the input and button disable and the line `확인할 것은 30건까지예요.` shows. `readOnly` (2026-09-26): the
+checkboxes stay visible with their state but `disabled` (a guarded no-op `onChange`), and there is no `확인할 것
+삭제` X, no input, no `추가`, no error line and no cap line; the meeting-prep card never passes it.
 
 **`EventDetailModal`** (the `할 일` tab's own event sheet, [tasks.md](tasks.md)) renders `EventChecks` only when
 `eventProjectOf(state, ev)` is non-null (the event belongs to a live meeting project, by its own `projectId` or
 the newest meeting whose trimmed title equals the event's) — a plain appointment's sheet is unchanged. When
 shown, it is preceded by one line `프로젝트 · {project.name}` and sits above the existing `목표 기여 없음` line.
+**Read-only variant** (`readOnly`, 2026-09-26 — opened only from the [daily gate](daily-gate.md#read-only-viewing-from-the-issue-list-2026-09-26)'s
+issue list, `modal: { type: "eventDetail", eventId, date, readOnly: true }`): it passes `readOnly` to `EventRow`
+(no `완료 표시`/`완료 취소`, `이번 회차 취소` or `수정`) and to `EventChecks` (above); the `목표 기여 없음` line stays
+([Rule 13](../design-docs/core-beliefs.md#rule-13)). Closing returns to the issue list. Without `readOnly` the
+sheet is byte-identical to before.
 
 ### Root handlers and toasts
 

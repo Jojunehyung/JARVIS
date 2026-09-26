@@ -122,6 +122,19 @@ button `다 읽었어요` (`disabled` until the end of the content is scrolled i
 X and the backdrop return to the gate without a stamp. `gateRead` defaults to `false`, so this modal's output
 outside the gate is unchanged.
 
+**Rows inside the gate (2026-09-26):** the gate-read `openRow` is no longer a blanket no-op —
+`(spec) => { if (spec && GATE_READONLY_TYPES.includes(spec.type)) onOpen({ ...spec, readOnly: true }); }`. A
+minutes row (`meeting` — a training record or a project card's latest/earlier minutes), a `followUp` row and an
+`event` row open their sheet **read-only** (`MeetingViewModal` / `EventDetailModal` with `readOnly: true`, no
+control that writes), which replaces this list in the single modal slot; closing that sheet (X or backdrop)
+returns to this list, again in gate-read mode — an existing `readIssuesAt` is kept, but an unstamped list's end
+sentinel starts unseen. `work` and `task` rows stay inert (a task sheet reaches the completion path —
+[Rule 10](../design-docs/core-beliefs.md#rule-10), [Rule 18](../design-docs/core-beliefs.md#rule-18)), and
+`{n}건 더` stays plain text. The list has no document row, so the read-only `DocumentModal` is not reachable from
+here ([TD-122](../exec-plans/tech-debt-tracker.md)). The root filter admits the three read-only sheets only with
+`readOnly === true` (`gateAdmits`) — see
+[daily-gate.md](daily-gate.md#read-only-viewing-from-the-issue-list-2026-09-26).
+
 **Row taps** (`issueSpecOf`, every one replacing this modal in the single slot — nothing here completes a tap):
 
 | Row kind | Opens |
@@ -131,6 +144,8 @@ outside the gate is unchanged.
 | `followUp` | `{ type: "meetingView", meetingId }` |
 | `event` | `{ type: "eventDetail", eventId, date }` |
 | `meeting` (training or a project's latest/previous minutes) | `{ type: "meetingView", meetingId }` |
+
+Inside the gate the `followUp`, `event` and `meeting` specs gain `readOnly: true`; `work` and `task` open nothing.
 
 The `교육` section's `{n}건 더 ›` and nothing else calls `onTab("meetings")` (closes the modal, switches tabs).
 
@@ -154,7 +169,7 @@ The `교육` section's `{n}건 더 ›` and nothing else calls `onTab("meetings"
 - Writes no state — every row read is derived at render, and every write happens only after a tap opens a real
   sheet ([Rule 9](../design-docs/core-beliefs.md#rule-9)).
 - Completes, ticks, edits or promotes nothing itself — a work item, a task, a follow-up, an event or a meeting is
-  only ever opened, never acted on, from this screen
+  only ever opened, never acted on, from this screen; inside the gate the sheets it opens are read-only
   ([Rule 1](../design-docs/core-beliefs.md#rule-1), [Rule 10](../design-docs/core-beliefs.md#rule-10),
   [Rule 18](../design-docs/core-beliefs.md#rule-18)).
 - Never builds or sends a packet — `aiHidden` and the day-job AI switch (`workInAiOf`/`packetTracks`) are about
@@ -172,7 +187,9 @@ line, `이전 {n}건 ›` expanding to the real count of compact rows and toggli
 (work, task, follow-up, event, meeting) opening its sheet with no state changed.
 
 **The daily gate (2026-09-24, written, not run):** `tools/e2e/flow12.js` covers this screen in gate-read mode —
-a row tap opening no sheet, no `건 더 ›` button, `이전 {n}건 ›` still toggling, `다 읽었어요` stamping
-`readIssuesAt` and returning to the gate; see
+a work row tap opening no sheet (a carried work row since 2026-09-26), no `건 더 ›` button, `이전 {n}건 ›` still
+toggling, `다 읽었어요` stamping `readIssuesAt` and returning to the gate; steps 15–17 (2026-09-26) tap a minutes
+row, an event row and a follow-up row inside the gate — each opens a read-only sheet, writes nothing, and its X
+returns to this list — and a work row again opens nothing; see
 [daily-gate.md](daily-gate.md#reading-to-the-end--usereadendenabled-and-gate-read-mode). See
 [tools/e2e/README.md](../../tools/e2e/README.md) for the exact step count.

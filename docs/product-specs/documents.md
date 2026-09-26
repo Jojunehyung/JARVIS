@@ -78,7 +78,7 @@ documents.filter((d) => d.projectId === p.id).sort(docOrder)`, and `memoDocs = d
 = pid === null`, then one chip per project) is extracted from `MeetingModal` and reused by `DocumentModal` below,
 so the two forms never duplicate the same ≥ 6-line block.
 
-## `DocumentModal({ state, doc, projectId, onClose, onAdd, onUpdate, onRemove })`
+## `DocumentModal({ state, doc, projectId, onClose, onAdd, onUpdate, onRemove, readOnly = false })`
 
 `modal: { type: "document", docId?, projectId? }`, title `문서 추가` / `문서`.
 
@@ -99,6 +99,16 @@ so the two forms never duplicate the same ≥ 6-line block.
   are byte-identical to what was typed.
 - **Buttons**: `등록` / `저장`; edit mode adds `삭제` → `window.confirm("{title} 문서를 삭제해요. 계속할까요?")`
   → `onRemove(doc.id)`.
+- **Read-only variant** (`readOnly`, 2026-09-26, built for the [daily gate](daily-gate.md#read-only-viewing-from-the-issue-list-2026-09-26)):
+  title `문서`; `CvFact` rows `프로젝트` (`project?.name || "없음 (긴급 메모)"`), `추가일` (mono), `트랙`
+  (`TRACK_LABEL[trackOf(doc)]`), `제목`, `출처` (`doc.source || "없음"`); then `SectionLabel` `요약` and the summary
+  (`whitespace-pre-wrap break-words`); the same caption as above. No `ProjectPicker`, `TrackRow`, field, error,
+  `저장` or `삭제`; without a `doc` it renders nothing. The root's `document` slot passes `readOnly={!!modal.readOnly}`
+  and closes back to the issue list when read-only; the gate's filter admits `document` only with
+  `readOnly === true` (`gateAdmits`). **No gate route reaches this variant today** — the issue list has no
+  document row and `MeetingViewModal` lists no documents — so it is covered by smoke (`gateAdmits`) and a one-off
+  check only, not by an E2E step ([TD-122](../exec-plans/tech-debt-tracker.md)). Without `readOnly` the sheet is
+  byte-identical to before.
 
 ## Root handlers and toasts
 

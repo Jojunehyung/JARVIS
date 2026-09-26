@@ -125,6 +125,17 @@ this field; nothing about the gate's three step lines, its settings-sheet month 
 save simply has no `gate` key until the first gate write. Mechanics:
 [../product-specs/daily-gate.md](../product-specs/daily-gate.md).
 
+**2026-09-26 additions (the gate deferrals) — schema stays v28, no migration block, no `v` bump.** Each
+`act.gate[date]` entry gains one more optional field, `deferredUntil?: "HH:MM"` — the day's one manual deferral
+(`3시간 미루기`: the tap time plus 3 h, capped at `23:59`), a stamp of a user action written once by `deferGate`
+through `writeGate`, so the same 60-day prune applies. It is absent on every existing save, on `freshState` and
+on `demoState`; an entry holding only `deferredUntil` has no `passedAt` and so counts as not passed. The
+morning-appointment deferral is **derived** from `events[]` and the clock on every render and never stored
+([Rule 9](core-beliefs.md#rule-9)). `gateActiveOf` became `gateActiveOf(state, today, nowHm)`: `false` without a
+profile or with `passedAt`, otherwise `true` unless `gateDeferredUntil(state, today)` (the later of `22:00` on a
+morning-appointment day and a valid `deferredUntil`) is still ahead of `nowHm` — failing closed when `nowHm` is not
+a valid `HH:MM`. `nowHm` is root component state refreshed by the existing minute tick, never saved.
+
 **2026-09-25 additions (the routine guide and the daily push) — schema stays v28, no migration block, no `v`
 bump.** `act` gains one more optional field, `opened?: { [date]: "HH:MM" }` — the day's first-open stamp,
 written once by a root effect on every path that brings the app up (boot, a day change while open, onboarding's

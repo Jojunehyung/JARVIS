@@ -450,7 +450,7 @@ is `whitespace-nowrap`).
   사진을 지워요.` and the form stays open with everything typed. Edit mode adds `삭제` →
   `window.confirm("{title} 회의록을 삭제해요. 계속할까요?")`.
 - **`MeetingViewModal({ state, meetingId, today, onClose, onEdit, onOpenTask, onAddProgress, onRemoveProgress,
-  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps, onClearTranscript })`**,
+  onToggleFollowUp, onSetFollowUpMine, onAppendFollowUps, onClearTranscript, readOnly = false })`**,
   `modal: { type: "meetingView", meetingId }`,
   title the meeting's own title: `CvFact wrap` rows `프로젝트` (2026-09-17: `없음 (긴급 메모)` for a memo, else
   `project?.name || "없음"`), `날짜` (mono), `참석자` (or `기록 없음`), `일정`
@@ -496,6 +496,16 @@ is `whitespace-nowrap`).
   `setModal({ type: "taskDetail", taskId })`, which replaces this sheet in the single modal slot; ids whose task no
   longer exists are skipped and counted, `삭제된 할 일 {n}건`; none linked → `연결된 할 일이 없어요.`; a full-width
   `수정` button → `setModal({ type: "meeting", meetingId })`.
+
+  **Read-only variant** (`readOnly`, 2026-09-26 — opened only from the [daily gate](daily-gate.md#read-only-viewing-from-the-issue-list-2026-09-26)'s
+  issue list, `modal: { type: "meetingView", meetingId, readOnly: true }`): every fact and text block renders as
+  above, but no control that writes — no `항목으로 나누기` button and no split panel; the follow-up checkboxes are
+  `disabled` (their `onChange` a guarded no-op, so a click writes nothing and React logs no warning); no `내 담당`
+  chip button (the `내 담당`/`타인` text in the facts line stays); no `진행사항 삭제` X, no progress textarea, error
+  line or `추가`; no `녹취록 지우기` (the `녹취록 {n}자 · 펼치기`/`접기` toggle stays — view state); the `연결된 할 일`
+  rows render with a no-op tap; no `수정`. The component guards itself — the root keeps passing the same handlers
+  and nothing calls them. Closing returns to the issue list (`setModal({ type: "issues" })`). Without `readOnly`
+  the sheet is byte-identical to before.
 - **Reverse side**: `TaskDetailModal` shows `관련 회의록` — the meetings whose `taskIds` include the task, newest
   first, each a `TodoRow` led by the full `date` and titled with the meeting title, opening `MeetingViewModal`. The
   section is hidden when no meeting links the task ([tasks.md](tasks.md)).

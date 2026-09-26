@@ -57,6 +57,15 @@ Three states, in order of precedence:
 3. **No role model** — an inert `<p>` reading `롤모델 미설정 — 설정에서 롤모델을 정해요` — not a button; the role
    model is set from `설정`, not from this line.
 
+**The gate deferral line (2026-09-26).** Directly after the row, as the last element of `HomeTab`'s fragment,
+only while a [daily gate](daily-gate.md#deferrals-2026-09-26) deferral holds the gate back:
+`gateDeferLine(state, today, nowHm)` (new prop `nowHm`, the root's minute clock) in
+`<p className="px-1 font-mono text-xs text-zinc-400">` — `오늘의 관문 22:00부터 — 오전 약속 {n}건` on a day
+whose morning appointment decides the time, else `오늘의 관문 {HH:MM}부터 — 미룸` after the manual deferral.
+A time and a count, never a verdict ([Rule 13](../design-docs/core-beliefs.md#rule-13)); nothing renders when
+no deferral applies, so home without one is byte-identical to before. It is the one fact dated today that home
+states, placed here by the user's own decision (2026-09-26, [decision log](../design-docs/decision-log.md)).
+
 Mechanics (`roleStageOf`, `stageName`, `stageLine`, the twelve-stage model): [metrics-and-role-model.md](../design-docs/metrics-and-role-model.md).
 
 **What replaces the two retired percentages is not designed here.** The user's instruction was to remove every
@@ -117,12 +126,15 @@ Opened by the CV's corner button. Title `설정`, a bottom sheet like every othe
   repository-secret steps, and the always-shown fact caption naming what leaves the device, the contentless
   payload, the two send times and the tap routing. Mechanics: [notifications.md](notifications.md#the-daily-push-2026-09-25).
 - `오늘의 관문` (2026-09-24, between `푸시 알림` and `데이터` since 2026-09-25, previously between `확인 알림` and `데이터`): `SectionLabel`, a `font-mono text-xs text-zinc-300`
-  line, `gateMonthLine(state, today)` — `이번 달 관문 통과 {n}일 · 미통과 {m}일 · 퀴즈 평균 {s}/{t}` or, with no
-  quiz entries this month, `… · 퀴즈 없음` — then a caption, `관문은 매일 첫 실행에 열려요. 끄는 설정은 없어요.`
+  line, `gateMonthLine(state, today)` — `이번 달 관문 통과 {n}일 · 미통과 {m}일 · 퀴즈 평균 {s}/{t} · 미룸 {d}회` or,
+  with no quiz entries this month, `… · 퀴즈 없음 · 미룸 {d}회` (the `미룸` suffix since 2026-09-26, always shown,
+  `d` = this month's manual deferrals) — then a caption, `관문은 매일 첫 실행에 열려요. 오전 약속이 있는 날은
+  22:00부터 열려요. 하루 한 번 3시간 미룰 수 있어요. 끄는 설정은 없어요.` (until 2026-09-26:
+  `관문은 매일 첫 실행에 열려요. 끄는 설정은 없어요.`)
   No checkbox: unlike every other section here, there is no switch, by the user's own decision (decision 2,
   2026-09-24) — the [daily gate](daily-gate.md) cannot be turned off from settings, and this sheet is itself
-  unreachable while the gate stands (`settings` is not in `GATE_MODAL_TYPES`), so this section can only ever be
-  read once the day's gate is already passed.
+  unreachable while the gate stands (`settings` is not admitted by `gateAdmits`), so this section can only ever be
+  read once the day's gate is passed or while a deferral holds it back (2026-09-26).
 - `데이터 — 백업 · 초기화`: the backup sentence, `백업 내보내기` → `exportBackup`, `백업 불러오기` → `askImport`, then `데이터 초기화` → `onReset`. No `<input type="file">` inside the modal — `askImport` drives the one hidden input mounted on `Shell` (R-14, [tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md)), so the modal closing mid-pick cannot take it down. The root wires `onReset={() => { setModal(null); resetAll(); }}` — `resetAll` never clears `modal` itself, so without the explicit close the sheet would reappear over the app after the next onboarding or demo entry. `resetAll` is otherwise byte-identical and still asks nothing before it runs ([TD-26](../exec-plans/tech-debt-tracker.md), unresolved).
 
 Backup and reset mechanics (file shape, validation, toasts): [install-and-backup.md](install-and-backup.md).

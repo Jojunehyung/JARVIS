@@ -100,3 +100,10 @@ from anywhere in the app is dropped by one derived line (`const modal = gateActi
 !GATE_MODAL_TYPES.includes(modalRaw.type) ? null : modalRaw;`) rather than by guarding each of the app's roughly
 80 `setModal` call sites individually. Full behaviour, the three steps, the quiz and the no-escape decision:
 [../product-specs/daily-gate.md](../product-specs/daily-gate.md).
+
+**2026-09-26.** The layer is time-aware — `gateActiveOf(state, today, nowHm)`: a morning appointment holds it
+back until 22:00, and `3시간 미루기` once a day for three hours; while deferred, `<main>`/`<nav>` render and the slot
+is unfiltered. The filter line became `!gateAdmits(modalRaw)`, which also admits `meetingView`, `document` and
+`eventDetail` **only with `readOnly: true`** (`GATE_READONLY_TYPES`) — the sheets the gate's issue list opens
+read-only; closing one returns to `issues`. `readOnly` is a flag on the modal object, not a new `modal.type`, so
+the count stays 41.

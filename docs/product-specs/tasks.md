@@ -144,7 +144,7 @@ view returns to the list. The section is not rendered when no meeting links the 
 unchanged. The list is derived at render and nothing about the task changes when a meeting links it
 ([Rule 9](../design-docs/core-beliefs.md#rule-9), [meetings.md](meetings.md)).
 
-### `EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit, onAddCheck, onToggleCheck, onRemoveCheck })`
+### `EventDetailModal({ state, eventId, date, today, onClose, onToggleDone, onSkip, onEdit, onAddCheck, onToggleCheck, onRemoveCheck, readOnly = false })`
 `modal: { type: "eventDetail", eventId, date }`, title `일정 — {ev.title}`. Body: the existing `EventRow` for the
 live occurrence (`done` read from `ev.doneDates`) — its `완료 표시` / `완료 취소`, `이번 회차 취소` and `수정`
 buttons are the event's detail actions, unchanged from the list — then, since schema v27
@@ -155,7 +155,9 @@ the event is gone. Root: `onToggleDone={toggleEventDone}` (the sheet stays open 
 `onSkip={(id, d) => { skipOccurrence(id, d); setModal(null); }}` (the occurrence no longer exists);
 `onEdit={(ev) => setModal({ type: "event", event: ev })}`; `onAddCheck={addCheck}` / `onToggleCheck={toggleCheck}`
 / `onRemoveCheck={removeCheck}` (v27). `EventRow`'s now-unused `tail` prop was removed with the tab's own row
-markup.
+markup. `readOnly` (2026-09-26) is passed only for the [daily gate](daily-gate.md#read-only-viewing-from-the-issue-list-2026-09-26)'s
+issue list: no button row, no check control, and the X returns to the issue list
+([schedule.md](schedule.md#pre-meeting-checks--확인할-것-schema-v27)).
 
 ### `BizTodoModal({ row, onClose, onOpen })`
 `modal: { type: "bizDetail", row }` — `row` is a render-time snapshot of one `todoOf` business row, held in the
