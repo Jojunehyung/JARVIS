@@ -6444,6 +6444,7 @@ function GateModal({ state, today, held, onOpenReader, onOpenIssues, onQuiz, onR
           {!st.quiz && (
             <button onClick={onQuiz} disabled={!st.read.done} className={`w-full ${GATE_BTN}`}>퀴즈 요청문 만들기 ›</button>
           )}
+          {!st.read.done && <p className="text-xs text-zinc-500">1 읽기의 두 화면에서 끝까지 내려 &apos;다 읽었어요&apos;를 눌러야 퀴즈가 열려요.</p>}
           {st.quiz && !st.quiz.passed && (
             <div className="flex gap-1.5">
               <button onClick={onRetry} disabled={!st.read.done || !held} className={`flex-1 ${GATE_BTN}`}>같은 문제 다시 풀기</button>
@@ -6563,23 +6564,33 @@ function QuizModal({ state, today, held, retry, onHold, onResult, onClose, onToa
    without the API, a scroll listener on the sheet's scrolling card checks its bottom, once at mount and on every
    scroll. Component state only — the stamp is written by the root when `다 읽었어요` is pressed (rule 9). Not
    enabled (outside the gate): nothing is observed and `seen` stays false. ── */
+const READ_END_SLACK = 120; // px before the true end that already count as the end
 function useReadEnd(enabled) {
   const endRef = useRef(null);
   const [seen, setSeen] = useState(false);
   useEffect(() => {
     const el = enabled ? endRef.current : null;
     if (!el) return undefined;
+    // Both checks run, with READ_END_SLACK px of slack (2026-10-02): on a phone the sheet's last pixel can sit under the
+    // navigation bar or past the visible viewport, so an exact 1px sentinel never intersected and the gate stayed shut.
+    const cleanups = [];
     if (typeof IntersectionObserver !== "undefined") {
-      const io = new IntersectionObserver((entries) => { if (entries.some((x) => x.isIntersecting)) setSeen(true); }, { root: null, threshold: 0 });
+      const io = new IntersectionObserver((entries) => { if (entries.some((x) => x.isIntersecting)) setSeen(true); },
+        { root: null, threshold: 0, rootMargin: `0px 0px ${READ_END_SLACK}px 0px` });
       io.observe(el);
-      return () => io.disconnect();
+      cleanups.push(() => io.disconnect());
     }
     const box = el.closest(".overflow-y-auto");
-    if (!box) return undefined;
-    const check = () => { if (box.scrollTop + box.clientHeight >= box.scrollHeight - 4) setSeen(true); };
+    const check = () => {
+      if (box && box.scrollTop + box.clientHeight >= box.scrollHeight - READ_END_SLACK) setSeen(true);
+      if (el.getBoundingClientRect().top <= (window.visualViewport?.height || window.innerHeight) + READ_END_SLACK) setSeen(true);
+    };
     check();
-    box.addEventListener("scroll", check);
-    return () => box.removeEventListener("scroll", check);
+    const target = box || window;
+    target.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("touchend", check, { passive: true });
+    cleanups.push(() => { target.removeEventListener("scroll", check); window.removeEventListener("touchend", check); });
+    return () => cleanups.forEach((fn) => fn());
   }, [enabled]);
   return [endRef, seen];
 }
