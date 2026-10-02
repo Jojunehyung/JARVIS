@@ -36,16 +36,18 @@ module.exports = async (h) => {
     return { ...out, chip: true, paid: /border-emerald-700/.test(btn.className) };
   }, text, month, tap);
   // Decode the stored thumbnail in the page and report the pixel size the browser reads back.
-  const thumbSize = (id) => page.evaluate((k) => new Promise((res) => {
-    let src = null;
-    try { src = JSON.parse(localStorage.getItem(k)); } catch { src = null; }
-    if (!src) { res(null); return; }
-    const im = new Image();
-    im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight });
-    im.onerror = () => res({ w: 0, h: 0 });
-    im.src = src;
-  }), `liferpg-img-folio-${id}`);
-  const imgKeyExists = (id) => page.evaluate((k) => localStorage.getItem(k) != null, `liferpg-img-folio-${id}`);
+  // 2026-10-02: through `h.readImage` — IndexedDB first, else the localStorage JSON string.
+  const thumbSize = async (id) => {
+    const src = await h.readImage(`liferpg-img-folio-${id}`);
+    if (!src) return null;
+    return page.evaluate((s) => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight });
+      im.onerror = () => res({ w: 0, h: 0 });
+      im.src = s;
+    }), src);
+  };
+  const imgKeyExists = async (id) => (await h.readImage(`liferpg-img-folio-${id}`)) != null;
   // The briefing is a stack of section cards inside the topmost overlay; a line is a button whose severity
   // is carried by its colour class, so the text (the shared `overlayText`) and the class are read separately.
   const briefLineClass = (text) => page.evaluate((t) => {
@@ -265,21 +267,7 @@ module.exports = async (h) => {
     await typeInto("기술 (선택", "React, FastAPI");
     await typeInto("링크 주소", "https://example.com/doc-search");
     await clickInModalExact("GitHub");
-    const dropped = await page.evaluate((b64) => {
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const input = document.querySelector('.fixed.inset-0 input[type="file"]');
-      if (!input) return "the portfolio form has no file input";
-      const dt = new DataTransfer();
-      dt.items.add(new File([bytes], "wide.png", { type: "image/png" }));
-      input.files = dt.files;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-      return "ok";
-    }, WIDE_PNG);
-    if (dropped !== "ok") throw new Error(dropped);
-    await sleep(900);
-    const pickErr = await modalError();
+    const pickErr = await h.dropImage(WIDE_PNG, "wide.png");
     if (pickErr) throw new Error("the landscape fixture was refused: " + pickErr);
     await clickInModalExact("등록");
     await sleep(1000);

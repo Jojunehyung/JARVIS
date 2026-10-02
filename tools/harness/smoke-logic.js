@@ -841,5 +841,66 @@ console.log("calendar file: 19 check groups");
   console.log(`first-open stamp: ${n} checks`);
 }
 
-console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");
-process.exit(fail ? 1 : 0);
+// 11) storage routing (2026-10-02) — `liferpg-img-*` keys route to IndexedDB inside the `store` adapter, every other key
+// stays on localStorage; the boot copy puts each localStorage photo into IndexedDB when absent, reads it back, and removes
+// a localStorage copy only when the read-back verified it and removal was asked for. Async, so the exit waits for it.
+const storageRouting = (async () => {
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `storage routing: ${msg}`); };
+  const ST = new Function(["IMG_PREFIX", "routesToIdb", "copyLocalImages"].map(lift).join("\n") + "\nreturn { IMG_PREFIX, routesToIdb, copyLocalImages };")();
+
+  // (a) routing: the four image families → IndexedDB; the state key, the bare prefix, a foreign prefix and non-strings → not
+  for (const k of ["liferpg-img-ev-abc", "liferpg-img-study-abc-2", "liferpg-img-folio-x", "liferpg-img-profile"]) check(ST.routesToIdb(k) === true, `${k} routes to IndexedDB`);
+  for (const k of ["liferpg-state-v1", "liferpg-img", "xliferpg-img-a", "e2e-filler", undefined, null, 42]) check(ST.routesToIdb(k) === false, `${String(k)} stays on localStorage`);
+
+  // In-memory fakes: `local` holds raw strings like localStorage; `idb` holds values, optionally dropping writes.
+  const fakeLocal = (entries) => {
+    const m = new Map(Object.entries(entries));
+    return { m, keys: () => [...m.keys()], get: (k) => (m.has(k) ? m.get(k) : null), remove: (k) => { m.delete(k); } };
+  };
+  const fakeIdb = (entries = {}, { drop = false } = {}) => {
+    const m = new Map(Object.entries(entries));
+    return { m, putIfAbsent: async (k, v) => { if (m.has(k)) return false; if (!drop) m.set(k, v); return true; }, get: async (k) => (m.has(k) ? m.get(k) : null) };
+  };
+  const A = "data:image/jpeg;base64,AAAA", B = "data:image/jpeg;base64,BBBB";
+  const planted = () => ({ "liferpg-img-ev-t1": JSON.stringify(A), "liferpg-img-study-t2-1": JSON.stringify(B), "liferpg-img-profile": "{not json", "liferpg-state-v1": JSON.stringify({ v: 28 }) });
+
+  // (b) copy + read-back; the state key untouched; the unparsable key skipped and kept; removal only when asked
+  {
+    const local = fakeLocal(planted()), idb = fakeIdb();
+    const r = await ST.copyLocalImages(local, idb, false);
+    check(r.copied === 2 && r.verified === 2 && r.removed === 0 && r.skipped === 1 && r.kept === 2, `keep run: ${JSON.stringify(r)}`);
+    check(idb.m.get("liferpg-img-ev-t1") === A && idb.m.get("liferpg-img-study-t2-1") === B, "both photos copied and read back equal");
+    check(!idb.m.has("liferpg-state-v1") && !idb.m.has("liferpg-img-profile"), "the state key and the unparsable key never reach IndexedDB");
+    check(local.m.size === 4, "removeAfterVerify = false removes nothing");
+    const local2 = fakeLocal(planted()), idb2 = fakeIdb();
+    const r2 = await ST.copyLocalImages(local2, idb2, true);
+    check(r2.removed === 2 && !local2.m.has("liferpg-img-ev-t1") && !local2.m.has("liferpg-img-study-t2-1"), `removeAfterVerify = true removes exactly the two verified keys: ${JSON.stringify(r2)}`);
+    check(local2.m.has("liferpg-img-profile") && local2.m.get("liferpg-state-v1") === JSON.stringify({ v: 28 }), "the unparsable key and the state key survive removal");
+
+    // (e) a second run is a no-op
+    const r3 = await ST.copyLocalImages(local, idb, false);
+    check(r3.copied === 0 && r3.verified === 2 && r3.removed === 0, `a rerun copies nothing: ${JSON.stringify(r3)}`);
+  }
+
+  // (c) an IndexedDB that silently drops writes: nothing verifies, nothing is removed even when removal is asked for
+  {
+    const local = fakeLocal(planted()), idb = fakeIdb({}, { drop: true });
+    const r = await ST.copyLocalImages(local, idb, true);
+    check(r.verified === 0 && r.removed === 0 && local.m.size === 4, `a dropping IndexedDB keeps every localStorage copy: ${JSON.stringify(r)}`);
+  }
+
+  // (d) IndexedDB already holds a newer value: never overwritten; the read-back is accepted; the localStorage copy may go
+  {
+    const local = fakeLocal({ "liferpg-img-ev-t1": JSON.stringify(A) }), idb = fakeIdb({ "liferpg-img-ev-t1": B });
+    const r = await ST.copyLocalImages(local, idb, true);
+    check(r.copied === 0 && r.verified === 1 && r.removed === 1, `an existing IndexedDB value verifies without a copy: ${JSON.stringify(r)}`);
+    check(idb.m.get("liferpg-img-ev-t1") === B && !local.m.has("liferpg-img-ev-t1"), "the IndexedDB value is unchanged and the localStorage copy is removed");
+  }
+  console.log(`storage routing: ${n} checks`);
+})();
+
+storageRouting.then(() => {
+  console.log(fail ? `smoke: ${fail} failure(s)` : "smoke: all checks passed");
+  process.exit(fail ? 1 : 0);
+}, (e) => { console.log("  ✗ storage routing threw:", e && e.message); process.exit(1); });

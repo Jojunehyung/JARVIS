@@ -1327,12 +1327,115 @@ const hhmm = (d = new Date()) => `${String(d.getHours()).padStart(2, "0")}:${Str
 const shiftDay = (base, delta) => { const d = new Date(base + "T12:00:00"); d.setDate(d.getDate() + delta); return dstr(d); };
 const monthStr = () => dstr().slice(0, 7);
 
-/* ───────────────────────── Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 ───────────────────────── */
+/* ───────────────────────── Storage (localStorage + IndexedDB for images + in-memory fallback) — storage shim 2026-09-03, image backend 2026-10-02 ───────────────────────── */
 
 const KEY = "liferpg-state-v1";
 const mem = {};
+// Photos keep the rule 16 key convention (`liferpg-img-ev-{taskId}`, `liferpg-img-study-{taskId}-{n}`, `-folio-{id}`,
+// `-profile`) — the key strings are unchanged; only their backend differs. When IndexedDB opens they live in its `kv`
+// store under the same keys and `localStorage` is left to the records; every other key keeps the `localStorage` path.
+const IMG_PREFIX = "liferpg-img-";
+const IDB_NAME = "life-manager";
+const IDB_STORE = "kv";
+const IDB_OPEN_MS = 1500; // private modes can leave `open` pending; past this the page stays on `localStorage`
+const routesToIdb = (k) => typeof k === "string" && k.startsWith(IMG_PREFIX);
+
+// The image database, opened once per page load: a promise of the `IDBDatabase`, or `null` when there is no IndexedDB,
+// on `file:` (the single-file demo stays on `localStorage` deliberately), on an error, a block, an exception or the
+// timeout. `null` means every image key takes the `localStorage` path exactly as before 2026-10-02.
+let imgDbPromise = null;
+const imgDb = () => {
+  if (imgDbPromise) return imgDbPromise;
+  imgDbPromise = new Promise((resolve) => {
+    let settled = false;
+    const done = (db) => {
+      if (settled) { try { db?.close(); } catch {} return; } // a late success after the timeout is closed and ignored
+      settled = true;
+      resolve(db);
+    };
+    try {
+      if (typeof indexedDB === "undefined" || !indexedDB) return done(null);
+      if (typeof location !== "undefined" && location.protocol === "file:") return done(null);
+      const timer = setTimeout(() => done(null), IDB_OPEN_MS);
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        try { if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE); } catch {}
+      };
+      req.onsuccess = () => { clearTimeout(timer); done(req.result); };
+      req.onerror = () => { clearTimeout(timer); done(null); };
+      req.onblocked = () => { clearTimeout(timer); done(null); };
+    } catch { done(null); }
+  });
+  return imgDbPromise;
+};
+
+// Promise-wrapped primitives on the `kv` store. None throws: a read resolves `null`, a write `false`, on any error.
+const idbGet = (db, k) => new Promise((resolve) => {
+  try {
+    const r = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(k);
+    r.onsuccess = () => resolve(r.result ?? null);
+    r.onerror = () => resolve(null);
+  } catch { resolve(null); }
+});
+const idbPut = (db, k, v) => new Promise((resolve) => {
+  try {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(v, k);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = tx.onabort = () => resolve(false);
+  } catch { resolve(false); }
+});
+const idbDel = (db, k) => new Promise((resolve) => {
+  try {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).delete(k);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = tx.onabort = () => resolve(false);
+  } catch { resolve(false); }
+});
+// One `readwrite` transaction: read, then write only when the key is absent — a newer value written this session is
+// never overwritten by the boot copy. Resolves `true` when it wrote.
+const idbPutIfAbsent = (db, k, v) => new Promise((resolve) => {
+  try {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    const os = tx.objectStore(IDB_STORE);
+    let wrote = false;
+    const r = os.get(k);
+    r.onsuccess = () => { if (r.result == null) { os.put(v, k); wrote = true; } };
+    tx.oncomplete = () => resolve(wrote);
+    tx.onerror = tx.onabort = () => resolve(false);
+  } catch { resolve(false); }
+});
+const idbEach = (db, fn) => new Promise((resolve) => {
+  try {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const r = tx.objectStore(IDB_STORE).openCursor();
+    r.onsuccess = () => { const c = r.result; if (c) { fn(c.key, c.value); c.continue(); } };
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = tx.onabort = () => resolve(false);
+  } catch { resolve(false); }
+});
+
+// Image keys with IndexedDB open read `mem` (the newest value this session — some call sites do not await `set`), then
+// IndexedDB (authoritative), then a `localStorage` copy an older build left. Writes go to IndexedDB, and a successful
+// write removes the `localStorage` entry of the same key (the user's own replacement of that photo); a failed write
+// falls back to `localStorage`. Deletes clear every backend. Without IndexedDB, and for every other key, the
+// `localStorage` lines are the 2026-09-03 shim unchanged.
 const store = {
   async get(k) {
+    if (routesToIdb(k)) {
+      const db = await imgDb();
+      if (db) {
+        if (mem[k] != null) return mem[k];
+        const v = await idbGet(db, k);
+        if (v != null) return v;
+        try {
+          const r = window.localStorage.getItem(k);
+          if (r != null) return JSON.parse(r);
+        } catch {}
+        return null;
+      }
+    }
     try {
       const r = window.localStorage.getItem(k);
       if (r != null) return JSON.parse(r);
@@ -1341,21 +1444,35 @@ const store = {
   },
   async set(k, v) {
     mem[k] = v;
+    if (routesToIdb(k)) {
+      const db = await imgDb();
+      if (db && await idbPut(db, k, v)) {
+        try { window.localStorage.removeItem(k); } catch {}
+        return;
+      }
+    }
     try { window.localStorage.setItem(k, JSON.stringify(v)); } catch {}
   },
   async del(k) {
     delete mem[k];
     try { window.localStorage.removeItem(k); } catch {}
+    if (routesToIdb(k)) {
+      const db = await imgDb();
+      if (db) await idbDel(db, k);
+    }
   },
 };
 
-// Image-storage guards. `localStorage` is a few MB per origin and the state blob shares it, so `store.set`
-// swallowing a quota error would leave the memory fallback showing a picture this session that a reload
-// could not find. Everything that touches `window.localStorage` stays in this region.
+// Image-storage guards. With IndexedDB the photos live there and only the records share `localStorage`; without it the
+// state blob shares `localStorage` with the photos, as before 2026-10-02. Either way `store.set` swallowing a quota
+// error would leave the memory fallback showing a picture this session that a reload could not find. Everything that
+// touches `window.localStorage` or `indexedDB` stays in this region.
 const IMG_FILE_MAX = 8 * 1024 * 1024;     // largest file accepted, checked before decoding
 const THUMB_MAX_EDGE = 640;               // longest edge of a stored thumbnail
 const THUMB_MAX_CHARS = 300000;           // longest data URL accepted after resizing
-const STORAGE_BUDGET = 3.5 * 1024 * 1024; // heuristic ceiling for everything this app keeps in localStorage
+// Heuristic ceiling for the records (and, without IndexedDB, the photos) kept in `localStorage`; Chrome's per-origin
+// quota is about 5.2 M chars.
+const STORAGE_BUDGET = 4.5 * 1024 * 1024;
 
 const persisted = (k) => {
   try { return window.localStorage.getItem(k) != null; } catch { return false; }
@@ -1383,15 +1500,87 @@ const storageUsedWith = (state) => {
   return storageUsedBytes() - stored + next;
 };
 
+// Whether an image write survived: in IndexedDB, else in `localStorage` (a write that fell back) — never `mem`.
+const imageDurable = async (k) => {
+  const db = await imgDb();
+  if (db && (await idbGet(db, k)) != null) return true;
+  return persisted(k);
+};
+
+// The photo figures for the settings sheet, derived when it opens (rule 9): `chars` = Σ key + value length in IndexedDB
+// (the unit `storageUsedBytes` counts, so `mbText` applies), `localCopies` = image keys still in `localStorage`. Without
+// IndexedDB the photos are part of the record figure, so `chars` stays 0.
+const imageStoreStats = async () => {
+  let localCopies = 0;
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) if (routesToIdb(window.localStorage.key(i))) localCopies++;
+  } catch {}
+  const db = await imgDb();
+  if (!db) return { mode: "local", chars: 0, count: 0, localCopies };
+  let chars = 0, count = 0;
+  await idbEach(db, (k, v) => { count++; chars += String(k).length + (typeof v === "string" ? v.length : 0); });
+  return { mode: "idb", chars, count, localCopies };
+};
+
 // Budget check → write → read back. Returns the reason so the caller can name it; the record the image
 // belongs to is saved either way, and a write that did not survive is deleted rather than left in memory.
+// With IndexedDB the photos no longer share the record budget (`THUMB_MAX_CHARS` still bounds each image), so only the
+// read-back can refuse; without it the body is the 2026-09-03 one.
 const saveImageChecked = async (k, v) => {
+  if (await imgDb()) {
+    const usedMB = (storageUsedBytes() / 1048576).toFixed(1);
+    await store.set(k, v);
+    if (!(await imageDurable(k))) { await store.del(k); return { ok: false, reason: "quota", usedMB }; }
+    return { ok: true };
+  }
   const used = storageUsedBytes();
   const usedMB = (used / 1048576).toFixed(1);
   if (used + v.length > STORAGE_BUDGET) return { ok: false, reason: "budget", usedMB };
   await store.set(k, v);
   if (!persisted(k)) { await store.del(k); return { ok: false, reason: "quota", usedMB }; }
   return { ok: true };
+};
+
+// The boot copy (2026-10-02): every `localStorage` image key an older build wrote is put into IndexedDB when absent
+// there, then read back. Injectable — `local = { keys(), get(k), remove(k) }`, `idb = { putIfAbsent(k, v), get(k) }` — so
+// the smoke runs it on fakes. A copy is verified when the read-back is a non-empty string (the copied value, or the value
+// IndexedDB already held); an unparsable value is skipped and kept. A `localStorage` copy is removed only when verified
+// and `removeAfterVerify` is true. Idempotent: a rerun copies nothing.
+const copyLocalImages = async (local, idb, removeAfterVerify) => {
+  const out = { copied: 0, verified: 0, kept: 0, removed: 0, skipped: 0 };
+  for (const k of local.keys()) {
+    if (!routesToIdb(k)) continue;
+    let v = null;
+    try { v = JSON.parse(local.get(k)); } catch { v = null; }
+    if (typeof v !== "string" || !v) { out.skipped++; continue; }
+    const wrote = await idb.putIfAbsent(k, v);
+    if (wrote) out.copied++;
+    const back = await idb.get(k);
+    if (typeof back !== "string" || !back || (wrote && back !== v)) { out.kept++; continue; }
+    out.verified++;
+    if (removeAfterVerify) { local.remove(k); out.removed++; } else out.kept++;
+  }
+  return out;
+};
+
+// Option B (the user's answer, 2026-10-02): the boot copy never removes. A `localStorage` copy is removed only after a
+// backup export that contained it (Phase 2 of the storage-expansion plan).
+const COPY_REMOVE_ON_BOOT = false;
+
+// The root's fire-and-forget call after boot: the two adapters over `window.localStorage` and the open database; a no-op
+// (resolving `null`) without IndexedDB. Never rejects.
+const copyImagesToIdb = async () => {
+  try {
+    const db = await imgDb();
+    if (!db) return null;
+    const ls = window.localStorage;
+    const local = {
+      keys: () => { const ks = []; for (let i = 0; i < ls.length; i++) ks.push(ls.key(i)); return ks; },
+      get: (k) => ls.getItem(k),
+      remove: (k) => ls.removeItem(k),
+    };
+    return await copyLocalImages(local, { putIfAbsent: (k, v) => idbPutIfAbsent(db, k, v), get: (k) => idbGet(db, k) }, COPY_REMOVE_ON_BOOT);
+  } catch { return null; }
 };
 
 /* ───────────────────────── Shared UI atoms — Bar, DiffBadge, CertBadge ───────────────────────── */
@@ -2624,7 +2813,7 @@ const stageName = (rs) => (rs.current ? rs.current.s.name : "모든 단계 충�
 /* The user's own `원하는 모습` (`role.story`) and the dated AI verdicts pasted back through the fifth packet (`role.verdicts`,
    newest first, clipped text the app never turns into a grade, payout or figure; a probability field written by the
    pre-2026-09-18 template is unread). Storage: the story ≤ 2.0 k once; a verdict ≈ 130 chars of overhead,
-   ≈ 600 typical, ≈ 2.2 k full, ≈ 53 k at the 24-record cap (1.4 % of STORAGE_BUDGET); the seen-stamp 15 chars. */
+   ≈ 600 typical, ≈ 2.2 k full, ≈ 53 k at the 24-record cap (1.1 % of STORAGE_BUDGET); the seen-stamp 15 chars. */
 const ROLE_STORY_MAX = 2000;        // chars of `role.story` — the one free text the user writes to be sent verbatim
 const ROLE_VERDICTS_MAX = 24;       // verdict records kept, newest first; the oldest is dropped past this
 const ROLE_VERDICT_DAYS = 30;       // days after which the reader asks for a re-assessment
@@ -7971,6 +8160,14 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
   // The push subscription: read back from the browser's push manager, held here only — never the save (planner decision 7).
   const [pushSub, setPushSub] = useState(null);
   const [pushErr, setPushErr] = useState("");
+  // The photo figures (2026-10-02), read once when the sheet opens — derived, never saved (rule 9). Nothing renders
+  // until they resolve.
+  const [img, setImg] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    imageStoreStats().then((r) => { if (alive) setImg(r); });
+    return () => { alive = false; };
+  }, []);
   const [showSub, setShowSub] = useState(false);
   const subRef = useRef(null);
   useEffect(() => {
@@ -8113,6 +8310,16 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
         <div>
           <SectionLabel tone="text-zinc-400">데이터 — 백업 · 초기화</SectionLabel>
           <p className="text-xs text-zinc-500">기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.</p>
+          {/* Storage lines (2026-10-02): the records against the budget, the photos — in IndexedDB, or counted with the
+              records without it — the eviction caption, and the photo copies an older build left in localStorage. */}
+          {img && <>
+            <p className="font-mono text-xs text-zinc-300 mt-1.5">
+              <span className="whitespace-nowrap">저장 공간 {mbText(storageUsedWith(state))}MB / {mbText(STORAGE_BUDGET)}MB</span>{" · "}
+              <span className="whitespace-nowrap">{img.mode === "idb" ? `사진 ${mbText(img.chars)}MB` : "사진 포함"}</span>
+            </p>
+            {img.mode === "idb" && <p className="text-xs text-zinc-500 mt-1">사진 저장소: 기기 사정으로 지워질 수 있어요 — 백업 파일에 포함돼요</p>}
+            {img.mode === "idb" && img.localCopies > 0 && <p className="font-mono text-xs text-zinc-400 mt-1">기록 공간에 남은 이전 사진 사본 {img.localCopies}장</p>}
+          </>}
           <div className="flex gap-1.5 mt-2.5">
             <button onClick={onExport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
             <button onClick={onImport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 불러오기</button>
@@ -9249,7 +9456,7 @@ function FolioView({ state, onEdit }) {
         ))}
       </div>
       <p className="text-xs font-mono text-zinc-400 mt-2.5">
-        포트폴리오 {items.length}건 · 대표 이미지 {Object.keys(thumbs).length}장 · 저장 공간 {(used / 1048576).toFixed(1)}MB 사용 중 (약 5MB 한도)
+        포트폴리오 {items.length}건 · 대표 이미지 {Object.keys(thumbs).length}장 · 저장 공간 {mbText(used)}MB / {mbText(STORAGE_BUDGET)}MB
       </p>
     </section>
   );
@@ -10310,7 +10517,7 @@ function MeetingsTab({ state, onAddProject, onEditProject, onAddMeeting, onOpenM
           <span className="whitespace-nowrap">프로젝트 {projects.length}개</span>{" · "}
           <span className="whitespace-nowrap">회의록 {meetings.length}건</span>{" · "}
           <span className="whitespace-nowrap">문서 {documents.length}건</span>{" · "}
-          <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / 3.5MB</span>
+          <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / {mbText(STORAGE_BUDGET)}MB</span>
         </p>
       </section>
 
@@ -11244,7 +11451,7 @@ function WorkTab({ state, today, onAdd, onOpen, onBridge, onTimeLog, onRemoveMan
           {isToday && <><span className="whitespace-nowrap">이월 {carried}건</span>{" · "}</>}
           <span className="whitespace-nowrap">완료 {done}건</span>{" · "}
           <span className="whitespace-nowrap">AI 제안 {ai}건</span>{" · "}
-          <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / 3.5MB</span>
+          <span className="whitespace-nowrap">저장 공간 {mbText(used)}MB / {mbText(STORAGE_BUDGET)}MB</span>
         </p>
         {/* This week's business time against the budget (v28) — always today's week, whatever day the pager shows */}
         <button onClick={onTimeLog} className="w-full text-left text-xs font-mono text-zinc-400 mt-1.5 active:opacity-70">
@@ -11856,6 +12063,9 @@ export default function LifeManager() {
       }
       else setPhase("onboard");
       readyRef.current = true;
+      // Photos an older build left in localStorage are copied to IndexedDB and read back (2026-10-02); not awaited — the
+      // profile read below falls back to the localStorage copy either way.
+      copyImagesToIdb();
       const p = await store.get("liferpg-img-profile").catch(() => null);
       setImgs({ profile: p || null });
     })();

@@ -488,20 +488,21 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 
 | Key pattern | First use (line) | Section |
 |---|---|---|
-| `liferpg-state-v1` | 1332 | Storage (localStorage + in-memory fallback) — storage shim, 2026-09-03 |
-| `liferpg-img-ev-${task.id}` | 6971 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 6971 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 6971 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 9204 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 9627 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 11859 | App root |
-| `liferpg-img-${slot}` | 11945 | App root |
-| `liferpg-img-ev-${id}` | 11968 | App root |
-| `liferpg-img-ev-${q.id}` | 12150 | App root |
-| `liferpg-img-ev-${t.id}` | 13096 | App root |
-| `liferpg-img-study-${t.id}-1` | 13096 | App root |
-| `liferpg-img-study-${t.id}-2` | 13096 | App root |
-| `liferpg-img-folio-${f.id}` | 13102 | App root |
+| `liferpg-state-v1` | 1332 | Storage (localStorage + IndexedDB for images + in-memory fallback) — storage shim 2026-09-03, image backend 2026-10-02 |
+| `liferpg-img-` | 1337 | Storage (localStorage + IndexedDB for images + in-memory fallback) — storage shim 2026-09-03, image backend 2026-10-02 |
+| `liferpg-img-ev-${task.id}` | 7160 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 7160 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 7160 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 9411 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 9834 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 12069 | App root |
+| `liferpg-img-${slot}` | 12155 | App root |
+| `liferpg-img-ev-${id}` | 12178 | App root |
+| `liferpg-img-ev-${q.id}` | 12360 | App root |
+| `liferpg-img-ev-${t.id}` | 13306 | App root |
+| `liferpg-img-study-${t.id}-1` | 13306 | App root |
+| `liferpg-img-study-${t.id}-2` | 13306 | App root |
+| `liferpg-img-folio-${f.id}` | 13312 | App root |
 
 ## Demo data (`demoState`)
 

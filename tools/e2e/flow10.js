@@ -8,7 +8,7 @@ module.exports = async (h) => {
     openSettings, captureDownload, typeInto, setValue, closeModal, modalError, sleep, page } = h;
 
   const KEY = "liferpg-state-v1";
-  const BUDGET = 3672064; // STORAGE_BUDGET = 3.5 × 1,048,576, counted in string length
+  const BUDGET = 4718592; // STORAGE_BUDGET = 4.5 × 1,048,576 (2026-10-02), counted in string length
   const NL = String.fromCharCode(10);
   const readState = () => page.evaluate((k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, KEY);
   // Dates are computed in the page with the app's own local-date logic (never toISOString).
@@ -58,7 +58,7 @@ module.exports = async (h) => {
     await expectText("미팅 — 프로젝트별 회의록");
     await expectText("프로젝트가 없어요 — 프로젝트를 먼저 만들어요.");
     const line = await countsLine();
-    if (!/^프로젝트 0개 · 회의록 0건 · 문서 0건 · 저장 공간 \d+\.\dMB \/ 3\.5MB$/.test(line)) throw new Error("meetings counts line: " + JSON.stringify(line));
+    if (!/^프로젝트 0개 · 회의록 0건 · 문서 0건 · 저장 공간 \d+\.\dMB \/ 4\.5MB$/.test(line)) throw new Error("meetings counts line: " + JSON.stringify(line));
   });
 
   await step("the project form refuses an empty name, then registers", async () => {
@@ -769,7 +769,7 @@ module.exports = async (h) => {
     const m = await memo();
     if (!m || (m.transcript || "").length !== 30000) throw new Error("the 30000-char transcript was not stored: " + (m?.transcript || "").length);
     const line = await countsLine();
-    if (!/저장 공간 \d+\.\dMB/.test(line)) throw new Error("meetings counts line after the transcript: " + JSON.stringify(line));
+    if (!/저장 공간 \d+\.\dMB \/ 4\.5MB/.test(line)) throw new Error("meetings counts line after the transcript: " + JSON.stringify(line));
   });
 
   await step("clearing the transcript removes that field only and leaves summary, decisions, follow-ups and progress as they were", async () => {

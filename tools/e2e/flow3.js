@@ -11,7 +11,7 @@ module.exports = async (h) => {
     await clickInModal("사진 등록");
     await attach();
     await sleep(500);
-    const stored = await page.evaluate(() => (localStorage.getItem("liferpg-img-profile") || "").length);
+    const stored = ((await h.readImage("liferpg-img-profile")) || "").length;
     if (!stored) throw new Error("the profile photo key was not written");
     await expectText("사진 삭제");
     await closeModal();
@@ -69,7 +69,8 @@ module.exports = async (h) => {
       if (!ok(e)) throw new Error(`score ${JSON.stringify(value)} gave the modal error: ${e || "none"}`);
       const q = ((await readState())?.tasks || []).find((x) => x.id === task.id);
       if (!q || q.status === "done") throw new Error(`score ${JSON.stringify(value)} completed the milestone`);
-      if (await page.evaluate((k) => localStorage.getItem(k) != null, `liferpg-img-ev-${task.id}`)) throw new Error(`score ${JSON.stringify(value)} left an evidence image key behind`);
+      const evKey = `liferpg-img-ev-${task.id}`;
+      if ((await page.evaluate((k) => localStorage.getItem(k) != null, evKey)) || (await h.idbGet(evKey)) != null) throw new Error(`score ${JSON.stringify(value)} left an evidence image key behind`);
     }
     await closeModal();
   });

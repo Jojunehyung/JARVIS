@@ -360,6 +360,7 @@ module.exports = async (h) => {
   await require("./flow10.js")(h); // before flow4, which replaces the save
   await require("./flow11.js")(h); // before flow4, which replaces the save
   await require("./flow12.js")(h); // before flow4, which replaces the save
+  await require("./flow13.js")(h); // before flow4, which replaces the save
   await require("./flow4.js")(h);
   await require("./flow6.js")(h);
 
@@ -510,6 +511,8 @@ module.exports = async (h) => {
     }));
     if (left.state) throw new Error("state key remains after reset");
     if (left.profileImg) throw new Error("profile photo key remains after reset");
+    // 2026-10-02: `store.del` clears the IndexedDB copy too (the planted raw value above stays unreadable, as before).
+    if ((await h.idbKeys()).includes("liferpg-img-profile")) throw new Error("profile photo key remains in IndexedDB after reset");
     // `resetAll` never clears the modal slot: without closing the sheet first it would reappear over the app on
     // the next onboarding or demo entry.
     await clickText("데모 데이터로 둘러보기");

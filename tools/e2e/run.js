@@ -284,6 +284,59 @@ const typeInto = async (placeholder, value) => {
     await sleep(400);
     if (!(await overlayText()).includes("데이터 — 백업 · 초기화")) throw new Error("the settings modal did not open");
   };
+  // Photos (2026-10-02) live in IndexedDB — database `life-manager`, object store `kv` — under their `liferpg-img-*`
+  // keys when the page can open it (the preview build); `file:` and a failed open keep them in localStorage. One page-side
+  // call per operation, the database closed again afterwards: get → the value or null, keys → every key, put, clear.
+  const idbCall = (op, k = null, v = null) => page.evaluate((op, k, v) => new Promise((res) => {
+    let req;
+    try { req = indexedDB.open("life-manager", 1); } catch { res(null); return; }
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv"); };
+    req.onerror = () => res(null);
+    req.onsuccess = () => {
+      const db = req.result;
+      let out = null;
+      try {
+        const tx = db.transaction("kv", op === "get" || op === "keys" ? "readonly" : "readwrite");
+        const os = tx.objectStore("kv");
+        if (op === "get") { const r = os.get(k); r.onsuccess = () => { out = r.result ?? null; }; }
+        else if (op === "keys") { const r = os.getAllKeys(); r.onsuccess = () => { out = r.result; }; }
+        else if (op === "put") { os.put(v, k); out = true; }
+        else if (op === "clear") { os.clear(); out = true; }
+        tx.oncomplete = () => { db.close(); res(out); };
+        tx.onerror = tx.onabort = () => { db.close(); res(null); };
+      } catch { db.close(); res(null); }
+    };
+  }), op, k, v);
+  const idbGet = (k) => idbCall("get", k);
+  const idbKeys = async () => (await idbCall("keys")) || [];
+  const idbPut = (k, v) => idbCall("put", k, v);
+  const idbClear = () => idbCall("clear");
+  // An image as the app reads it: IndexedDB first, else the JSON string an older build (or the fallback) left in localStorage.
+  const readImage = async (k) => {
+    const v = await idbGet(k);
+    if (v != null) return v;
+    return page.evaluate((key) => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }, k);
+  };
+  // Hand a PNG (base64, no data-URL prefix) to the open sheet's file input as a picked file, the way a user's pick fires
+  // `change`, waits for the resize and returns the sheet's error line ("" when the image was taken); throws when the sheet
+  // has no file input. Shared by the portfolio steps in `flow8.js` and `flow13.js`.
+  const dropImage = async (b64, name = "image.png") => {
+    const dropped = await page.evaluate((data, fileName) => {
+      const bin = atob(data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const input = document.querySelector('.fixed.inset-0 input[type="file"]');
+      if (!input) return "the portfolio form has no file input";
+      const dt = new DataTransfer();
+      dt.items.add(new File([bytes], fileName, { type: "image/png" }));
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      return "ok";
+    }, b64, name);
+    if (dropped !== "ok") throw new Error(dropped);
+    await sleep(900);
+    return modalError();
+  };
   // Click a page button by its exact label — calendar controls and view chips sit outside any modal, and a
   // partial match would hit `계약 추가` instead of the `계약` chip.
   const clickExact = async (label) => {
@@ -459,7 +512,7 @@ const typeInto = async (placeholder, value) => {
     tasks: (st.tasks || []).length,
     goals: JSON.stringify(st.goals || []),
   });
-  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, plantGate, passGate, setClock, tickClock, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, plantGate, passGate, setClock, tickClock, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, idbGet, idbKeys, idbPut, idbClear, readImage, dropImage, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

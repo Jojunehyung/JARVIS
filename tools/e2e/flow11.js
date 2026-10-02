@@ -87,7 +87,7 @@ module.exports = async (h) => {
     await expectText("오늘 업무가 없어요.");
     await expectText("업무는 기록이에요 — 목표·실행·점수에 반영되지 않아요.");
     const line = await countsLine();
-    if (!line.startsWith("남음 0건 · 이월 0건 · 완료 0건 · AI 제안 0건") || !/저장 공간 \d+\.\dMB \/ 3\.5MB$/.test(line)) throw new Error("work counts line: " + JSON.stringify(line));
+    if (!line.startsWith("남음 0건 · 이월 0건 · 완료 0건 · AI 제안 0건") || !/저장 공간 \d+\.\dMB \/ 4\.5MB$/.test(line)) throw new Error("work counts line: " + JSON.stringify(line));
     await clickMain("‹");
     await expectText("업무 — " + yesterday);
     await expectText("이 날짜에는 업무가 없어요.");
