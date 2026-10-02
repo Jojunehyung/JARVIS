@@ -47,16 +47,20 @@ new kinds) is computed at render, never stored ([Rule 9](core-beliefs.md#rule-9)
 | `liferpg-img-study-{taskId}-{n}` | study output photos, n = 1…2 | `StudyVerifyModal` submit | `EvidenceViewModal` | task delete, `resetAll` |
 | `liferpg-img-folio-{id}` | portfolio representative image | `FolioModal` submit, only when the image changed | `포트폴리오` view (`FolioView`), `FolioModal` on edit | portfolio entry delete, `resetAll` |
 
-The `liferpg-` prefix is a historical name kept for data compatibility; renaming it would orphan every existing save.
+The `liferpg-` prefix is a historical name kept for data compatibility; renaming it would orphan every existing save. **Since 2026-10-02**, every row above lives in IndexedDB (database `life-manager`, object store `kv`) whenever it opens — under the exact same key strings — and in `localStorage` only as a backend fallback (no `indexedDB`, `file:`, an open failure or timeout) or as a copy an older build left that has not yet been verified and removed; the written-by/read-by/deleted-by call sites are unchanged.
 
 ### The `store` adapter
 ```js
 const mem = {};
-store.get(k)  // localStorage.getItem + JSON.parse; falls back to mem[k] ?? null, never throws
-store.set(k, v) // always writes mem[k], then localStorage.setItem + JSON.stringify inside try/catch
-store.del(k)  // deletes mem[k], then localStorage.removeItem inside try/catch
+store.get(k)  // image keys (routesToIdb): mem → IndexedDB → a localStorage copy; every other key: localStorage.getItem + JSON.parse, falling back to mem[k] ?? null; never throws
+store.set(k, v) // always writes mem[k] first; an image key with IndexedDB open is put there and its localStorage copy removed on success; every other case: localStorage.setItem + JSON.stringify inside try/catch
+store.del(k)  // deletes mem[k], the localStorage entry, and (image keys, IndexedDB open) the IndexedDB entry too
 ```
-All three are `async`, so call sites can stay unchanged if the backing store is ever swapped for an asynchronous one (that was the point of the 2026-09-03 shim). Every read adds `.catch(() => null)`; image writes are fired without `await`. A browser that refuses storage (private mode, disabled site data) degrades to the in-memory object for the session rather than failing.
+All three are `async`, so call sites can stay unchanged if the backing store is ever swapped for an asynchronous one (that was the point of the 2026-09-03 shim, and exactly how the 2026-10-02 image backend was added with no call-site edit). Every read adds `.catch(() => null)`; image writes are fired without `await`. A browser that refuses storage (private mode, disabled site data) degrades to the in-memory object for the session rather than failing.
+
+**The image backend (2026-10-02, no schema bump, no `v` bump).** `liferpg-img-*` keys (`IMG_PREFIX = "liferpg-img-"`, `routesToIdb(k)`) route through IndexedDB when `imgDb()` — a memoised promise, opened once per page load — resolves a database: `null` without `indexedDB`, on `file:` (the single-file demo stays on `localStorage` deliberately), on an open error/block/exception, or past `IDB_OPEN_MS` (1500 ms, for private modes that leave `open` pending); a late success after the timeout is closed and ignored. With a database, `store.get` reads `mem` (the newest in-session value, for call sites that do not await `set`), then IndexedDB, then a `localStorage` copy an older build left (parsed exactly as before — unparsable reads as missing); `store.set` writes IndexedDB and, on success, removes that key's `localStorage` entry (the user's own replacement of that photo, not the migration below); `store.del` clears every backend. Without a database, every image key takes the 2026-09-03 path unchanged.
+
+A boot-time copy, `copyLocalImages(local, idb, removeAfterVerify)` (pure, injectable, called un-awaited by the root's `copyImagesToIdb()` right after `readyRef.current = true`), moves every `localStorage` image key an older build wrote into IndexedDB when IndexedDB does not already hold a value for it, then reads it back to verify. **The user's chosen option (B, 2026-10-02):** `COPY_REMOVE_ON_BOOT = false` — the boot copy never removes a `localStorage` copy; `dropLocalImageCopies(images)` removes one only after `exportBackup` has written that exact value into a backup file and IndexedDB still holds it, so a migrated photo is never left only in evictable IndexedDB storage without a backup file that contains it. `imageDurable(k)` (IndexedDB, else `persisted`) and `imageStoreStats()` (`{ mode: "idb" | "local", chars, count, localCopies }`, read once when the settings sheet opens) are the two read-only helpers the UI uses; `saveImageChecked` runs no `STORAGE_BUDGET` check once IndexedDB holds the photos (only the read-back can refuse — `THUMB_MAX_CHARS` still bounds a single image), and the fallback branch (no IndexedDB) is the 2026-09-03 body verbatim. `STORAGE_BUDGET` rose from 3.5 MB to **4.5 MB** (4,718,592 chars) the same day — the records, and, without IndexedDB, the photos too; Chrome's own per-origin `localStorage` quota measured at 5,242,880 chars, leaving headroom above the new ceiling. See [RELIABILITY.md](../RELIABILITY.md), [SECURITY.md](../SECURITY.md#data-at-rest) and [../product-specs/install-and-backup.md](../product-specs/install-and-backup.md#backup--백업-내보내기--백업-불러오기).
 
 ## Boot sequence
 ```js
@@ -135,6 +139,21 @@ morning-appointment deferral is **derived** from `events[]` and the clock on eve
 profile or with `passedAt`, otherwise `true` unless `gateDeferredUntil(state, today)` (the later of `22:00` on a
 morning-appointment day and a valid `deferredUntil`) is still ahead of `nowHm` — failing closed when `nowHm` is not
 a valid `HH:MM`. `nowHm` is root component state refreshed by the existing minute tick, never saved.
+
+**2026-10-02 additions (the image backend and the backup reminder) — schema stays v28, no migration block, no `v`
+bump.** `act` gains one more optional field, `backupAt?` (`"YYYY-MM-DD"`) — the date of the last `백업 내보내기`, a
+user-action stamp like `act.opened`/`act.briefingSeen`, written only by `exportBackup` (into the save **and** the
+exported file itself, so an imported backup restores the date it was written) and tolerated by every reader the
+same shape as every other optional field above — no backfill, since the only writer always writes it.
+`backupAgeOf(state, today)` derives the day count (`null` when absent or not a valid date, never stored); a missing
+or 7-or-more-day-old stamp (`backupStaleOf`, `BACKUP_STALE_DAYS = 7`) adds a `backup` fact to
+`checkSummaryOf`/`checkNotificationOf`'s `counts` and a `백업` section first in `buildReader`
+([../product-specs/daily-reader.md](../product-specs/daily-reader.md),
+[../product-specs/notifications.md](../product-specs/notifications.md)) — with a fresh backup every packet, the
+reader and the notification stay byte-identical to before this field existed. `freshState` is unchanged (a new
+save states `백업 기록 없음` from day one — a fact, not softened, [Rule 13](core-beliefs.md#rule-13)); `demoState`
+seeds `act.backupAt = shiftDay(today, -2)` so the demo stays fresh. The image backend sharing this date is covered
+above, under "The `store` adapter".
 
 **2026-09-25 additions (the routine guide and the daily push) — schema stays v28, no migration block, no `v`
 bump.** `act` gains one more optional field, `opened?: { [date]: "HH:MM" }` — the day's first-open stamp,

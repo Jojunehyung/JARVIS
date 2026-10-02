@@ -242,7 +242,7 @@ AI-stated text must not travel back into a packet through the briefing, so `buil
 
 ### Storage arithmetic
 
-`STORAGE_BUDGET` = 3,672,064 chars. Story: `,"story":""` (11 chars) + up to 2,000 → ≤ 2.0 k once. A verdict record
+`STORAGE_BUDGET` = 4,718,592 chars (**4.5 MB since 2026-10-02**, previously 3.5 MB; `role` is a record, not an image key, so it stays in `localStorage` regardless). Story: `,"story":""` (11 chars) + up to 2,000 → ≤ 2.0 k once. A verdict record
 ≈ 130 chars of overhead (measured before 2026-09-18's third role-model change, which dropped the record's
 `probability` field — a further ≈ 18 chars smaller per record now, not remeasured since the figures below were
 already an overestimate before that day and stay one, never an underestimate); full (300 + 500 + 300 + 8 × 122) ≈

@@ -64,6 +64,20 @@ empty section holds the one item `{ text: "없음" }`; `more` is the count of it
 `buildReader` calls `buildBriefing` once and reuses its `biz`/`goals` items — the reader and the briefing state
 the same numbers by construction, never a different one ([decision log](../design-docs/decision-log.md)).
 
+**An eleventh section (2026-10-02), first, only while the last backup is stale:**
+
+| Key | Title | States | `action` |
+|---|---|---|---|
+| `backup` | `백업` | one item, `backupLineOf(state, today)` — `백업 기록 없음`, `마지막 백업 {date} · 오늘`, or `마지막 백업 {date} · {n}일 전` | `{ type: "settings" }` |
+
+Added by `buildReader` before every other section, only when `backupStaleOf(state, today)` — the last `백업
+내보내기` is missing or `BACKUP_STALE_DAYS` (7) days old. With a fresh backup this section is absent and the
+reader's `sections` array is byte-identical to before this field existed; `closeBriefing` already routes a
+non-tab `type` to `setModal({ type })`, so the section's `›` opens settings with no new routing code. See
+[state-lifecycle.md](../design-docs/state-lifecycle.md#2026-10-02-additions-the-image-backend-and-the-backup-reminder--schema-stays-v28-no-migration-block-no-v-bump),
+[notifications.md](notifications.md) for the matching notification line, and
+[install-and-backup.md](install-and-backup.md#backup--백업-내보내기--백업-불러오기) for the stamp itself.
+
 **Two more sections (v28), after `biz` and before `goals`:**
 
 | Key | Title | States | `action` |
@@ -90,9 +104,10 @@ screen. The `계약·입금 미확인` (`biz`) section restates the briefing's p
 open-notice lines by construction (it reuses the briefing's own `biz` items) — see
 [business.md](business.md#the-reader-and-the-calendar-file).
 
-The reader's own sections number **ten** (up from nine, up from seven at v28); a `브리핑 ›` link row follows
-them (below) — the two together are what a user reads top to bottom, but only the ten above are `buildReader`'s
-`sections`.
+The reader's own sections number **ten** (up from nine, up from seven at v28), plus an **eleventh**, `backup`,
+that renders first but only while the last backup is stale (2026-10-02, above); a `브리핑 ›` link row follows
+every section (below) — together with it, what a user reads top to bottom — but only `buildReader`'s own
+`sections` (ten always, eleven while stale) make up this count.
 
 ## Track heads (v28)
 
@@ -173,8 +188,9 @@ records are counted; `사업 로드맵` opens with the time line, then the eight
 conditions (the ninth, seeded `done`, is excluded); `사업 파이프라인 · 공고` lists the two demo leads (one
 overdue) and the one demo notice. (2026-09-18) The tenth section, `롤모델 판정`, reads `롤모델 판정 · 마지막
 {today} · 0일 지남 · 단계 1/9` (no probability caption since the same-day Rule 14 amendment, third role-model
-change) — the demo's newest verdict is dated today, so the section is not due. See
-[demo-data.md](../design-docs/demo-data.md).
+change) — the demo's newest verdict is dated today, so the section is not due. `act.backupAt` is seeded
+`shiftDay(today, -2)` (2026-10-02) — fresh, not stale — so the demo shows no `백업` section and its `sections`
+array is unchanged by this field. See [demo-data.md](../design-docs/demo-data.md).
 
 ## E2E coverage (written, not run — standing user instruction)
 
@@ -198,8 +214,11 @@ was folded into. `flow5.js`'s `READER_SECTIONS` gains `"롤모델 판정"` betwe
 `"브리핑 ›"`. **The daily gate (2026-09-24, written, not run):** `tools/e2e/flow12.js` covers the reader in
 gate-read mode — no section route, no `브리핑 ›`/`이슈 목록 ›`/`닫기`, `다 읽었어요` disabled on an overflowing
 sheet until the end sentinel is scrolled into view, then stamping `readReaderAt` and `briefingSeen`; see
-[daily-gate.md](daily-gate.md#reading-to-the-end--usereadendenabled-and-gate-read-mode). See
-[tools/e2e/README.md](../../tools/e2e/README.md).
+[daily-gate.md](daily-gate.md#reading-to-the-end--usereadendenabled-and-gate-read-mode). **The backup section
+(2026-10-02, written, not run):** `tools/e2e/flow13.js` plants a 7-day-old `act.backupAt` and asserts `백업` is
+the first section with `마지막 백업 {date} · 7일 전`; a 6-day-old stamp adds no section; no stamp states
+`백업 기록 없음`; `flow11.js`'s own reader step plants a same-day stamp so its exact section-key assertion still
+holds with no `백업` section inserted. See [tools/e2e/README.md](../../tools/e2e/README.md).
 
 ## What the daily reader never does
 

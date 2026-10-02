@@ -37,7 +37,8 @@ Returns:
   workRefreshedAt: string | null, // act.workRefreshedAt (the incremental work packet's stamp) or null
   minutesMissing: [{ date, title, eventId }],   // newest first, uncapped
   carried: [{ id, date, title }],               // workOn's carried order (oldest first), uncapped
-  counts: { notRefreshed: 0 | 1, minutes: n, carried: n, total } }
+  counts: { notRefreshed: 0 | 1, minutes: n, carried: n, total, backup?: 1 },
+  backup?: string }   // backupLineOf(state, today) — present only while the last backup export is stale (below)
 ```
 
 - **`notRefreshed`** — reason 1 (`오늘 만든 업무 없음`) when no `work[]` item has `createdAt === today`; reason 2
@@ -50,6 +51,12 @@ Returns:
   device, so `packetTracks` does not apply to it (the day-job AI switch is about outgoing packets only).
 - **`carried`** — `workOn(state, today, today).filter((w) => w.date < today)`, the same set and order the `업무`
   tab's carried rows show.
+- **`backup`/`counts.backup`** (2026-10-02) — a fourth fact, added only while `backupStaleOf(state, today)` (the
+  last `백업 내보내기` is missing or 7 days old): `backup` is `backupLineOf(state, today)`
+  ([install-and-backup.md](install-and-backup.md#backup--백업-내보내기--백업-불러오기)), `counts.backup` is `1`.
+  With a fresh backup neither key exists, so `checkSummaryOf` returns exactly what it did before this fact
+  existed ([Rule 9](../design-docs/core-beliefs.md#rule-9)) — once stale, `counts.backup` stays `1` every day
+  until the next export, so this fact alone never re-buzzes the phone.
 - **`counts.total`** — the number of body lines, stated in the title as `{n}가지`.
 
 ## The rendered text — `checkNotificationOf(summary)`
@@ -65,7 +72,10 @@ summary shows no notification and clears the cache entry and any shown notificat
   - `회의록 없는 지난 일정 {n}건: {M}/{D} {title} · {M}/{D} {title} · {M}/{D} {title} 외 {k}건` — the first
     `CHECK_LIST_MAX` (3) rows, month/day with no leading zeros, then the remainder count when more exist.
   - `이월 업무 {n}건: {title} · {title} · {title} 외 {k}건` — same cap and remainder shape, titles only.
-- **`counts`** carried alongside (`{ notRefreshed, minutes, carried }`) for the `renotify` comparison below.
+  - `{backup line}` (2026-10-02) — always the **last** body line, only while the backup is stale; the exact text
+    `backupLineOf` returns (`백업 기록 없음` / `마지막 백업 {date} · 오늘` / `마지막 백업 {date} · {n}일 전`).
+- **`counts`** carried alongside (`{ notRefreshed, minutes, carried, backup? }`, `backup` present only while
+  stale) for the `renotify` comparison below.
 
 ## The setting — `settings.checkNotify?`
 
@@ -275,3 +285,7 @@ a production `vite preview` build — subscribe, `send.mjs` → `sent (201)`, th
 ([RELIABILITY.md](../RELIABILITY.md#known-limits)) — and is proven again, per device, by the user's own manual
 `Daily push` run once the two secrets are set. See [tools/e2e/README.md](../../tools/e2e/README.md) for the
 exact step count.
+
+**The backup reminder (2026-10-02).** `tools/e2e/flow13.js` plants a stale and a fresh `act.backupAt` and asserts
+the cached `life-check` entry's body ends with the backup line (`백업 기록 없음`, stale) with `counts.backup` `1`,
+and that both the line and the `backup` count are absent once the stamp is same-day.

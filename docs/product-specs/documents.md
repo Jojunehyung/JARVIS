@@ -36,7 +36,7 @@ sorts newest first; a stable sort keeps the handler's prepend order for one day.
 
 ## Storage arithmetic
 
-Unit: string length against `STORAGE_BUDGET` = 3,672,064 chars, as in the meetings region.
+Unit: string length against `STORAGE_BUDGET` = 4,718,592 chars (**4.5 MB since 2026-10-02**, previously 3.5 MB), as in the meetings region. No IndexedDB for records — only `liferpg-img-*` photos moved there.
 
 - `,"documents":[]` adds **15 chars** once (v27).
 - One document: `{"id":"…","projectId":"…","title":"","summary":"","addedAt":"YYYY-MM-DD"}` ≈ **91 chars** of
@@ -55,7 +55,7 @@ Unit: string length against `STORAGE_BUDGET` = 3,672,064 chars, as in the meetin
 documents.filter((d) => d.projectId === p.id).sort(docOrder)`, and `memoDocs = documents.filter((d) => d.projectId
 == null).sort(docOrder)` beside the memo-group's `memos`. Project order (by newest minutes) is unchanged.
 
-- **Tab counts line**: `프로젝트 {p}개 · 회의록 {n}건 · 문서 {d}건 · 저장 공간 {mb}MB / 3.5MB` — the `문서`
+- **Tab counts line**: `프로젝트 {p}개 · 회의록 {n}건 · 문서 {d}건 · 저장 공간 {mb}MB / 4.5MB` — the `문서`
   fragment sits **after** `회의록`, so the pre-existing substring `프로젝트 2개 · 회의록 4건` (asserted by
   `tools/e2e/flow.js`) still holds.
 - **Each project section head** (`groupHead`): `{project name}` and, on the right, `회의록 {n}건 · 문서 {d}건`

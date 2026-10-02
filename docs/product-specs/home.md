@@ -135,7 +135,22 @@ Opened by the CV's corner button. Title `설정`, a bottom sheet like every othe
   2026-09-24) — the [daily gate](daily-gate.md) cannot be turned off from settings, and this sheet is itself
   unreachable while the gate stands (`settings` is not admitted by `gateAdmits`), so this section can only ever be
   read once the day's gate is passed or while a deferral holds it back (2026-09-26).
-- `데이터 — 백업 · 초기화`: the backup sentence, `백업 내보내기` → `exportBackup`, `백업 불러오기` → `askImport`, then `데이터 초기화` → `onReset`. No `<input type="file">` inside the modal — `askImport` drives the one hidden input mounted on `Shell` (R-14, [tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md)), so the modal closing mid-pick cannot take it down. The root wires `onReset={() => { setModal(null); resetAll(); }}` — `resetAll` never clears `modal` itself, so without the explicit close the sheet would reappear over the app after the next onboarding or demo entry. `resetAll` is otherwise byte-identical and still asks nothing before it runs ([TD-26](../exec-plans/tech-debt-tracker.md), unresolved).
+- `데이터 — 백업 · 초기화`: the backup sentence, then, once `imageStoreStats()` resolves (2026-10-02, derived at
+  open, never stored — [Rule 9](../design-docs/core-beliefs.md#rule-9)): a storage line, `저장 공간
+  {mbText(storageUsedWith(state))}MB / {mbText(STORAGE_BUDGET)}MB · {사진 {mb}MB | 사진 포함}` (the second
+  fragment names the photo figure in IndexedDB mode, or states they are counted with the records in fallback
+  mode); in IndexedDB mode only, a caption, `사진 저장소: 기기 사정으로 지워질 수 있어요 — 백업 파일에 포함돼요`;
+  while a `localStorage` copy of a migrated photo remains, `기록 공간에 남은 이전 사진 사본 {n}장 · 백업을
+  내보내면 정리돼요`; then the backup line, `backupLineOf(state, today)` (`백업 기록 없음` /
+  `마지막 백업 {date} · 오늘` / `마지막 백업 {date} · {n}일 전`) — directly above the two buttons,
+  `백업 내보내기` → `exportBackup`, `백업 불러오기` → `askImport`, then `데이터 초기화` → `onReset`. Mechanics:
+  [install-and-backup.md](install-and-backup.md#backup--백업-내보내기--백업-불러오기),
+  [../design-docs/state-lifecycle.md](../design-docs/state-lifecycle.md#the-store-adapter). No
+  `<input type="file">` inside the modal — `askImport` drives the one hidden input mounted on `Shell` (R-14,
+  [tech-debt-tracker.md](../exec-plans/tech-debt-tracker.md)), so the modal closing mid-pick cannot take it down.
+  The root wires `onReset={() => { setModal(null); resetAll(); }}` — `resetAll` never clears `modal` itself, so
+  without the explicit close the sheet would reappear over the app after the next onboarding or demo entry.
+  `resetAll` is otherwise byte-identical and still asks nothing before it runs ([TD-26](../exec-plans/tech-debt-tracker.md), unresolved).
 
 Backup and reset mechanics (file shape, validation, toasts): [install-and-backup.md](install-and-backup.md).
 

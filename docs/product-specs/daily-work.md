@@ -56,11 +56,14 @@ picker, newest first by `meetingOrder`).
 - Record overhead `{"id":"…","date":"…","title":"","done":false,"source":"manual","createdAt":"…"}` is about 100
   chars; with a 20-char title, a 30-char note (`,"note":""` + 30) and a link
   (`,"link":{"kind":"meeting","id":"…"}` ≈ 45) an item is about 200 chars, about 150 without a link.
-- Eight items a day for a year ≈ 2,920 × 150 ≈ 0.44 M chars (12 % of the 3.5 MB budget a year); twenty a day
+- Eight items a day for a year ≈ 2,920 × 150 ≈ 0.44 M chars (12 % of the 3.5 MB budget a year, the figure this
+  estimate was made against — the budget is **4.5 MB since 2026-10-02**, a larger share of headroom); twenty a day
   with every field full (60 + 200 + link ≈ 400 chars) ≈ 2.9 M a year. Nothing caps the count, so the storage guard below is the only bound.
-- The tab always states `저장 공간 {mb}MB / 3.5MB` (`storageUsedWith(state)`, memoised on `state`, the same
+- The tab always states `저장 공간 {mb}MB / 4.5MB` (`storageUsedWith(state)`, memoised on `state`, the same
   helper the `미팅` tab reads); `recordFits` refuses a save that would cross the budget before any write, keeping
-  the form open with everything typed. The backup path is the way out of a full budget.
+  the form open with everything typed. The backup path is the way out of a full budget. **No IndexedDB for
+  records** — only `liferpg-img-*` photos moved there (2026-10-02); work items and every other record kind still
+  live in `localStorage` only.
 - A follow-up-mirrored item (schema v26) adds a `followUpId` key to its `link`: `,"link":{"kind":"meeting","id":"…","followUpId":"…"}`
   ≈ 66 chars beyond the plain `meeting` link, so such an item is ≈ 100 (overhead) + title (≤ 60) + 66 ≈ 210 chars
   for a 40-char title; a follow-up text over `WORK_LIMITS.title` (60) is copied whole into `note` (≤ 200), so the
@@ -102,7 +105,7 @@ together. The bar is `grid-cols-7`; at 390 px each cell is ≈ 51 px — `업무
   rather than beside `업무 추가` because the label, both pager buttons and their gaps together exceed the 326 px
   a 390 px screen leaves next to the add button.
 - Caption `업무는 기록이에요 — 목표·실행·점수에 반영되지 않아요.`; counts line (`font-mono text-xs
-  text-zinc-400`), on today's view: `남음 {n}건 · 이월 {c}건 · 완료 {n}건 · AI 제안 {n}건 · 저장 공간 {mb}MB / 3.5MB`
+  text-zinc-400`), on today's view: `남음 {n}건 · 이월 {c}건 · 완료 {n}건 · AI 제안 {n}건 · 저장 공간 {mb}MB / 4.5MB`
   (`남음` counts carried items too; `이월` is only on today's view; any other day keeps the four fragments it
   always had, with no `이월` fragment). The `지난 미완료` section and its `오늘로 옮기기` button are gone — see
   carry-forward, above.

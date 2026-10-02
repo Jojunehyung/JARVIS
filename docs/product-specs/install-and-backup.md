@@ -90,11 +90,11 @@ tell a routine open from a manual one. See [../product-specs/notifications.md](n
 for the complementary daily push, which reaches the phone even on a day no routine opened the app.
 
 ## Backup — `백업 내보내기` / `백업 불러오기`
-Both sit in `SettingsModal`, opened from the `설정` button in the corner of home's CV card (2026-09-15, alongside the reset button — [home.md](home.md); previously behind the growth tab's collapsed `데이터 — 백업 · 초기화` line), with the same line as before: `기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.`
+Both sit in `SettingsModal`, opened from the `설정` button in the corner of home's CV card (2026-09-15, alongside the reset button — [home.md](home.md); previously behind the growth tab's collapsed `데이터 — 백업 · 초기화` line), with the same line as before: `기록은 이 기기에만 있어요. 저장소가 지워지면 복구할 수 없으니 가끔 파일로 내보내요.` Since 2026-10-02 the section also states the record and photo storage lines, an eviction caption and a copies line while any remain (above the backup line itself, [home.md](home.md#settingsmodal-modaltype-settings)).
 
-**Export** writes `life-manager-backup-{date}.json` holding `{ app: "life-manager", exportedAt, state, images }`, where `images` is every evidence and study photo plus the profile photo, keyed exactly as they are stored. `state` is the whole save, so the `미팅` tab's `meetingProjects[]` and `meetings[]` (schema v23, [meetings.md](meetings.md)) travel in the file with no code change of their own — meeting minutes may name clients and record what was said, so a backup file is exactly as sensitive as the app itself, see [../SECURITY.md](../SECURITY.md). Toast: `백업 파일을 내보냈어요 · 사진 {n}장`.
+**Export** writes `life-manager-backup-{date}.json` holding `{ app: "life-manager", exportedAt, state, images }`, where `images` is every evidence and study photo plus the profile photo, keyed exactly as they are stored — since 2026-10-02 read from IndexedDB when it holds them, the same values a `localStorage`-only save would have exported. `state` is the whole save, so the `미팅` tab's `meetingProjects[]` and `meetings[]` (schema v23, [meetings.md](meetings.md)) travel in the file with no code change of their own — meeting minutes may name clients and record what was said, so a backup file is exactly as sensitive as the app itself, see [../SECURITY.md](../SECURITY.md). Toast: `백업 파일을 내보냈어요 · 사진 {n}장`.
 
-**Import** reads a file back, runs its `state` through `migrate` like any other save, and refuses anything without the app marker (`이 앱의 백업 파일이 아니에요`) or unreadable (`백업 파일을 읽지 못했어요`). It then asks for confirmation naming the export date and stating that the current records will be gone, and only then writes the photos, replaces the state and returns to the home tab. Toast: `백업을 불러왔어요 · {date} 기록`.
+**Import** reads a file back, runs its `state` through `migrate` like any other save, and refuses anything without the app marker (`이 앱의 백업 파일이 아니에요`) or unreadable (`백업 파일을 읽지 못했어요`). It then asks for confirmation naming the export date and stating that the current records will be gone, and only then writes the photos (into IndexedDB when it is open, since 2026-10-02 — the same `store.set` call site, unchanged), replaces the state and returns to the home tab. Toast: `백업을 불러왔어요 · {date} 기록`.
 
 Because the file contains the evidence photos, it is as sensitive as the app itself — see [../SECURITY.md](../SECURITY.md).
 
@@ -102,6 +102,40 @@ Because the file contains the evidence photos, it is as sensitive as the app its
 `settings.bizHoursPerWeek` with no code change of their own — the whole state travels, so an older backup gains
 them on import through `migrate` exactly as every prior schema bump did. See
 [state-lifecycle.md](../design-docs/state-lifecycle.md) for the v28 ledger row.
+
+## Photos in IndexedDB, the record budget, and the backup reminder (2026-10-02)
+
+**The image backend.** Every `liferpg-img-*` key (profile, evidence, study artifacts, portfolio) now lives in the
+origin's IndexedDB (database `life-manager`, store `kv`) whenever it opens, under the exact same key strings,
+instead of sharing `localStorage` with the state save; without IndexedDB (`file:` — the single-file demo, by
+design — no API, an open error/block, or a timeout) every image key behaves exactly as before. A boot-time copy
+moves any photo an older build left in `localStorage` into IndexedDB with a read-back verify, and the record
+storage budget (`STORAGE_BUDGET`) rose from 3.5 MB to **4.5 MB** (4,718,592 chars; Chrome's own per-origin
+`localStorage` quota measured at 5,242,880 chars) the same day — with IndexedDB open, photos no longer compete
+with records for that budget at all. See [../design-docs/state-lifecycle.md](../design-docs/state-lifecycle.md#the-store-adapter), [../RELIABILITY.md](../RELIABILITY.md).
+
+**Why the `localStorage` copy of a migrated photo is not removed immediately.** Moving a photo into IndexedDB
+and removing its `localStorage` copy right away would free record space sooner, but IndexedDB is not a stronger
+guarantee than `localStorage` was — **on Android it can be evicted by the browser under storage pressure even
+with `navigator.storage.persist()` granted** — so removing the only other copy of a photo with no recent backup
+file would be a real, if accepted, risk of loss. The user chose the safer of three options put to them directly:
+remove on boot right after verify (A); remove **only after the next `백업 내보내기` that contains it** (B,
+**chosen**); or never remove, keeping both copies forever (C). Under B, `dropLocalImageCopies` runs right after
+an export's download and removes a photo's `localStorage` copy only once that export's file holds the exact value
+IndexedDB has for it — so a migrated photo is never left only in evictable storage without a backup file that
+contains it. The cost, stated in the settings sheet itself (`기록 공간에 남은 이전 사진 사본 {n}장 · 백업을
+내보내면 정리돼요`): no record space is reclaimed from existing photos until the user's next export.
+
+**The backup reminder.** Because the recovery path for an evicted or lost-device photo is the backup file, the
+app now states how old the last one is. `act.backupAt?` (`"YYYY-MM-DD"`, a user-action stamp, still v28, no
+migrate block) is written by `exportBackup` into the save **and** the exported file itself, so an imported backup
+restores the date it was written. The settings sheet states `backupLineOf(state, today)` —
+`백업 기록 없음` / `마지막 백업 {date} · 오늘` / `마지막 백업 {date} · {n}일 전` — directly above the two backup
+buttons; once it is missing or **7 days** old, the [daily reader](daily-reader.md) states a `백업` section first
+and the [`확인 필요` notification](notifications.md) appends it as the last body line — a fact, not a nag: with a
+fresh backup the reader, the notification and every assistant-bridge packet are byte-identical to before this
+field existed. The browser gives a web page no signal that a download actually completed, so a cancelled or
+failed export still stamps today as the last backup ([RELIABILITY.md](../RELIABILITY.md#known-limits)).
 
 ## Calendar file — `캘린더로 내보내기`
 The `일정` tab's `캘린더로 내보내기` button downloads a second, unrelated file: `life-manager-calendar-{date}.ics`, a

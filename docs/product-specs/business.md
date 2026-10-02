@@ -143,8 +143,9 @@ object-contain bg-zinc-950 rounded-xl border border-zinc-800"`, the `EvidenceVie
 
 Thumbnails are loaded by **one effect on view entry**, keyed on the item ids (the `EvidenceViewModal` `alive`
 guard pattern), reading `liferpg-img-folio-{id}` per entry; the same effect records `storageUsedBytes()`, so the
-footer does not rescan `localStorage` on every render. Footer: `포트폴리오 {n}건 · 대표 이미지 {m}장 · 저장 공간
-{x}MB 사용 중 (약 5MB 한도)`, `{x}` = `(bytes / 1048576).toFixed(1)`.
+footer does not rescan `localStorage` on every render. Footer (2026-10-02 wording: `저장 공간 {mb}MB / 4.5MB` replaces the old `{x}MB 사용 중 (약 5MB 한도)`, matching
+every other tab's storage line): `포트폴리오 {n}건 · 대표 이미지 {m}장 · 저장 공간 {mb}MB / {mbText(STORAGE_BUDGET)}MB`,
+`{mb}` = `storageUsedBytes()` read by the same effect.
 
 Empty state: `등록한 포트폴리오가 없어요 — 링크와 대표 이미지 1장을 넣어요.`
 
@@ -335,20 +336,27 @@ When `imgWarn` is present, the record toast fires first and the image-failure to
 `exportBackup`; `importBackup` is already generic and needs no change.
 
 ## Image pipeline and storage guards
-Constants: `IMG_FILE_MAX` 8 MB, `THUMB_MAX_EDGE` 640 px, `THUMB_MAX_CHARS` 300,000, `STORAGE_BUDGET` 3.5 MB.
+Constants: `IMG_FILE_MAX` 8 MB, `THUMB_MAX_EDGE` 640 px, `THUMB_MAX_CHARS` 300,000, `STORAGE_BUDGET` 4.5 MB
+(**since 2026-10-02**, previously 3.5 MB — the records, and, without IndexedDB, the photos too).
 The write path, in order: **file-size cap before decode** → `resizeImageFit` → output cap with one retry →
-budget check → verified write. At every failure the portfolio record still saves, without its image, and its
-card renders `대표 이미지 없음` — a bad photo never blocks the record.
+(fallback mode only) a budget check → write → a read-back that confirms the write survived (IndexedDB mode:
+`imageDurable`; fallback: `persisted`). At every failure the portfolio record still saves, without its image, and its card renders `대표 이미지 없음` — a
+bad photo never blocks the record. **Since 2026-10-02**, `liferpg-img-folio-{id}` lives in IndexedDB whenever it
+opens, under the same key, so a folio image no longer counts against `STORAGE_BUDGET` at all in that mode; without
+IndexedDB (`file:`, no API, open failure) it still shares the record budget exactly as before. See
+[../design-docs/state-lifecycle.md](../design-docs/state-lifecycle.md#the-store-adapter).
 
 - `resizeImageFit(file, max = 640, q = 0.72)` scales by `Math.min(1, max / Math.max(width, height))`, so the
   longest edge is at most 640 px and a smaller source is **never upscaled**; one `drawImage`, one
   `toDataURL("image/jpeg", q)`. Over `THUMB_MAX_CHARS` it retries once at quality `0.55`; still over, it rejects
   with `too-big`. A sibling of `resizeImage` (the fixed 256×320 evidence crop), not a flag on it — the evidence
   path is byte-identical and untouched ([Rule 16](../design-docs/core-beliefs.md#rule-16) applies only there).
-- `saveImageChecked(key, dataUrl)` checks the budget first (`storageUsedBytes() + length > STORAGE_BUDGET` →
-  `{ ok: false, reason: "budget" }`), then writes, then reads the key back to confirm it survived
-  (`persisted(key)`); a write that did not survive is deleted rather than left showing in the in-memory fallback
-  for the rest of the session (`{ ok: false, reason: "quota" }`).
+- `saveImageChecked(key, dataUrl)`, **IndexedDB mode (since 2026-10-02)**: no budget check — writes, then confirms
+  with `imageDurable(key)` (an IndexedDB read, never `persisted`); a write that did not survive is deleted
+  (`{ ok: false, reason: "quota" }`). **Fallback mode (the 2026-09-03 body, unchanged)**: checks the budget first
+  (`storageUsedBytes() + length > STORAGE_BUDGET` → `{ ok: false, reason: "budget" }`), then writes, then reads the
+  key back to confirm it survived (`persisted(key)`); a write that did not survive is deleted rather than left
+  showing in the in-memory fallback for the rest of the session (`{ ok: false, reason: "quota" }`).
 
 The same `persisted` check runs after every `state` write; a save that does not reach `localStorage` toasts
 `저장에 실패했어요 — 저장 공간이 가득 찼어요. 백업을 내보낸 뒤 사진을 지워요.`
@@ -408,7 +416,9 @@ D-7, an unpaid payment line's due day (never its amount) and an open notice's de
 no lead. See [../design-docs/calendar-export.md](../design-docs/calendar-export.md).
 
 ## Storage arithmetic
-Unit: string length against `STORAGE_BUDGET` (3,672,064 chars, the meetings region's budget).
+Unit: string length against `STORAGE_BUDGET` (4,718,592 chars, **4.5 MB since 2026-10-02**, previously 3.5 MB — the
+meetings region's budget). These are records, not image keys, so they stay in `localStorage` regardless of the
+IndexedDB image backend.
 - **Milestone**: an empty record ≈ 120 chars plus its title; typical (30-char title, a due, a stage, a 60-char
   condition, three links) ≈ 320; full (60-char title, 200-char condition, three lists of 10) ≈ 900; the nine
   seeds ≈ 2.2 k once.

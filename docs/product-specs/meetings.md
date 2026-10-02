@@ -248,9 +248,9 @@ the three applies to a record saved after this change, since a training record n
 entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per meeting, refusing with
 `후속 항목은 30건까지예요.`
 
-- Unit: `storageUsedBytes` counts string length, so the budget is `STORAGE_BUDGET` = 3.5 × 1,048,576 = 3,672,064
-  chars, shared with the rest of the save and every thumbnail. `JSON.stringify` keeps Hangul as one char; a
-  newline costs two (`\n`).
+- Unit: `storageUsedBytes` counts string length, so the budget is `STORAGE_BUDGET` = 4.5 × 1,048,576 = 4,718,592
+  chars (**4.5 MB since 2026-10-02**, previously 3.5 MB), shared with the rest of the save and, only without
+  IndexedDB (below), every thumbnail. `JSON.stringify` keeps Hangul as one char; a newline costs two (`\n`).
 - Overhead of an empty record (ten-char `uid`s, both dates, all keys, the comma), measured, is about 190 chars.
 - Largest record: 40 + 80 + 10,000 + 1,000 + 1,000 + 190 = **12,310 chars**, plus one per newline. Completely full records at three a working day (750 a year) use 9.23 M chars a year and cross the budget in about four to five months; typical minutes (~850 chars) are unaffected, since a higher cap does not make minutes longer.
 - Task links (v24): `,"taskIds":[]` adds 13 chars to every record and each linked id 12 more (a ten-char `uid`,
@@ -312,10 +312,10 @@ entries per meeting; `MEETING_FOLLOWUPS_MAX = 30` caps the follow-up items per m
 
 Typical minutes fit two and a half to five years at several a day; completely full records at three a day fit
 well under a year. The caps alone cannot promise more, so two facts guard the rest: (1) the tab always states its storage
-use, `저장 공간 {mb}MB / 3.5MB` (`storageUsedWith(state)`, memoised on `state`, not `storageUsedBytes()` alone —
+use, `저장 공간 {mb}MB / 4.5MB` (`storageUsedWith(state)`, memoised on `state`, not `storageUsedBytes()` alone —
 see below); (2) saving a meeting is refused, with the form kept open and nothing lost, when the record would push
 total usage over the budget. The backup file is the way out of a full budget (export, then delete old minutes).
-No IndexedDB. Re-serialising the whole state on every change to compute storage use is recorded as tech debt
+**No IndexedDB for records** — only `liferpg-img-*` photos moved there (2026-10-02, [state-lifecycle.md](../design-docs/state-lifecycle.md#the-store-adapter)); meetings, every other record kind and the state save itself still live in `localStorage` only, so this budget and this projection table are unaffected by that change except that photos no longer compete with records for the same quota. Re-serialising the whole state on every change to compute storage use is recorded as tech debt
 ([TD-45](../exec-plans/tech-debt-tracker.md)).
 
 `storageUsedWith(state)`, not `storageUsedBytes()` alone: the root persists `state` in an effect that runs after
@@ -336,7 +336,7 @@ is `whitespace-nowrap`).
 - Header section: `SectionLabel` (cyan) `미팅 — 프로젝트별 회의록`, button `프로젝트 추가` on the right (same style
   as `일정 추가`); caption `회의 시간은 일정 탭에, 회의에서 나온 내용은 여기에 적어요. 회의록은 목표·실행·점수에
   반영되지 않아요. 문서는 요약 글만 저장돼요 — 파일은 저장되지 않아요.` (the second sentence added v27); counts
-  line (`font-mono text-xs text-zinc-400`) `프로젝트 {p}개 · 회의록 {n}건 · 문서 {d}건 · 저장 공간 {mb}MB / 3.5MB`
+  line (`font-mono text-xs text-zinc-400`) `프로젝트 {p}개 · 회의록 {n}건 · 문서 {d}건 · 저장 공간 {mb}MB / 4.5MB`
   (`mb` to one decimal; the `문서 {d}건` fragment inserted after `회의록 {n}건` at v27, so the pre-existing
   substring `프로젝트 2개 · 회의록 4건` still matches).
 - No project: one section `프로젝트가 없어요 — 프로젝트를 먼저 만들어요.` — this card is about *project* minutes and
