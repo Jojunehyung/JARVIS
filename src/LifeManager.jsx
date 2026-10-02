@@ -11013,7 +11013,8 @@ const MEETING_FORM_TEXT = {
     names: { title: "교육 이름은", attendees: "강사·주최는", summary: "배운 것은", decisions: "핵심 정리는", actions: "기억할 점은", transcript: "녹취록은" },
   },
 };
-function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpdate, onRemove }) {
+// `onImportWork` and `onToast` (2026-10-02) serve the minutes bridge only; `onImportWork(list)` answers like `onAdd`.
+function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpdate, onRemove, onImportWork, onToast }) {
   const projects = state.meetingProjects || [];
   const [kind, setKind] = useState(isTraining(meeting) ? "training" : "meeting");
   const hint = MEETING_FORM_TEXT[kind];
@@ -11077,6 +11078,38 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
     return { shown, more: all.length - shown.length };
   }, [candidates, state.tasks, taskIds, taskQuery, today]);
   const atCap = taskIds.length >= MEETING_LIMITS.tasks;
+  // `녹취록으로 정리` (2026-10-02): the bridge renders instead of this form, never inside it (the form card's animation
+  // leaves a transform that would pin a nested sheet to the card). The form's hooks stay mounted, so every typed value
+  // survives; `bridgeDraft` is the form as it stood when the button was pressed (null = the form shows).
+  const [bridgeDraft, setBridgeDraft] = useState(null);
+  const [minutesApplied, setMinutesApplied] = useState(""); // the line under the transcript after an apply — form state only
+  const draftNow = () => ({ ...(meeting ? { id: meeting.id } : {}), projectId: pid, date, title, attendees, kind, eventId, transcript, aiHidden,
+    track, followUps, taskIds, summary, decisions, actions });
+  const trLen = transcript.trim().length;
+  // Why the button is disabled; the first match wins, "" = enabled. The packet builder guards the first two again.
+  const minutesBlocked = aiHidden ? "AI에 보내지 않기가 켜져 있어 녹취록 정리를 요청할 수 없어요."
+    : !packetTracks(state).includes(meetingTrack(state, { projectId: pid, track })) ? "직장 트랙 회의록 — AI 패킷에 실리지 않아요"
+    : trLen > MEETING_LIMITS.transcript ? `녹취록은 ${MEETING_LIMITS.transcript}자까지예요 — 지금 ${trLen}자예요.` : "";
+  // A confirmed proposal fills the form only: a ticked field replaces the field, follow-up rows and live task links are
+  // appended up to their caps. Nothing reaches the record until `저장`/`등록` runs `submit`.
+  const applyMinutes = ({ followUps: fus = [], taskIds: tids = [], work = 0, ...fields }) => {
+    const setters = { summary: setSummary, decisions: setDecisions, actions: setActions };
+    const done = Object.keys(setters).filter((k) => typeof fields[k] === "string");
+    for (const k of done) setters[k](fields[k]);
+    const fuAdd = fus.slice(0, Math.max(0, MEETING_FOLLOWUPS_MAX - followUps.length))
+      .map((f) => ({ id: uid(), text: f.text, mine: !!f.mine, ...(f.due ? { due: f.due } : {}), done: false }));
+    if (fuAdd.length) setFollowUps([...followUps, ...fuAdd]);
+    const tAdd = [];
+    for (const id of tids) {
+      if (taskIds.length + tAdd.length >= MEETING_LIMITS.tasks) break;
+      if (!taskIds.includes(id) && !tAdd.includes(id) && (state.tasks || []).some((q) => q.id === id)) tAdd.push(id);
+    }
+    if (tAdd.length) setTaskIds([...taskIds, ...tAdd]);
+    const parts = [...(done.length ? [done.map((k) => labels[k]).join("·")] : []), ...(fuAdd.length ? [`후속 ${fuAdd.length}건`] : []),
+      ...(tAdd.length ? [`할 일 ${tAdd.length}건`] : []), ...(work ? [`업무 ${work}건 등록`] : [])];
+    setMinutesApplied(`정리 제안 적용 — ${parts.join(" · ")}. 저장해야 회의록에 기록돼요.`);
+    setErr("");
+  };
   const toggleTask = (id) => setTaskIds((cur) => (cur.includes(id)
     ? cur.filter((x) => x !== id)
     : cur.length >= MEETING_LIMITS.tasks ? cur : [...cur, id]));
@@ -11134,6 +11167,12 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
     if (refused) setErr(refused);
   };
 
+  if (bridgeDraft) {
+    return (
+      <MinutesBridgeModal state={state} today={today} draft={bridgeDraft} onClose={() => setBridgeDraft(null)} onApply={applyMinutes}
+        onImportWork={onImportWork} onToast={onToast} />
+    );
+  }
   return (
     <Modal title={meeting ? "회의록 수정" : "새 회의록"} onClose={onClose}>
       <div className="space-y-3">
@@ -11194,7 +11233,17 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
         <BizField value={title} onChange={setTitle} placeholder={hint.title} />
         <BizField value={attendees} onChange={setAttendees} placeholder={hint.attendees} />
         {transcriptOpen ? (
-          <MeetingText value={transcript} onChange={setTranscript} placeholder="녹취록 (선택) — 급히 녹음한 내용을 옮겨 적은 글을 그대로 붙여넣어요" rows={6} cap={MEETING_LIMITS.transcript} />
+          <div>
+            <MeetingText value={transcript} onChange={setTranscript} placeholder="녹취록 (선택) — 급히 녹음한 내용을 옮겨 적은 글을 그대로 붙여넣어요" rows={6} cap={MEETING_LIMITS.transcript} />
+            {trLen > 0 && (
+              <div className="mt-1.5">
+                <button onClick={() => setBridgeDraft(draftNow())} disabled={!!minutesBlocked}
+                  className="px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 text-xs font-bold disabled:opacity-30 active:translate-y-0.5">녹취록으로 정리 ›</button>
+                {minutesBlocked && <p className="text-xs text-zinc-500 mt-1.5">{minutesBlocked}</p>}
+              </div>
+            )}
+            {minutesApplied && <p className="text-xs text-zinc-400 mt-1.5">{minutesApplied}</p>}
+          </div>
         ) : (
           <div>
             <button onClick={() => setTranscriptOpen(true)}
@@ -11262,10 +11311,10 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
           <input type="checkbox" checked={aiHidden} onChange={(e) => setAiHidden(e.target.checked)} className="mt-1 shrink-0" />
           <span className="text-sm text-zinc-200">
             AI에 보내지 않기
-            <span className="block text-xs text-zinc-600">켜면 오늘 업무 만들기 패킷에 이 회의록의 날짜와 제목만 실려요.</span>
+            <span className="block text-xs text-zinc-600">켜면 오늘 업무 만들기 패킷에 이 회의록의 날짜와 제목만 실리고, 녹취록 정리도 요청할 수 없어요.</span>
           </span>
         </label>
-        <p className="text-xs text-zinc-500">녹취록은 붙여넣은 그대로 저장돼요 — AI 패킷에는 실리지 않아요.</p>
+        <p className="text-xs text-zinc-500">녹취록은 붙여넣은 그대로 저장돼요 — '녹취록으로 정리'를 누를 때만 AI 요청문에 실려요.</p>
         {err && <p className="text-xs text-rose-400">{err}</p>}
         <button onClick={submit} className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm active:translate-y-0.5">
           {meeting ? "저장" : "등록"}
@@ -11276,6 +11325,169 @@ function MeetingModal({ state, meeting, projectId, today, onClose, onAdd, onUpda
       </div>
     </Modal>
   );
+}
+
+/* ── Minutes bridge — `녹취록으로 정리` (rule 7 amendment 2026-10-02, the seventh packet): the minutes packet of the one
+   draft open in `MeetingModal` out, the reply's proposals back. `MeetingModal` renders this sheet instead of its form, so
+   its X and backdrop return to the form. The confirm view shows each field's existing text beside the proposal, with an
+   `적용` tick that starts on only for an empty field; follow-ups, task links and work are tickable rows (meeting kind
+   only). `적용` registers the ticked work through `onImportWork` first (a refusal stops everything), then fills the form
+   through `onApply` — nothing is recorded until the form is saved. The reply, the parse and the ticks live here only and
+   are discarded on close; the raw reply is never stored (rule 9). ── */
+const MINUTES_FIELDS = ["summary", "decisions", "actions"];
+function MinutesBridgeModal({ state, today, draft, onClose, onApply, onImportWork, onToast }) {
+  const training = isTraining(draft);
+  const labels = MEETING_FIELD_LABEL[training ? "training" : "meeting"];
+  const [step, setStep] = useState("send");
+  const [reply, setReply] = useState("");
+  const [result, setResult] = useState(null);
+  const [ticked, setTicked] = useState({});
+  const [mine, setMine] = useState({});
+  const [tracks, setTracks] = useState({});
+  const [err, setErr] = useState("");
+  const packetRef = useRef(null);
+  const packet = useMemo(() => buildMinutesPacket(state, draft, today), [state, draft, today]);
+  // The link every work proposal registers with (decision 7): the edited meeting, else the new meeting's project, else none.
+  const link = draft.id ? { kind: "meeting", id: draft.id } : draft.projectId != null ? { kind: "project", id: draft.projectId } : null;
+  const read = () => {
+    const r = parseMinutesReply(reply, minutesReplyCtx(state, draft, today));
+    const open = (xs) => xs.filter((x) => !x.reject);
+    setResult(r);
+    setErr("");
+    setTicked(Object.fromEntries([
+      ...MINUTES_FIELDS.filter((k) => r.fields[k].text && !String(draft[k] || "").trim()).map((k) => [k, true]),
+      ...[...open(r.followUps), ...open(r.taskLinks), ...open(r.work)].map((x) => [x.key, true]),
+    ]));
+    setMine(Object.fromEntries(r.followUps.map((f) => [f.key, f.mine])));
+    setTracks(Object.fromEntries(open(r.work).map((p) => [p.key,
+      proposalTrackOf(state, { ...p, link, track: p.track || (draft.projectId === null ? draft.track : null) })])));
+  };
+  const tick = (key) => (e) => setTicked((cur) => ({ ...cur, [key]: e.target.checked }));
+  const on = (x) => !!ticked[x.key] && !x.reject;
+  const apply = () => {
+    const work = result.work.filter(on);
+    if (work.length) {
+      const refused = onImportWork(work.map((p) => ({ title: p.title, note: p.note, link, track: tracks[p.key] })));
+      if (refused) { setErr(refused); return; }
+    }
+    onApply({
+      ...Object.fromEntries(MINUTES_FIELDS.filter((k) => ticked[k] && result.fields[k].text).map((k) => [k, result.fields[k].text])),
+      followUps: result.followUps.filter(on).map((f) => ({ text: f.text, mine: !!mine[f.key], ...(f.due ? { due: f.due } : {}) })),
+      taskIds: result.taskLinks.filter(on).map((t) => t.taskId),
+      work: work.length,
+    });
+    onToast("회의록 정리 제안을 폼에 넣었어요 — 저장해야 기록돼요");
+    onClose();
+  };
+  // One tickable proposal row: a rejected row is dimmed, cannot be ticked and shows no control under it.
+  const row = (x, body, extra = null) => (
+    <div key={x.key} className={`bg-zinc-950 rounded-xl p-3 space-y-2 ${x.reject ? "opacity-50" : ""}`}>
+      <label className="flex items-start gap-2">
+        <input type="checkbox" className="mt-0.5" disabled={!!x.reject} checked={on(x)} onChange={tick(x.key)} />
+        <span className="flex-1 min-w-0">
+          {body}
+          {x.reject && <span className="block text-xs text-rose-400 mt-0.5">{x.reject}</span>}
+        </span>
+      </label>
+      {!x.reject && extra && <div className="pl-5">{extra}</div>}
+    </div>
+  );
+  const head = (text) => <div className="text-xs font-bold tracking-widest text-zinc-500">{text}</div>;
+  let body;
+  if (step === "send") {
+    body = (
+      <PacketSendPane packet={packet} taRef={packetRef} onCopy={() => copyPacket(packetRef, packet, onToast)} onPaste={() => setStep("paste")}
+        caption={`아래 글을 복사해 Claude·ChatGPT 채팅에 붙여넣고, 답변을 받아 다시 붙여넣어요. 앱은 네트워크를 쓰지 않아요. ${training
+          ? "이 교육의 녹취록 전체와 날짜·종류·제목·프로젝트·강사·주최가 실려요"
+          : "이 회의의 녹취록 전체와 날짜·종류·제목·프로젝트·참석자, 지난 회의록의 결정·미완료 후속, 연결된 일정의 확인할 것, 오늘 업무와 열린 할 일의 제목이 실려요"
+        } — 녹취록에 나온 이름·숫자도 그대로 실려요. 프로필 이름·연락처·학교·직장은 실리지 않아요.${workInAiOf(state) ? "" : " 직장 트랙 기록은 실리지 않아요."}`} />
+    );
+  } else if (!result) {
+    body = <ReplyPastePane reply={reply} setReply={setReply} onCheck={read} />;
+  } else if (result.refused) {
+    body = (
+      <div className="space-y-3">
+        <p className="text-sm text-rose-400">{result.refused}</p>
+        <button onClick={() => setResult(null)}
+          className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm font-bold active:translate-y-0.5">다시 붙여넣기</button>
+      </div>
+    );
+  } else {
+    const r = result;
+    const lists = [...r.followUps, ...r.taskLinks, ...r.work];
+    const empty = MINUTES_FIELDS.every((k) => !r.fields[k].text) && !lists.length;
+    const count = MINUTES_FIELDS.filter((k) => ticked[k] && r.fields[k].text).length + lists.filter(on).length;
+    const box = (title, text, none) => (
+      <div className="min-w-0">
+        <div className="text-xs font-mono text-zinc-500 mb-1">{title}</div>
+        <div className={`max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs bg-zinc-950 border border-zinc-800 rounded-lg p-2 ${text ? "text-zinc-200" : "text-zinc-500"}`}>
+          {text || none}</div>
+      </div>
+    );
+    body = (
+      <div className="space-y-3">
+        <div className="text-sm font-bold">{training ? "교육 기록 정리 제안" : "회의록 정리 제안"}</div>
+        {r.note && <p className="text-xs text-zinc-400 break-words">{r.note}</p>}
+        <p className="text-xs text-zinc-500">적용하면 폼의 내용이 제안으로 바뀌어요 — 저장을 눌러야 회의록에 기록돼요.</p>
+        {MINUTES_FIELDS.map((k) => {
+          const cur = String(draft[k] || "");
+          const f = r.fields[k];
+          return (
+            <div key={k} className="border border-zinc-800 rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold tracking-widest text-zinc-400">{labels[k]}</span>
+                {f.text && (
+                  <label className="flex items-center gap-1.5 text-xs text-zinc-300 shrink-0">
+                    <input type="checkbox" checked={!!ticked[k]} onChange={tick(k)} />적용
+                  </label>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {box(`기존 · ${cur.trim().length}자`, cur, "비어 있음")}
+                {box(`제안 · ${f.text.length}자`, f.text, "제안 없음")}
+              </div>
+              {f.clipped && <p className="text-xs text-zinc-400">제안 {f.len}자 중 {MEETING_LIMITS[k]}자만 실었어요</p>}
+            </div>
+          );
+        })}
+        {training ? (
+          <p className="text-xs text-zinc-500">교육 기록은 배운 것·핵심 정리·기억할 점만 적용해요.</p>
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              {head(`후속 항목 제안 — ${r.followUps.length}건`)}
+              {r.dropped > 0 && <p className="text-xs text-zinc-400">제안 {r.followUps.length + r.dropped}건 중 {MINUTES_FOLLOWUPS_READ}건만 읽었어요.</p>}
+              {r.followUps.map((f) => row(f, (
+                <>
+                  {f.text && <span className="block text-sm break-words">{f.text}</span>}
+                  <span className="block text-xs font-mono text-zinc-500">{f.due ? `기한 ${f.due}` : "기한 없음"}{f.clipped ? ` · ${MEETING_LIMITS.followUp}자로 잘림` : ""}</span>
+                </>
+              ), <Chip on={!!mine[f.key]} onClick={() => setMine((cur) => ({ ...cur, [f.key]: !cur[f.key] }))}>내 담당</Chip>))}
+            </div>
+            <div className="space-y-1.5">
+              {head(`할 일 연결 제안 — ${r.taskLinks.length}건`)}
+              {r.taskLinks.map((t) => row(t, <span className="block text-sm break-words">{t.title}</span>))}
+            </div>
+            <div className="space-y-1.5">
+              {head(`업무 제안 — ${r.work.length}건`)}
+              <p className="text-xs text-zinc-500">업무는 적용할 때 바로 업무 탭에 등록돼요 — 회의록을 저장하지 않아도 남아요.</p>
+              {r.work.map((p) => row(p, (
+                <>
+                  <span className="block text-sm font-semibold break-words">{p.title}</span>
+                  <span className="block text-xs text-zinc-500 break-words">{workLinkText(state, { link }) || "연결 없음"}{p.note ? ` · ${p.note}` : ""}</span>
+                </>
+              ), <BizChips options={TRACK_OPTIONS} value={tracks[p.key]} onPick={(t) => setTracks((cur) => ({ ...cur, [p.key]: t }))} />))}
+            </div>
+          </>
+        )}
+        {empty && <p className="text-xs text-zinc-500">제안 없음 — 적용할 항목이 없어요.</p>}
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <button onClick={apply} disabled={!count}
+          className="w-full py-3 rounded-xl bg-cyan-500 text-zinc-950 font-black text-sm disabled:opacity-30">선택한 항목 적용</button>
+      </div>
+    );
+  }
+  return <Modal title={step === "send" ? "녹취록으로 정리" : "AI 답변 붙여넣기"} onClose={onClose}>{body}</Modal>;
 }
 
 /* ── Meeting view — the full minutes, read from the live record. The progress log (v25) is added and deleted only
@@ -13433,15 +13645,18 @@ export default function LifeManager() {
   // v28: `date` dates every item (the review packet's reply: next Monday); a date other than today is appended to the toast.
   // 2026-09-22: `stamp` (the work bridge only) records today as `act.workRefreshedAt` once at least one item is
   // registered — a user-action stamp like `briefingSeen`, read by the since-mode packet; the review bridge never stamps.
-  const importWork = (list, date = today, { stamp = false } = {}) => {
+  // 2026-10-02: `keepModal` (the minutes bridge) leaves the modal slot alone, so the meeting form under the bridge and its
+  // unsaved draft stay open. Every path answers the refusal string, or "" once written; the other callers ignore it.
+  const importWork = (list, date = today, { stamp = false, keepModal = false } = {}) => {
     const made = list.map((p) => ({ id: uid(), date, title: p.title, ...(p.note ? { note: p.note } : {}),
       ...(p.link ? { link: p.link } : {}), done: false, source: "ai", track: trackOf(p, "biz"), createdAt: today }));
     const refused = recordFits(made, 0, "업무를");
-    if (refused) { showToast({ msg: refused }); return; }
+    if (refused) { showToast({ msg: refused }); return refused; }
     if (made.length) writeWork((items) => [...made, ...items]);
     if (stamp && made.length) setState((prev) => ({ ...prev, act: { ...prev.act, workRefreshedAt: today } }));
-    setModal(null);
+    if (!keepModal) setModal(null);
     showToast({ msg: `AI 제안 업무 ${made.length}건 등록${date !== today ? ` · ${date}` : ""}` });
+    return "";
   };
 
   /* Daily assistant */
@@ -13887,7 +14102,8 @@ export default function LifeManager() {
       {modal?.type === "meeting" && (
         <MeetingModal state={state} today={today} projectId={modal.projectId}
           meeting={(state.meetings || []).find((m) => m.id === modal.meetingId)}
-          onClose={() => setModal(null)} onAdd={addMeeting} onUpdate={updateMeeting} onRemove={removeMeeting} />
+          onClose={() => setModal(null)} onAdd={addMeeting} onUpdate={updateMeeting} onRemove={removeMeeting}
+          onImportWork={(list) => importWork(list, today, { keepModal: true })} onToast={(msg) => showToast({ msg })} />
       )}
       {modal?.type === "meetingView" && (
         <MeetingViewModal state={state} meetingId={modal.meetingId} today={today} readOnly={!!modal.readOnly}
