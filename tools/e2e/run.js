@@ -286,7 +286,7 @@ const typeInto = async (placeholder, value) => {
   };
   // Photos (2026-10-02) live in IndexedDB — database `life-manager`, object store `kv` — under their `liferpg-img-*`
   // keys when the page can open it (the preview build); `file:` and a failed open keep them in localStorage. One page-side
-  // call per operation, the database closed again afterwards: get → the value or null, keys → every key, put, clear.
+  // call per operation, the database closed again afterwards: get → the value or null, keys → every key, put, del, clear.
   const idbCall = (op, k = null, v = null) => page.evaluate((op, k, v) => new Promise((res) => {
     let req;
     try { req = indexedDB.open("life-manager", 1); } catch { res(null); return; }
@@ -301,6 +301,7 @@ const typeInto = async (placeholder, value) => {
         if (op === "get") { const r = os.get(k); r.onsuccess = () => { out = r.result ?? null; }; }
         else if (op === "keys") { const r = os.getAllKeys(); r.onsuccess = () => { out = r.result; }; }
         else if (op === "put") { os.put(v, k); out = true; }
+        else if (op === "del") { os.delete(k); out = true; }
         else if (op === "clear") { os.clear(); out = true; }
         tx.oncomplete = () => { db.close(); res(out); };
         tx.onerror = tx.onabort = () => { db.close(); res(null); };
@@ -310,6 +311,7 @@ const typeInto = async (placeholder, value) => {
   const idbGet = (k) => idbCall("get", k);
   const idbKeys = async () => (await idbCall("keys")) || [];
   const idbPut = (k, v) => idbCall("put", k, v);
+  const idbDel = (k) => idbCall("del", k);
   const idbClear = () => idbCall("clear");
   // An image as the app reads it: IndexedDB first, else the JSON string an older build (or the fallback) left in localStorage.
   const readImage = async (k) => {
@@ -512,7 +514,7 @@ const typeInto = async (placeholder, value) => {
     tasks: (st.tasks || []).length,
     goals: JSON.stringify(st.goals || []),
   });
-  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, plantGate, passGate, setClock, tickClock, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, idbGet, idbKeys, idbPut, idbClear, readImage, dropImage, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
+  const h = { recordBoundary, step, shot, clickText, clickInModal, clickInModalExact, clickExact, captureDownload, assertDone, modalError, clickTab, reload, plantGate, passGate, setClock, tickClock, rows, todoRows, openTodo, openAreaGate, overlayText, openSettings, idbGet, idbKeys, idbPut, idbDel, idbClear, readImage, dropImage, setValue, attach, openTaskModalFor, addKindTask, submitPhotoEvidence, logActivity, findByText, hasText, expectText, typeInto, typeExact, completeQuest, sleep, page, errors, closeModal, metrics: {} };
 
   h.metrics = {};
   await require("./flow.js")(h);

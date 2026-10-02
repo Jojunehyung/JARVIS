@@ -95,6 +95,29 @@ const ICS_NAMES = [
   "icsUid", "isTraining", "followUpsOf", "calendarExportOf", "buildIcs",
 ];
 const lift = (n) => { const b = S.grabBlock(n, src); if (!b) throw new Error(`smoke: ${n} is not a top-level declaration in the app source`); return b.text; };
+// Lifts `roots` with every top-level declaration they reach, for builders whose dependencies are too many to list. Each
+// column-0 `const`/`function` runs to the line before the next one (trailing comments come along); components
+// (`function Capitalised(`) are never lifted. Returns the roots by name.
+const liftClosure = (roots) => {
+  const { lines } = src;
+  const starts = [];
+  lines.forEach((l, i) => { const m = l.match(/^(?:const|function) ([A-Za-z_$][\w$]*)\b/); if (m) starts.push({ name: m[1], i }); });
+  const blocks = new Map();
+  starts.forEach((d, k) => {
+    if (/^[A-Z][a-z]/.test(d.name) && lines[d.i].startsWith("function")) return;
+    blocks.set(d.name, lines.slice(d.i, k + 1 < starts.length ? starts[k + 1].i : d.i + 1).join("\n"));
+  });
+  const order = [], seen = new Set();
+  const visit = (n) => {
+    if (seen.has(n) || !blocks.has(n)) return;
+    seen.add(n);
+    const code = blocks.get(n).replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "");
+    for (const m of new Set(code.match(/[A-Za-z_$][\w$]*/g))) if (m !== n) visit(m);
+    order.push(n);
+  };
+  for (const r of roots) { if (!blocks.has(r)) throw new Error(`smoke: ${r} is not a top-level declaration in the app source`); visit(r); }
+  return new Function(order.map((n) => blocks.get(n)).join("\n") + `\nreturn { ${roots.join(", ")} };`)();
+};
 const ICS = new Function(ICS_NAMES.map(lift).join("\n") + "\nreturn { buildIcs, calendarExportOf, icsFold, icsText, icsAddMinutes, ICS_RANGE_DAYS, MAX_OCC, occurrencesOf };")();
 const NOW = Date.UTC(2026, 8, 14, 1, 30, 12);
 const unfoldIcs = (t) => t.replace(/\r\n[ \t]/g, "");
@@ -396,17 +419,20 @@ console.log("calendar file: 19 check groups");
 }
 
 // 7) check summary — the `확인 필요` notification's three facts and its text, and the service worker's copy of its literals (2026-09-22)
+// (2026-10-02) A missing or 7-day-old backup is a fourth fact; every fixture below (a)–(d) carries a same-day stamp, so
+// those assertions read exactly as before; (g) covers the backup line.
 {
   let n = 0;
   const check = (cond, msg) => { n++; ok(cond, `check summary: ${msg}`); };
   const CHECK = new Function([
     ...["dstr", "shiftDay", "daysBetween", "MAX_OCC", "occurrencesOf", "meetingOrder", "byCreated", "workOn", "eventProjectOf",
       "CHECK_MINUTES_DAYS", "CHECK_LIST_MAX", "CHECK_TAG", "CHECK_CACHE", "CHECK_CACHE_REQ", "CHECK_STALE_MS", "OPEN_PARAM_TYPES",
-      "gateRefreshedOf", "checkSummaryOf", "checkNotificationOf", "PUSH_VAPID_PUBLIC", "pushKeyBytes"].map(lift),
+      "gateRefreshedOf", "BACKUP_STALE_DAYS", "backupAgeOf", "backupStaleOf", "backupLineOf", "checkSummaryOf", "checkNotificationOf", "PUSH_VAPID_PUBLIC", "pushKeyBytes"].map(lift),
   ].join("\n") + "\nreturn { checkSummaryOf, checkNotificationOf, CHECK_TAG, CHECK_CACHE, CHECK_CACHE_REQ, CHECK_STALE_MS, OPEN_PARAM_TYPES, PUSH_VAPID_PUBLIC, pushKeyBytes };")();
   const today = "2026-09-22";
-  const sum = (st) => CHECK.checkSummaryOf({ work: [], events: [], meetings: [], meetingProjects: [{ id: "P", name: "프로젝트" }], ...st }, today);
-  const text = (st) => CHECK.checkNotificationOf(sum(st));
+  // `backupAt` defaults to today (a fresh backup); `stamp = null` leaves the save without one.
+  const sum = (st, stamp = today) => CHECK.checkSummaryOf({ work: [], events: [], meetings: [], meetingProjects: [{ id: "P", name: "프로젝트" }], ...st, act: { backupAt: stamp, ...(st.act || {}) } }, today);
+  const text = (st, stamp) => CHECK.checkNotificationOf(sum(st, stamp));
   const madeToday = { id: "w0", date: today, title: "오늘 것", done: false, createdAt: today };
 
   // (a) not refreshed: both reasons in order, then one, then none; the AI refresh date is appended as a fact
@@ -455,6 +481,17 @@ console.log("calendar file: 19 check groups");
   // (d) nothing to state → no notification
   const quiet = sum({ work: [madeToday], act: { briefingSeen: today } });
   check(quiet.counts.total === 0 && CHECK.checkNotificationOf(quiet) === null, `empty: total ${quiet.counts.total}`);
+
+  // (g) the backup line (2026-10-02): a quiet save without a stamp states one thing, the line itself; with other facts
+  // it is the last body line and `counts.backup` is 1; a fresh stamp adds no key at all
+  const unstamped = text({ work: [madeToday], act: { briefingSeen: today } }, null);
+  check(sum({ work: [madeToday], act: { briefingSeen: today } }, null).counts.total === 1, "a quiet save without a backup states one thing");
+  check(unstamped?.title === "인생 관리 — 확인 필요 1가지" && unstamped?.body === "백업 기록 없음", `unstamped: ${unstamped?.title} / ${unstamped?.body}`);
+  check(JSON.stringify(unstamped?.counts) === '{"notRefreshed":0,"minutes":0,"carried":0,"backup":1}', `unstamped counts ${JSON.stringify(unstamped?.counts)}`);
+  const old = text(carriedState, "2026-09-13");
+  check(old?.body.split("\n").pop() === "마지막 백업 2026-09-13 · 9일 전" && old?.title === "인생 관리 — 확인 필요 3가지", `a 9-day-old backup is the last line: ${old?.body}`);
+  check(old?.counts.backup === 1 && old?.counts.carried === 4, `counts ${JSON.stringify(old?.counts)}`);
+  check(!("backup" in sum(carriedState)) && !("backup" in sum(carriedState).counts) && !("backup" in ct.counts), "a fresh backup adds no key to the summary or the counts");
 
   // (e) the service worker repeats the app's literals, keeps the summary cache on activate and never reloads a client
   const sw = require("./gen-sw.js").swSource("x", [], []);
@@ -841,13 +878,61 @@ console.log("calendar file: 19 check groups");
   console.log(`first-open stamp: ${n} checks`);
 }
 
+// 12) the backup reminder (2026-10-02) — `act.backupAt` stamped by an export; the age, the stale rule (missing or ≥ 7
+// days) and the line are derived (rule 9); the reader states it first only while stale, and is otherwise unchanged.
+{
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `backup reminder: ${msg}`); };
+  const BK = new Function(["dstr", "shiftDay", "daysBetween", "BACKUP_STALE_DAYS", "backupAgeOf", "backupStaleOf", "backupLineOf", "stampBackup"].map(lift).join("\n")
+    + "\nreturn { BACKUP_STALE_DAYS, backupAgeOf, backupStaleOf, backupLineOf, stampBackup };")();
+  const today = "2026-10-02";
+  const at = (backupAt) => ({ act: { streak: 3, backupAt } });
+
+  // (f) age, stale and line: none, malformed, today, 6, 7, the future
+  check(BK.BACKUP_STALE_DAYS === 7, `BACKUP_STALE_DAYS ${BK.BACKUP_STALE_DAYS}`);
+  for (const st of [{}, { act: {} }, at("bad"), at("2026-10")]) {
+    check(BK.backupAgeOf(st, today) === null && BK.backupStaleOf(st, today) === true && BK.backupLineOf(st, today) === "백업 기록 없음", `no valid stamp: ${JSON.stringify(st)}`);
+  }
+  const rows = [["2026-10-02", 0, false, "마지막 백업 2026-10-02 · 오늘"], ["2026-09-26", 6, false, "마지막 백업 2026-09-26 · 6일 전"],
+    ["2026-09-25", 7, true, "마지막 백업 2026-09-25 · 7일 전"], ["2026-10-05", 0, false, "마지막 백업 2026-10-05 · 오늘"]];
+  for (const [d, age, stale, line] of rows) {
+    const st = at(d);
+    check(BK.backupAgeOf(st, today) === age && BK.backupStaleOf(st, today) === stale && BK.backupLineOf(st, today) === line,
+      `${d}: ${BK.backupAgeOf(st, today)} ${BK.backupStaleOf(st, today)} ${BK.backupLineOf(st, today)}`);
+  }
+
+  // (g) stampBackup: the same object when already stamped today; else a copy with only `act.backupAt` changed
+  const stamped = at(today);
+  check(BK.stampBackup(stamped, today) === stamped, "already stamped today → the same object");
+  const before = { tasks: [1], act: { streak: 3, briefingSeen: "2026-10-01", backupAt: "2026-09-01" } };
+  const snap = JSON.stringify(before);
+  const after = BK.stampBackup(before, today);
+  check(after !== before && after.act.backupAt === today && JSON.stringify(before) === snap, "a new object; the input is not mutated");
+  check(after.tasks === before.tasks && after.act.streak === 3 && after.act.briefingSeen === "2026-10-01", "every other field kept");
+  check(BK.stampBackup({ v: 28 }, today).act.backupAt === today, "a save without act gets one");
+
+  // (i) the reader: stale → `백업` first with the one line and a settings route; fresh → the section keys as before
+  const { buildReader } = liftClosure(["buildReader"]);
+  const save = (act) => ({ profile: {}, areas: [], goals: [], tasks: [], events: [], work: [], meetings: [], meetingProjects: [], act });
+  const keys = (st) => buildReader(st, today).sections.map((x) => x.key);
+  const stale = buildReader(save({ backupAt: "2026-09-23" }), today).sections;
+  check(stale[0].key === "backup" && stale[0].title === "백업" && stale[0].items.length === 1 && stale[0].items[0].text === "마지막 백업 2026-09-23 · 9일 전"
+    && stale[0].action?.type === "settings", `stale: ${JSON.stringify(stale[0])}`);
+  check(buildReader(save({}), today).sections[0].items[0].text === "백업 기록 없음", "no stamp → `백업 기록 없음`");
+  const fresh = keys(save({ backupAt: "2026-09-26" }));
+  check(!fresh.includes("backup") && JSON.stringify(keys(save({ backupAt: "2026-09-25" }))) === JSON.stringify(["backup", ...fresh]),
+    `fresh keys: ${fresh.join(",")}`);
+  check(JSON.stringify(fresh) === JSON.stringify(["prep", "work", "followups", "decisions", "since", "biz", "roadmap", "pipeline", "goals", "role"]), `the reader's sections otherwise: ${fresh.join(",")}`);
+  console.log(`backup reminder: ${n} checks`);
+}
+
 // 11) storage routing (2026-10-02) — `liferpg-img-*` keys route to IndexedDB inside the `store` adapter, every other key
 // stays on localStorage; the boot copy puts each localStorage photo into IndexedDB when absent, reads it back, and removes
 // a localStorage copy only when the read-back verified it and removal was asked for. Async, so the exit waits for it.
 const storageRouting = (async () => {
   let n = 0;
   const check = (cond, msg) => { n++; ok(cond, `storage routing: ${msg}`); };
-  const ST = new Function(["IMG_PREFIX", "routesToIdb", "copyLocalImages"].map(lift).join("\n") + "\nreturn { IMG_PREFIX, routesToIdb, copyLocalImages };")();
+  const ST = new Function(["IMG_PREFIX", "routesToIdb", "copyLocalImages", "dropLocalImageCopies"].map(lift).join("\n") + "\nreturn { IMG_PREFIX, routesToIdb, copyLocalImages, dropLocalImageCopies };")();
 
   // (a) routing: the four image families → IndexedDB; the state key, the bare prefix, a foreign prefix and non-strings → not
   for (const k of ["liferpg-img-ev-abc", "liferpg-img-study-abc-2", "liferpg-img-folio-x", "liferpg-img-profile"]) check(ST.routesToIdb(k) === true, `${k} routes to IndexedDB`);
@@ -896,6 +981,23 @@ const storageRouting = (async () => {
     const r = await ST.copyLocalImages(local, idb, true);
     check(r.copied === 0 && r.verified === 1 && r.removed === 1, `an existing IndexedDB value verifies without a copy: ${JSON.stringify(r)}`);
     check(idb.m.get("liferpg-img-ev-t1") === B && !local.m.has("liferpg-img-ev-t1"), "the IndexedDB value is unchanged and the localStorage copy is removed");
+  }
+
+  // (f) option B — after an export, `dropLocalImageCopies(images)` removes a localStorage copy only when IndexedDB reads
+  // back the very value the file holds; keys outside the file, the state key, a missing or different IndexedDB value and
+  // a key without a localStorage copy are left alone
+  {
+    const io = (local, idb) => ({ local: { has: (k) => local.has(k), remove: (k) => local.delete(k) }, get: async (k) => (idb.has(k) ? idb.get(k) : null) });
+    const local = new Map([["liferpg-img-ev-t1", "x"], ["liferpg-img-study-t2-1", "x"], ["liferpg-img-folio-f1", "x"], ["liferpg-img-profile", "x"], ["liferpg-state-v1", "x"]]);
+    const idb = new Map([["liferpg-img-ev-t1", A], ["liferpg-img-study-t2-1", B], ["liferpg-img-folio-f1", A], ["liferpg-img-profile", A]]);
+    const file = { "liferpg-img-ev-t1": A, "liferpg-img-study-t2-1": A, "liferpg-img-folio-f1": A, "liferpg-img-study-t9-1": A, "liferpg-state-v1": A };
+    const r = await ST.dropLocalImageCopies(file, io(local, idb));
+    check(r === 2 && !local.has("liferpg-img-ev-t1") && !local.has("liferpg-img-folio-f1"), `the two verified keys in the file are removed: ${r}`);
+    check(local.has("liferpg-img-study-t2-1"), "IndexedDB holding a different value than the file keeps the localStorage copy");
+    check(local.has("liferpg-img-profile") && local.has("liferpg-state-v1"), "a key outside the file and the state key are never touched");
+    const lone = new Map([["liferpg-img-ev-t1", "x"]]);
+    check(await ST.dropLocalImageCopies({ "liferpg-img-ev-t1": A }, io(lone, new Map())) === 0 && lone.has("liferpg-img-ev-t1"), "IndexedDB without the photo removes nothing");
+    check(await ST.dropLocalImageCopies(null, io(lone, new Map())) === 0, "no images, nothing removed");
   }
   console.log(`storage routing: ${n} checks`);
 })();

@@ -123,10 +123,13 @@
                                                              // `deferredUntil` `HH:MM` — the day's one manual deferral (tap time + 3 h,
                                                              // capped at 23:59); the morning-appointment deferral is derived from
                                                              // `events[]` and the clock, never stored (rule 9)
-         opened?: { [date]: "HH:MM" } },                    // (2026-09-25, still v28, no migrate block) the day's first-open time,
+         opened?: { [date]: "HH:MM" },                       // (2026-09-25, still v28, no migrate block) the day's first-open time,
                                                              // stamped once by the root effect on every path that brings the app up;
                                                              // its own map, never under `gate` (`gateMonthOf` counts entries as days);
                                                              // newest `OPENED_KEEP_DAYS` days; a user-action stamp, never progress (rule 9)
+         backupAt?("YYYY-MM-DD") },                          // (2026-10-02, still v28, no migrate block) the date of the last backup
+                                                             // export — a user-action stamp, written into the exported file too; the
+                                                             // backup age is derived (rule 9)
   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
   certBest: { sg: { p, name, d } },
   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -428,6 +431,9 @@ const demoState = () => {
   };
   // The first-open stamp (2026-09-25): yesterday and today, before each day's gate reads — the settings line reads both days when they share a month.
   s.act.opened = { [shiftDay(today, -1)]: "08:01", [today]: "08:04" };
+  // The last backup (2026-10-02): two days back, under the 7-day reminder, so the reader and the `확인 필요` notification
+  // stay as they were and settings reads `· 2일 전`.
+  s.act.backupAt = shiftDay(today, -2);
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
@@ -490,19 +496,19 @@ Blocks run in order; each is frozen once shipped ([Rule 12](../design-docs/core-
 |---|---|---|
 | `liferpg-state-v1` | 1332 | Storage (localStorage + IndexedDB for images + in-memory fallback) — storage shim 2026-09-03, image backend 2026-10-02 |
 | `liferpg-img-` | 1337 | Storage (localStorage + IndexedDB for images + in-memory fallback) — storage shim 2026-09-03, image backend 2026-10-02 |
-| `liferpg-img-ev-${task.id}` | 7160 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-1` | 7160 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-study-${task.id}-2` | 7160 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
-| `liferpg-img-folio-${id}` | 9411 | Business tab — contracts · unit prices · portfolio |
-| `liferpg-img-folio-${folio.id}` | 9834 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
-| `liferpg-img-profile` | 12069 | App root |
-| `liferpg-img-${slot}` | 12155 | App root |
-| `liferpg-img-ev-${id}` | 12178 | App root |
-| `liferpg-img-ev-${q.id}` | 12360 | App root |
-| `liferpg-img-ev-${t.id}` | 13306 | App root |
-| `liferpg-img-study-${t.id}-1` | 13306 | App root |
-| `liferpg-img-study-${t.id}-2` | 13306 | App root |
-| `liferpg-img-folio-${f.id}` | 13312 | App root |
+| `liferpg-img-ev-${task.id}` | 7224 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-1` | 7224 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-study-${task.id}-2` | 7224 | Evidence viewer — shows the text and photo stored with a completed record (reader side of the rule 16 key convention) |
+| `liferpg-img-folio-${id}` | 9484 | Business tab — contracts · unit prices · portfolio |
+| `liferpg-img-folio-${folio.id}` | 9907 | The three business forms. Same shape as EventModal: a record, no goal, no difficulty, no evidence |
+| `liferpg-img-profile` | 12142 | App root |
+| `liferpg-img-${slot}` | 12228 | App root |
+| `liferpg-img-ev-${id}` | 12251 | App root |
+| `liferpg-img-ev-${q.id}` | 12433 | App root |
+| `liferpg-img-ev-${t.id}` | 13379 | App root |
+| `liferpg-img-study-${t.id}-1` | 13379 | App root |
+| `liferpg-img-study-${t.id}-2` | 13379 | App root |
+| `liferpg-img-folio-${f.id}` | 13385 | App root |
 
 ## Demo data (`demoState`)
 

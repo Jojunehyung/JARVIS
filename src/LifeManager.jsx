@@ -1564,8 +1564,35 @@ const copyLocalImages = async (local, idb, removeAfterVerify) => {
 };
 
 // Option B (the user's answer, 2026-10-02): the boot copy never removes. A `localStorage` copy is removed only after a
-// backup export that contained it (Phase 2 of the storage-expansion plan).
+// backup export that contained it (`dropLocalImageCopies`).
 const COPY_REMOVE_ON_BOOT = false;
+
+// After `백업 내보내기` (option B): `images` is the file's map of storage key → data URL. For each image key the file holds,
+// the `localStorage` copy is removed only when IndexedDB reads back the very value written into the file — so a photo
+// is never left only in evictable storage without that backup, and a key outside the file is never touched. Without
+// IndexedDB (`file:`, no API, open failure) the `localStorage` copy is the only one and nothing is removed. `io` injects
+// `{ local: { has(k), remove(k) }, get(k) }` for smoke. Resolves the number removed; never rejects.
+const dropLocalImageCopies = async (images, io = null) => {
+  try {
+    let local = io?.local, get = io?.get;
+    if (!io) {
+      const db = await imgDb();
+      if (!db) return 0;
+      const ls = window.localStorage;
+      local = { has: (k) => ls.getItem(k) != null, remove: (k) => ls.removeItem(k) };
+      get = (k) => idbGet(db, k);
+    }
+    let n = 0;
+    for (const [k, v] of Object.entries(images || {})) {
+      if (!routesToIdb(k) || typeof v !== "string" || !v || !local.has(k)) continue;
+      const back = await get(k);
+      if (typeof back !== "string" || back !== v) continue;
+      local.remove(k);
+      n++;
+    }
+    return n;
+  } catch { return 0; }
+};
 
 // The root's fire-and-forget call after boot: the two adapters over `window.localStorage` and the open database; a no-op
 // (resolving `null`) without IndexedDB. Never rejects.
@@ -3446,6 +3473,27 @@ const stampOpened = (s, today, at = hhmm()) => {
   return { ...s, act: { ...(s?.act || {}), opened } };
 };
 
+// The backup reminder (2026-10-02): `act.backupAt` is the date of the last `백업 내보내기` — a user-action stamp; the age is
+// derived here at render, never stored (rule 9). Missing or BACKUP_STALE_DAYS old, the reader and the `확인 필요`
+// notification state it — a date and a day count, nothing more (rules 7, 13).
+const BACKUP_STALE_DAYS = 7;
+const backupAgeOf = (state, today) => {
+  const at = state?.act?.backupAt;
+  if (typeof at !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(at)) return null;
+  return Math.max(0, daysBetween(at, today));
+};
+const backupStaleOf = (state, today) => {
+  const age = backupAgeOf(state, today);
+  return age === null || age >= BACKUP_STALE_DAYS;
+};
+const backupLineOf = (state, today) => {
+  const age = backupAgeOf(state, today);
+  if (age === null) return "백업 기록 없음";
+  return `마지막 백업 ${state.act.backupAt} · ${age === 0 ? "오늘" : `${age}일 전`}`;
+};
+// The same object when today is already stamped; otherwise a shallow copy with only `act.backupAt` changed.
+const stampBackup = (s, today) => (s?.act?.backupAt === today ? s : { ...s, act: { ...(s?.act || {}), backupAt: today } });
+
 // The three facts, all tracks (the notification never leaves the device): whether today was refreshed (a work item
 // created today, the reader seen today), which project appointments of the last CHECK_MINUTES_DAYS days have no linked
 // minutes (a done occurrence still counts — it happened), and which work items are carried. Pure, derived at render.
@@ -3467,7 +3515,11 @@ const checkSummaryOf = (state, today) => {
   const notRefreshed = reasons.length ? reasons.join(" · ") : null;
   const counts = { notRefreshed: notRefreshed ? 1 : 0, minutes: minutesMissing.length, carried: carried.length };
   counts.total = counts.notRefreshed + (counts.minutes ? 1 : 0) + (counts.carried ? 1 : 0);
-  return { date: today, notRefreshed, workRefreshedAt: state.act?.workRefreshedAt || null, minutesMissing, carried, counts };
+  // A missing or stale backup (2026-10-02) is a fourth fact. Its keys exist only while it holds, so a save with a fresh
+  // backup returns exactly what it did before.
+  const stale = backupStaleOf(state, today);
+  if (stale) { counts.backup = 1; counts.total += 1; }
+  return { date: today, notRefreshed, workRefreshedAt: state.act?.workRefreshedAt || null, minutesMissing, carried, counts, ...(stale ? { backup: backupLineOf(state, today) } : {}) };
 };
 
 // The notification's title and body lines, or null when there is nothing to state. `counts` is what a re-render compares
@@ -3481,10 +3533,12 @@ const checkNotificationOf = (summary) => {
   if (summary.notRefreshed) lines.push(`오늘 할 일 미갱신 · ${summary.notRefreshed}${summary.workRefreshedAt ? ` · AI 갱신 ${summary.workRefreshedAt}` : ""}`);
   if (counts.minutes) lines.push(`회의록 없는 지난 일정 ${counts.minutes}건: ${summary.minutesMissing.slice(0, CHECK_LIST_MAX).map((r) => `${monthDay(r.date)} ${r.title}`).join(" · ")}${more(counts.minutes)}`);
   if (counts.carried) lines.push(`이월 업무 ${counts.carried}건: ${summary.carried.slice(0, CHECK_LIST_MAX).map((w) => w.title).join(" · ")}${more(counts.carried)}`);
+  // The backup line is always last. Once stale, `counts.backup` stays 1, so this line alone does not re-buzz the phone.
+  if (counts.backup) lines.push(summary.backup);
   return {
     title: `인생 관리 — 확인 필요 ${counts.total}가지`,
     body: lines.join("\n"),
-    counts: { notRefreshed: counts.notRefreshed, minutes: counts.minutes, carried: counts.carried },
+    counts: { notRefreshed: counts.notRefreshed, minutes: counts.minutes, carried: counts.carried, ...(counts.backup ? { backup: counts.backup } : {}) },
   };
 };
 
@@ -3614,6 +3668,10 @@ const buildReader = (state, today) => {
     const group = items.filter((it) => trackOf(it) === t);
     return group.length ? [{ text: `${TRACK_LABEL[t]} ${group.length}건`, head: true }, ...group] : [];
   });
+
+  /* The backup reminder (2026-10-02) — first, and only while the last export is missing or BACKUP_STALE_DAYS old; with a
+     fresh backup the reader is what it was before */
+  if (backupStaleOf(state, today)) add("backup", "백업", [{ text: backupLineOf(state, today) }], { type: "settings" });
 
   /* Meeting preparation today and tomorrow — every open check, the last decisions, every open follow-up, the documents */
   add("prep", "오늘·내일 회의 준비", withHeads(meetingPrepOf(state, today).map((r) => {
@@ -4986,10 +5044,13 @@ const buildIcs = (state, today, { days, remindAt = ICS_REMIND_DEFAULT, now } = {
  *                                                              // `deferredUntil` `HH:MM` — the day's one manual deferral (tap time + 3 h,
  *                                                              // capped at 23:59); the morning-appointment deferral is derived from
  *                                                              // `events[]` and the clock, never stored (rule 9)
- *          opened?: { [date]: "HH:MM" } },                    // (2026-09-25, still v28, no migrate block) the day's first-open time,
+ *          opened?: { [date]: "HH:MM" },                       // (2026-09-25, still v28, no migrate block) the day's first-open time,
  *                                                              // stamped once by the root effect on every path that brings the app up;
  *                                                              // its own map, never under `gate` (`gateMonthOf` counts entries as days);
  *                                                              // newest `OPENED_KEEP_DAYS` days; a user-action stamp, never progress (rule 9)
+ *          backupAt?("YYYY-MM-DD") },                          // (2026-10-02, still v28, no migrate block) the date of the last backup
+ *                                                              // export — a user-action stamp, written into the exported file too; the
+ *                                                              // backup age is derived (rule 9)
  *   exams: { best{famId:{label,d,p,ver,date,score?}}, dim{famId:mult}, spec{lang:true}, policy },   // score?: display string (v22); payout reads p only
  *   certBest: { sg: { p, name, d } },
  *   room: { trophies[{id,kind:"ach"|"rank"|"spec",label,tier?,date}] },
@@ -5444,6 +5505,9 @@ const demoState = () => {
   };
   // The first-open stamp (2026-09-25): yesterday and today, before each day's gate reads — the settings line reads both days when they share a month.
   s.act.opened = { [shiftDay(today, -1)]: "08:01", [today]: "08:04" };
+  // The last backup (2026-10-02): two days back, under the 7-day reminder, so the reader and the `확인 필요` notification
+  // stay as they were and settings reads `· 2일 전`.
+  s.act.backupAt = shiftDay(today, -2);
   s.exams.best = { toeic: { label: "700", d: 49, p: 480, ver: POINT_POLICY_VERSION, date: shiftDay(today, -60), score: "735" } };
   s.exams.dim = { toeic: 1 };
   s.room.trophies = [{ id: uid(), kind: "rank", label: "직업·커리어 실무자", date: shiftDay(today, -20) }];
@@ -8162,12 +8226,14 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
   const [pushErr, setPushErr] = useState("");
   // The photo figures (2026-10-02), read once when the sheet opens — derived, never saved (rule 9). Nothing renders
   // until they resolve.
+  // Read again after an export, which may have removed `localStorage` copies (option B).
   const [img, setImg] = useState(null);
+  const [exports, setExports] = useState(0);
   useEffect(() => {
     let alive = true;
     imageStoreStats().then((r) => { if (alive) setImg(r); });
     return () => { alive = false; };
-  }, []);
+  }, [exports]);
   const [showSub, setShowSub] = useState(false);
   const subRef = useRef(null);
   useEffect(() => {
@@ -8318,10 +8384,17 @@ function SettingsModal({ state, today, onClose, onRoleModel, onSetBizHours, onSe
               <span className="whitespace-nowrap">{img.mode === "idb" ? `사진 ${mbText(img.chars)}MB` : "사진 포함"}</span>
             </p>
             {img.mode === "idb" && <p className="text-xs text-zinc-500 mt-1">사진 저장소: 기기 사정으로 지워질 수 있어요 — 백업 파일에 포함돼요</p>}
-            {img.mode === "idb" && img.localCopies > 0 && <p className="font-mono text-xs text-zinc-400 mt-1">기록 공간에 남은 이전 사진 사본 {img.localCopies}장</p>}
+            {img.mode === "idb" && img.localCopies > 0 && (
+              <p className="font-mono text-xs text-zinc-400 mt-1">
+                <span className="whitespace-nowrap">기록 공간에 남은 이전 사진 사본 {img.localCopies}장</span>
+                <span className="whitespace-nowrap"> · 백업을 내보내면 정리돼요</span>
+              </p>
+            )}
           </>}
+          {/* The last backup export (2026-10-02): a date and a day count, derived from `act.backupAt` (rule 9) */}
+          <p className="font-mono text-xs text-zinc-300 mt-1.5">{backupLineOf(state, today)}</p>
           <div className="flex gap-1.5 mt-2.5">
-            <button onClick={onExport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
+            <button onClick={async () => { await onExport(); setExports((n) => n + 1); }} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 내보내기</button>
             <button onClick={onImport} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 font-bold text-xs">백업 불러오기</button>
           </div>
           <button onClick={onReset} className="w-full mt-2.5 py-2.5 text-xs text-rose-400 border border-rose-400/30 rounded-xl flex items-center justify-center gap-1.5">
@@ -13314,7 +13387,13 @@ export default function LifeManager() {
     }
     const prof = await store.get("liferpg-img-profile").catch(() => null);
     if (prof) images["liferpg-img-profile"] = prof;
-    downloadBlob(new Blob([JSON.stringify({ app: "life-manager", exportedAt: today, state, images }, null, 2)], { type: "application/json" }), `life-manager-backup-${today}.json`);
+    // The stamp travels inside the file (2026-10-02), so an imported backup restores the date it was written. The browser
+    // does not report a cancelled download, so the stamp is written either way.
+    const next = stampBackup(state, today);
+    downloadBlob(new Blob([JSON.stringify({ app: "life-manager", exportedAt: today, state: next, images }, null, 2)], { type: "application/json" }), `life-manager-backup-${today}.json`);
+    setState((prev) => stampBackup(prev, today));
+    // Option B: the `localStorage` copies of the photos in this file, once IndexedDB holds the same values.
+    await dropLocalImageCopies(images);
     showToast({ msg: `백업 파일을 내보냈어요 · 사진 ${Object.keys(images).length}장` });
   };
   /* Calendar export — the phone's calendar raises the alarms from this file once the user imports it. Built from the

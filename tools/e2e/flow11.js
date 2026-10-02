@@ -1003,6 +1003,7 @@ module.exports = async (h) => {
     await page.evaluate((k, ids, t, y, s3, od) => {
       const st = JSON.parse(localStorage.getItem(k));
       st.act.briefingSeen = s3;
+      st.act.backupAt = t; // a fresh backup (2026-10-02), so the reader holds exactly the sections below
       st.work = [...(st.work || []),
         { id: ids.work.id, date: t, title: ids.work.title, note: ids.work.note, done: false, source: "manual", createdAt: t },
         { id: ids.done.id, date: y, title: ids.done.title, result: ids.done.result, done: true, source: "manual", createdAt: y }];
