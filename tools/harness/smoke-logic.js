@@ -926,6 +926,183 @@ console.log("calendar file: 19 check groups");
   console.log(`backup reminder: ${n} checks`);
 }
 
+// 13) the minutes packet (2026-10-02) — the seventh packet: `minutesPacketText` assembles one meeting draft's transcript
+// and its context under MINUTES_PACKET_MAX (reductions in order, the transcript last and verbatim, a guard for direct
+// callers); `buildMinutesPacket` gathers the parts (guards, no profile, no other transcript, no event place or note);
+// `parseMinutesReply` reads `minutes` and `note` only and returns proposals with their reject reasons.
+{
+  let n = 0;
+  const check = (cond, msg) => { n++; ok(cond, `minutes packet: ${msg}`); };
+  const MIN_NAMES = ["MINUTES_PACKET_MAX", "MINUTES_PACKET_TRANSCRIPT", "MINUTES_PACKET_FOLLOWUPS", "MINUTES_PACKET_DECISIONS", "MINUTES_PACKET_DECISIONS_TRIM",
+    "MINUTES_PACKET_CHECKS", "MINUTES_PACKET_WORK", "MINUTES_PACKET_TASKS", "MINUTES_FOLLOWUPS_READ", "MINUTES_TASKLINKS_READ", "MINUTES_WORK_READ", "MINUTES_NOTE_MAX",
+    "MINUTES_PACKET_HEAD", "MINUTES_PACKET_HEAD_TRAINING", "minutesPacketHead",
+    "MEETING_LIMITS", "MEETING_FOLLOWUPS_MAX", "WORK_LIMITS", "TRACKS", "TRACK_LABEL", "replyTrackOf", "normWorkTitle", "oneLineText", "packetSection", "replyJson",
+    "minutesPacketText", "parseMinutesReply"];
+  const MN = new Function(MIN_NAMES.map(lift).join("\n") + `\nreturn { ${MIN_NAMES.join(", ")} };`)();
+  const today = "2026-10-02";
+  const meetingLines = ["- 2026-10-02 · 회의 · 주간 점검 · 프로젝트 사업", "- 참석: 담당자 A"];
+  const empty = { today, training: false, meetingLines, last: null, checks: null, work: [], tasks: [] };
+  // 30,000 chars with 300 line breaks
+  const longText = (len, breaks) => { const per = Math.floor(len / breaks); return Array.from({ length: breaks }, (_, i) => `줄${i} `.padEnd(per - 1, "가") + "\n").join("").slice(0, len); };
+  const T30 = longText(30000, 300);
+  const guardRe = /\(녹취록 \d+자 중 앞 \d+자만 실었어요\)/;
+
+  // (a) the constant pair and the head lines, verbatim
+  check(MN.MINUTES_PACKET_TRANSCRIPT === MN.MEETING_LIMITS.transcript, `MINUTES_PACKET_TRANSCRIPT ${MN.MINUTES_PACKET_TRANSCRIPT} = MEETING_LIMITS.transcript ${MN.MEETING_LIMITS.transcript}`);
+  check(MN.MINUTES_PACKET_MAX === 40000 && MN.MINUTES_PACKET_DECISIONS_TRIM === 200 && MN.MINUTES_NOTE_MAX === 200, "caps 40000 / 200 / 200");
+  check(MN.MINUTES_PACKET_HEAD.length === 11 && MN.MINUTES_PACKET_HEAD[0] === "역할: 이 사용자의 회의 녹취록을 회의록으로 정리하는 기록 담당자예요. 아래 데이터만 근거로 써요."
+    && MN.MINUTES_PACKET_HEAD[7] === "7) 답변 형식: 아래 JSON 블록 1개만 써요. 없는 항목은 빈 문자열이나 빈 배열로 둬요." && MN.MINUTES_PACKET_HEAD[8] === "```json" && MN.MINUTES_PACKET_HEAD[10] === "```", "the meeting head");
+  check(MN.MINUTES_PACKET_HEAD_TRAINING.length === 10 && JSON.stringify(MN.MINUTES_PACKET_HEAD_TRAINING.slice(1, 4)) === JSON.stringify(MN.MINUTES_PACKET_HEAD.slice(1, 4))
+    && MN.MINUTES_PACKET_HEAD_TRAINING[6] === "6) 답변 형식: 아래 JSON 블록 1개만 써요. 없는 항목은 빈 문자열이나 빈 배열로 둬요.", "the training head: rules 1–3 shared, the format line as rule 6");
+  for (const [head, keys] of [[MN.MINUTES_PACKET_HEAD, 1], [MN.MINUTES_PACKET_HEAD_TRAINING, 0]]) {
+    const tpl = JSON.parse(head[head.length - 2]);
+    check(Object.keys(tpl).join(",") === "minutes,note" && tpl.minutes.followUps.length === keys && tpl.minutes.work.length === keys, `the JSON template parses (${keys ? "meeting" : "training"})`);
+  }
+
+  // (b) a 30,000-char transcript with 300 breaks and empty context goes whole, after every other section, with no guard line
+  const whole = MN.minutesPacketText({ ...empty, transcript: T30 });
+  check(whole.length <= MN.MINUTES_PACKET_MAX && whole.endsWith(`## 녹취록 (30000자)\n${T30}`) && !guardRe.test(whole), `whole transcript: ${whole.length} chars`);
+  check(whole.startsWith(`[인생 관리 — 회의록 정리 요청 ${today}]\n${MN.MINUTES_PACKET_HEAD.join("\n")}\n\n## 회의\n${meetingLines.join("\n")}\n## 지난 회의록\n- 없음\n## 연결된 일정의 확인할 것\n- 없음\n## 오늘 업무 (이미 있음)\n- 없음\n## 열린 할 일 (연결 후보)\n- 없음\n## 녹취록 (30000자)\n`), "the section order and the empty sections");
+
+  // (c) full context: the reductions fire in order and stop as soon as the text fits
+  const s200 = (tag) => tag.padEnd(200, "나");
+  const full = {
+    ...empty, transcript: T30,
+    last: { head: "2026-09-25 지난 점검", hidden: false, decisions: s200("결정").repeat(5),
+      followUps: Array.from({ length: 30 }, (_, i) => ({ mine: i % 2 === 0, due: i % 3 ? null : "2026-10-10", text: s200(`후속${i}`) })) },
+    checks: { eventLine: "2026-10-03 11:00 · 주간 점검", open: Array.from({ length: 30 }, (_, i) => s200(`확인${i}`)) },
+    work: Array.from({ length: 30 }, (_, i) => `오늘 업무 제목 ${i}`.padEnd(60, "다")), tasks: Array.from({ length: 30 }, (_, i) => `열린 할 일 ${i}`.padEnd(60, "라")),
+  };
+  const heavy = MN.minutesPacketText(full);
+  const fired = [/## 오늘 업무 \(이미 있음\)\n- 없음/.test(heavy), /## 열린 할 일 \(연결 후보\)\n- 없음/.test(heavy), /## 연결된 일정의 확인할 것\n- 없음/.test(heavy),
+    !heavy.includes("후속29"), !heavy.includes(`  결정: ${full.last.decisions}\n`), /## 지난 회의록\n- 없음/.test(heavy), guardRe.test(heavy)];
+  check(heavy.length <= MN.MINUTES_PACKET_MAX && JSON.stringify(fired) === "[true,true,true,false,false,false,false]" && heavy.endsWith(T30),
+    `full context: ${heavy.length} chars, fired ${fired.map((f, i) => (f ? i : "")).filter((x) => x !== "").join(",")}`);
+  // a tighter transcript budget pushes the follow-ups to 5 and the decisions to 200 before the last minutes go
+  const tight = MN.minutesPacketText({ ...full, meetingLines: [...meetingLines, "- 메모: " + "마".repeat(3400)] });
+  check(tight.length <= MN.MINUTES_PACKET_MAX && tight.includes("후속4") && !tight.includes("후속5 ") && !tight.includes("후속5나") && tight.includes("  결정: ") && !guardRe.test(tight),
+    `tighter: follow-ups 30 → 5 (${tight.length} chars)`);
+  const decCut = MN.minutesPacketText({ ...full, meetingLines: [...meetingLines, "- 메모: " + "마".repeat(7000)] });
+  check(decCut.length <= MN.MINUTES_PACKET_MAX && decCut.includes(`  결정: ${s200("결정").repeat(5).slice(0, 200)}…`) && /## 지난 회의록\n- 2026-09-25/.test(decCut), `decisions clip 1000 → 200 (${decCut.length} chars)`);
+  const lastGone = MN.minutesPacketText({ ...full, meetingLines: [...meetingLines, "- 메모: " + "마".repeat(8000)] });
+  check(lastGone.length <= MN.MINUTES_PACKET_MAX && /## 지난 회의록\n- 없음/.test(lastGone) && !guardRe.test(lastGone) && lastGone.endsWith(T30), `last minutes → none (${lastGone.length} chars)`);
+
+  // (d) a 45,000-char transcript passed directly is cut at the form's cap with the guard line; a guard squeeze below it still fits
+  const T45 = longText(45000, 450);
+  const g45 = MN.minutesPacketText({ ...empty, transcript: T45 });
+  check(g45.length <= MN.MINUTES_PACKET_MAX && g45.includes(`## 녹취록 (45000자)\n${T45.slice(0, 30000)}\n(녹취록 45000자 중 앞 30000자만 실었어요)`), `45,000 chars → ${g45.length}`);
+  const squeeze = MN.minutesPacketText({ ...full, transcript: T45, meetingLines: [...meetingLines, "- 메모: " + "마".repeat(15000)] });
+  const kept = Number((squeeze.match(/중 앞 (\d+)자만/) || [])[1]);
+  check(squeeze.length <= MN.MINUTES_PACKET_MAX && kept > 0 && kept < 30000 && squeeze.includes(T45.slice(0, kept)) && /## 지난 회의록\n- 없음/.test(squeeze), `the guard squeeze keeps ${kept} chars (${squeeze.length})`);
+
+  // (e) a hidden last meeting states its date and title only; training prints `## 교육` and no context section
+  const hid = MN.minutesPacketText({ ...empty, transcript: "녹취", last: { head: "2026-09-25 비공개 회의", hidden: true, decisions: "비밀 결정", followUps: [{ mine: true, due: null, text: "비밀 후속" }] } });
+  check(hid.includes("## 지난 회의록\n- 2026-09-25 비공개 회의\n  내용 비공개 (AI에 보내지 않기)\n## ") && !hid.includes("비밀") && !hid.includes("결정:"), "a hidden last meeting states no decision");
+  const tr = MN.minutesPacketText({ ...full, training: true, meetingLines: ["- 2026-10-02 · 교육 · 품질 교육 · 프로젝트 사업", "- 강사·주최: 품질팀"], transcript: "강의 내용\n둘째 줄" });
+  check(tr.startsWith(`[인생 관리 — 교육 기록 정리 요청 ${today}]\n${MN.MINUTES_PACKET_HEAD_TRAINING.join("\n")}\n\n## 교육\n`) && tr.endsWith("## 녹취록 (10자)\n강의 내용\n둘째 줄")
+    && !/지난 회의록|연결된 일정|오늘 업무|열린 할 일/.test(tr), "training: the record and the transcript only");
+
+  // (f) the parser: reply shapes
+  const ctx = { training: false, followUps: [], taskIds: [], tasks: [{ id: "q1", title: "견적서 송부" }, { id: "q2", title: "견적서 송부 2차" }, { id: "q3", title: "완료된 일" }], workTitles: ["기존 업무"] };
+  const body = { summary: "요약", decisions: ["결정 1", "결정 2"], actions: "조치", followUps: [{ text: "후속 A", mine: true, due: "2026-10-10" }], taskLinks: ["견적서 송부"], work: [{ title: "새 업무", note: "근거", track: "개인" }] };
+  const fenced = MN.parseMinutesReply("분석 한 줄\n```json\n" + JSON.stringify({ minutes: body, note: " 한 줄 " }) + "\n```", ctx);
+  check(fenced.refused === null && fenced.note === "한 줄" && fenced.fields.summary.text === "요약" && fenced.fields.decisions.text === "결정 1\n결정 2"
+    && fenced.followUps.length === 1 && fenced.taskLinks[0].taskId === "q1" && fenced.work[0].track === "personal", `fenced: ${JSON.stringify(fenced.fields)}`);
+  const bare = MN.parseMinutesReply("앞의 설명이에요.\n" + JSON.stringify({ minutes: body }, null, 2) + "\n끝", ctx);
+  check(bare.refused === null && bare.fields.actions.text === "조치" && bare.note === "", "bare JSON after prose reads");
+  for (const r of ['```json\n{"work":[{"title":"x"}],"note":"n"}\n```', "그냥 글", '{"minutes":["x"]}', '{"minutes":"요약"}']) {
+    const p = MN.parseMinutesReply(r, ctx);
+    check(p.refused === "회의록 정리 답변이 아니에요 — 답변을 다시 받아요" && !p.followUps.length && !p.taskLinks.length && !p.work.length && p.fields.summary.text === "", `refused: ${r.slice(0, 30)}`);
+  }
+  // other top-level keys are never read
+  const other = MN.parseMinutesReply(JSON.stringify({ minutes: { summary: "s" }, work: [{ title: "top work" }], tasks: [{ title: "t" }], checks: [{ text: "c" }], quiz: [{ q: "q" }], verdict: { ok: true } }), ctx);
+  check(other.refused === null && !other.work.length && !other.followUps.length && !other.taskLinks.length && !JSON.stringify({ ...other, raw: "" }).includes("top work"), "top-level work/tasks/checks/quiz/verdict are not read");
+
+  // (g) fields: over-cap clip with the length before it
+  const over = MN.parseMinutesReply(JSON.stringify({ minutes: { summary: "가".repeat(10050), decisions: "  " + "나".repeat(1001) + "  ", actions: 42 } }), ctx);
+  check(over.fields.summary.text.length === 10000 && over.fields.summary.len === 10050 && over.fields.summary.clipped
+    && over.fields.decisions.len === 1001 && over.fields.decisions.text.length === 1000 && over.fields.actions.text === "" && !over.fields.actions.clipped, "fields clip and report len");
+  check(MN.parseMinutesReply(JSON.stringify({ minutes: { summary: ["a", 1] } }), ctx).fields.summary.text === "", "an array with a non-string becomes empty");
+
+  // (h) follow-ups: 35 → 30 read and 5 dropped; duplicates, draft-equal, room, due and mine
+  const fus = (k) => Array.from({ length: k }, (_, i) => ({ text: `항목 ${i}`, mine: false }));
+  const p35 = MN.parseMinutesReply(JSON.stringify({ minutes: { followUps: fus(35) } }), ctx);
+  check(p35.followUps.length === 30 && p35.dropped === 5 && p35.followUps.every((f) => !f.reject), `35 entries: read ${p35.followUps.length}, dropped ${p35.dropped}`);
+  const dctx = { ...ctx, followUps: [{ text: "기존 후속", mine: true }] };
+  const dup = MN.parseMinutesReply(JSON.stringify({ minutes: { followUps: [{ text: "기존  후속" }, { text: "새 후속" }, { text: "새후속" }, { text: "  " }, { text: "x".repeat(250) }] } }), dctx);
+  check(JSON.stringify(dup.followUps.map((f) => f.reject)) === JSON.stringify(["이미 후속 항목에 있어요", null, "이미 후속 항목에 있어요", "내용이 없어요", null]) && dup.followUps[4].clipped && dup.followUps[4].text.length === 200,
+    `duplicates: ${JSON.stringify(dup.followUps.map((f) => f.reject))}`);
+  const room = MN.parseMinutesReply(JSON.stringify({ minutes: { followUps: fus(3) } }), { ...ctx, followUps: Array.from({ length: 28 }, (_, i) => ({ text: `기존 ${i}`, mine: false })) });
+  check(JSON.stringify(room.followUps.map((f) => f.reject)) === JSON.stringify([null, null, "후속 항목은 30건까지예요"]), `room with 28 draft rows: ${JSON.stringify(room.followUps.map((f) => f.reject))}`);
+  const odd = MN.parseMinutesReply(JSON.stringify({ minutes: { followUps: [{ text: "a", due: "2026-02-30", mine: "true" }, { text: "b", due: "2026-13-01" }, { text: "c", due: "2028-02-29", mine: true }] } }), ctx);
+  check(odd.followUps[0].due === null && odd.followUps[0].mine === false && odd.followUps[1].due === null && odd.followUps[2].due === "2028-02-29" && odd.followUps[2].mine === true, "due must be a real day; mine must be true");
+
+  // (i) task links: exact only, duplicates, room
+  const tl = MN.parseMinutesReply(JSON.stringify({ minutes: { taskLinks: ["견적서", " 견적서 송부 ", "견적서 송부", "견적서 송부 2차", 7, "완료된 일"] } }), { ...ctx, taskIds: ["q3"] });
+  check(JSON.stringify(tl.taskLinks.map((t) => [t.taskId, t.reject])) === JSON.stringify([[null, "같은 제목의 할 일이 없어요"], ["q1", null], ["q1", "이미 연결돼 있어요"], ["q2", null], ["q3", "이미 연결돼 있어요"]]),
+    `task links: ${JSON.stringify(tl.taskLinks.map((t) => [t.taskId, t.reject]))}`);
+  const tlRoom = MN.parseMinutesReply(JSON.stringify({ minutes: { taskLinks: ["견적서 송부", "견적서 송부 2차"] } }), { ...ctx, taskIds: Array.from({ length: 9 }, (_, i) => `x${i}`) });
+  check(JSON.stringify(tlRoom.taskLinks.map((t) => t.reject)) === JSON.stringify([null, "할 일은 10개까지 연결돼요"]), "the room rejection with 9 linked");
+
+  // (j) work: dedupe against today and against a mine follow-up (the reply's or the draft's); track mapping; link ignored
+  const wk = MN.parseMinutesReply(JSON.stringify({ minutes: {
+    followUps: [{ text: "견적 보내기", mine: true }, { text: "남의 일", mine: false }],
+    work: [{ title: "기존업무" }, { title: "견적 보내기" }, { title: "초안 작성", track: "개인", link: { kind: "goal", title: "x" } }, { title: "초안작성" }, { title: "" }, { title: "남의 일", track: "foo" }, { title: "draft mine" }] } }),
+    { ...ctx, followUps: [{ text: "Draft Mine", mine: true }] });
+  check(JSON.stringify(wk.work.map((w) => w.reject)) === JSON.stringify(["오늘 업무에 이미 있어요", "후속 항목(내 담당)과 같아요", null, "오늘 업무에 이미 있어요", "제목이 없어요", null, "후속 항목(내 담당)과 같아요"]),
+    `work rejects: ${JSON.stringify(wk.work.map((w) => w.reject))}`);
+  check(wk.work[2].track === "personal" && wk.work[5].track === null && !("link" in wk.work[2]), "work: 개인 → personal, foo → null, no link key");
+
+  // (k) training ignores all three lists
+  const trp = MN.parseMinutesReply(JSON.stringify({ minutes: { ...body, followUps: fus(3) } }), { ...ctx, training: true });
+  check(trp.refused === null && trp.fields.summary.text === "요약" && !trp.followUps.length && !trp.taskLinks.length && !trp.work.length && trp.dropped === 0, "training: the three fields only");
+
+  // (l) the builder and the reply context over a planted save: guards, the draft's own transcript only, no profile, the
+  // last minutes excluding the draft's own id, memo without last minutes, the event's open checks without place or note
+  const { buildMinutesPacket, minutesReplyCtx } = liftClosure(["buildMinutesPacket", "minutesReplyCtx"]);
+  const save = {
+    profile: { name: "PROFILE-NAME", birth: "1999-01-01", email: "p@x.io", phone: "010-0000-0000", edus: [{ school: "SCHOOL-X" }], careers: [{ company: "EMPLOYER-X" }] },
+    settings: {}, act: {}, goals: [], tasks: [{ id: "q1", title: "열린 할 일 하나", type: "once", status: "open", goalId: null, createdAt: "2026-09-01" }],
+    meetingProjects: [{ id: "P", name: "사업 프로젝트", track: "biz" }, { id: "J", name: "직장 프로젝트", track: "work" }],
+    events: [{ id: "E", title: "주간 점검", kind: "appt", date: "2026-10-03", time: "11:00", place: "PLACE-X", note: "NOTE-X", projectId: "P", track: "biz",
+      checks: [{ id: "c1", text: "열린 확인", done: false }, { id: "c2", text: "끝난 확인", done: true }] }],
+    meetings: [
+      { id: "M1", projectId: "P", date: "2026-09-25", title: "지난 회의", decisions: "지난 결정", transcript: "OTHER-TRANSCRIPT", createdAt: "2026-09-25",
+        followUps: [{ id: "f1", text: "열린 후속", mine: false, done: false }, { id: "f2", text: "끝난 후속", mine: true, done: true }, { id: "f3", text: "내 후속", mine: true, done: false }] },
+      { id: "M2", projectId: "P", date: "2026-09-30", title: "수정 중인 회의", decisions: "자기 결정", transcript: "OWN-STORED", createdAt: "2026-09-30", followUps: [] },
+      { id: "N1", projectId: null, date: "2026-09-29", title: "다른 메모", decisions: "메모 결정", transcript: "MEMO-TRANSCRIPT", track: "biz", createdAt: "2026-09-29", followUps: [] },
+    ],
+    work: [{ id: "w1", date: today, title: "오늘 열린 업무", done: false, track: "biz", createdAt: today }, { id: "w2", date: today, title: "오늘 끝난 업무", done: true, track: "biz", createdAt: today },
+      { id: "w3", date: today, title: "직장 업무", done: false, track: "work", createdAt: today }],
+    documents: [{ id: "d1", projectId: "P", title: "문서", source: "DOC-SOURCE", summary: "DOC-SUMMARY", addedAt: today, track: "biz" }],
+    journal: [{ date: today, text: "JOURNAL-X" }], deals: [], role: null,
+  };
+  const draft = { id: "M2", projectId: "P", date: "2026-09-30", title: "수정 중인 회의", attendees: "담당자 A", kind: undefined, eventId: "E", transcript: "  DRAFT-TRANSCRIPT\n둘째 줄  ", aiHidden: false, track: undefined, followUps: [], taskIds: [] };
+  const pk = buildMinutesPacket(save, draft, today);
+  check(pk.includes("## 녹취록 (21자)\nDRAFT-TRANSCRIPT\n둘째 줄") && !/OTHER-TRANSCRIPT|OWN-STORED|MEMO-TRANSCRIPT/.test(pk), "the draft's own transcript only");
+  check(!/PROFILE-NAME|1999-01-01|p@x\.io|010-0000|SCHOOL-X|EMPLOYER-X|## 이력|PLACE-X|NOTE-X|DOC-|JOURNAL-X/.test(pk), "no profile identifier, event place or note, document or journal");
+  check(pk.includes("- 2026-09-30 · 회의 · 수정 중인 회의 · 프로젝트 사업 프로젝트\n- 참석: 담당자 A\n## 지난 회의록\n- 2026-09-25 지난 회의\n  결정: 지난 결정\n  후속 미완료 2건:\n  - 내 담당 · 기한 없음 · 내 후속\n  - 타인 · 기한 없음 · 열린 후속\n")
+    && !pk.includes("자기 결정") && !pk.includes("끝난 후속"), "the last minutes exclude the draft's own id; open follow-ups, mine first");
+  check(pk.includes("## 연결된 일정의 확인할 것\n- 2026-10-03 11:00 · 주간 점검\n- 열린 확인\n") && !pk.includes("끝난 확인"), "the linked event's open checks");
+  check(pk.includes("## 오늘 업무 (이미 있음)\n- 오늘 열린 업무\n- 직장 업무\n") && !pk.includes("오늘 끝난 업무") && pk.includes("## 열린 할 일 (연결 후보)\n- 열린 할 일 하나\n"), "today's open work and the open tasks");
+  const off = { ...save, settings: { workInAi: false } };
+  check(!buildMinutesPacket(off, draft, today).includes("- 직장 업무"), "workInAi false: a day-job work title stays out");
+  const hidden = buildMinutesPacket(save, { ...draft, aiHidden: true }, today);
+  check(hidden.endsWith("## 회의\n- 내용 비공개 (AI에 보내지 않기)") && !hidden.includes("DRAFT-TRANSCRIPT") && !hidden.includes("지난 결정"), "an aiHidden draft: the guard text, no transcript");
+  const dayJob = buildMinutesPacket(off, { ...draft, projectId: "J" }, today);
+  check(dayJob.endsWith("## 회의\n- 직장 트랙 회의록 — AI 패킷에 실리지 않아요") && !dayJob.includes("DRAFT-TRANSCRIPT"), "a day-job draft with the switch off: the guard text");
+  check(buildMinutesPacket(save, { ...draft, projectId: "J" }, today).includes("DRAFT-TRANSCRIPT"), "a day-job draft with the switch on is sent");
+  const memo = buildMinutesPacket(save, { ...draft, id: undefined, projectId: null, track: "biz", eventId: null }, today);
+  check(memo.includes("프로젝트 없음 (긴급 메모)") && memo.includes("## 지난 회의록\n- 없음") && !memo.includes("메모 결정"), "a memo gets no previous minutes");
+  check(buildMinutesPacket(save, { ...draft, id: undefined }, today).includes("- 2026-09-30 수정 중인 회의\n  결정: 자기 결정"), "a new draft reads the project's newest stored meeting");
+  const trn = buildMinutesPacket(save, { ...draft, kind: "training", attendees: "품질팀" }, today);
+  check(trn.includes("## 교육\n- 2026-09-30 · 교육 · 수정 중인 회의 · 프로젝트 사업 프로젝트\n- 강사·주최: 품질팀\n## 녹취록") && !trn.includes("지난 결정"), "a training draft: the record and the transcript");
+  const rc = minutesReplyCtx(save, { ...draft, followUps: [{ id: "r1", text: "  행 ", mine: true }], taskIds: ["q1"] }, today);
+  check(rc.training === false && rc.followUps[0].text === "행" && rc.taskIds[0] === "q1" && JSON.stringify(rc.tasks) === '[{"id":"q1","title":"열린 할 일 하나"}]'
+    && JSON.stringify(rc.workTitles) === JSON.stringify(["오늘 열린 업무", "오늘 끝난 업무", "직장 업무"]), `reply context ${JSON.stringify(rc)}`);
+  console.log(`minutes packet: ${n} checks`);
+}
+
 // 11) storage routing (2026-10-02) — `liferpg-img-*` keys route to IndexedDB inside the `store` adapter, every other key
 // stays on localStorage; the boot copy puts each localStorage photo into IndexedDB when absent, reads it back, and removes
 // a localStorage copy only when the read-back verified it and removal was asked for. Async, so the exit waits for it.

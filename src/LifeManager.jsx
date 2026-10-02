@@ -4418,6 +4418,227 @@ const shuffleQuiz = (items, rand = Math.random) => items.map((it) => {
   return { ...it, choices: order.map((i) => it.choices[i]), answer: order.indexOf(it.answer) };
 });
 
+/* ── The minutes packet (rule 7 amendment 2026-10-02, the seventh packet) — one meeting draft's own transcript ── */
+// What the minutes packet (`녹취록으로 정리`) carries and how much, and how much of a reply its parser reads. Plain
+// literals, so smoke-logic can lift them.
+const MINUTES_PACKET_MAX = 40000;          // the packet's own cap: the header and a full 30,000-char transcript always fit
+const MINUTES_PACKET_TRANSCRIPT = 30000;   // MEETING_LIMITS.transcript (smoke asserts the two are equal); the packet never carries more
+const MINUTES_PACKET_FOLLOWUPS = 30;       // open follow-ups of the project's last minutes
+const MINUTES_PACKET_DECISIONS = 1000;     // chars of the last minutes' decisions — the whole field (MEETING_LIMITS.decisions)
+const MINUTES_PACKET_DECISIONS_TRIM = 200; // the decisions clip once the packet runs over MINUTES_PACKET_MAX
+const MINUTES_PACKET_CHECKS = 30;          // open checks of the linked event
+const MINUTES_PACKET_WORK = 30;            // titles of today's open work items
+const MINUTES_PACKET_TASKS = 30;           // titles of open tasks (link candidates)
+const MINUTES_FOLLOWUPS_READ = 30;         // reply follow-ups read; the rest are counted as dropped
+const MINUTES_TASKLINKS_READ = 30;         // reply task links read
+const MINUTES_WORK_READ = 30;              // reply work proposals read
+const MINUTES_NOTE_MAX = 200;              // chars of the reply's note
+const MINUTES_PACKET_HEAD = [
+  "역할: 이 사용자의 회의 녹취록을 회의록으로 정리하는 기록 담당자예요. 아래 데이터만 근거로 써요.",
+  "규칙: 1) 녹취록에 있는 사실만 써요. 녹취록에 없는 내용은 만들지 않아요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "2) 사람 이름은 녹취록에 나온 표기 그대로만 써요. 녹취록에서 이름을 알 수 없으면 '참석자'라고 써요.",
+  "3) 잘 들리지 않았거나 확실하지 않은 내용은 그 문장 끝에 (확인 필요)를 붙여요. 숫자·날짜·금액은 녹취록 표기 그대로 옮겨요.",
+  "4) summary는 논의한 내용을 요점으로 10000자 이내, decisions는 정해진 것만 1000자 이내, actions는 해야 할 일을 1000자 이내로 써요. 정해지지 않은 것은 decisions에 넣지 않아요.",
+  "5) followUps는 해야 할 일을 항목당 200자 이내로 30건까지 써요. 녹음한 사용자가 맡은 일이 녹취록에서 분명할 때만 mine을 true로, 아니면 false로 써요. 기한이 녹취록에 날짜로 나오면 due에 YYYY-MM-DD로, 아니면 null로 써요. '지난 회의록'의 미완료 후속과 같은 항목은 다시 쓰지 않아요.",
+  "6) taskLinks에는 '열린 할 일' 목록 중 이 회의와 관련된 항목의 제목만 표기 그대로 적어요. work에는 오늘 처리할 업무만 적되, mine이 true인 followUps와 '오늘 업무'에 이미 있는 항목은 다시 쓰지 않아요. 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
+  "7) 답변 형식: 아래 JSON 블록 1개만 써요. 없는 항목은 빈 문자열이나 빈 배열로 둬요.",
+  "```json",
+  '{"minutes":{"summary":"...","decisions":"...","actions":"...","followUps":[{"text":"...","mine":false,"due":null}],"taskLinks":["<할 일 제목 그대로>"],"work":[{"title":"...","note":"...","track":"직장|사업|개인"}]},"note":"한 줄"}',
+  "```",
+];
+const MINUTES_PACKET_HEAD_TRAINING = [
+  "역할: 이 사용자의 교육 녹취록을 교육 기록으로 정리하는 기록 담당자예요. 아래 데이터만 근거로 써요.",
+  "규칙: 1) 녹취록에 있는 사실만 써요. 녹취록에 없는 내용은 만들지 않아요. 격려·낙관·희망 표현은 쓰지 않아요. 해요체로 써요.",
+  "2) 사람 이름은 녹취록에 나온 표기 그대로만 써요. 녹취록에서 이름을 알 수 없으면 '참석자'라고 써요.",
+  "3) 잘 들리지 않았거나 확실하지 않은 내용은 그 문장 끝에 (확인 필요)를 붙여요. 숫자·날짜·금액은 녹취록 표기 그대로 옮겨요.",
+  "4) summary에는 배운 것을 요점으로 10000자 이내, decisions에는 핵심 정리를 1000자 이내, actions에는 기억할 점을 1000자 이내로 써요.",
+  "5) followUps·taskLinks·work는 빈 배열로 둬요. 점수·등급·지급액·난이도 값은 평가하거나 바꾸지 않아요.",
+  "6) 답변 형식: 아래 JSON 블록 1개만 써요. 없는 항목은 빈 문자열이나 빈 배열로 둬요.",
+  "```json",
+  '{"minutes":{"summary":"...","decisions":"...","actions":"...","followUps":[],"taskLinks":[],"work":[]},"note":"한 줄"}',
+  "```",
+];
+// The lines every minutes packet opens with: the title, the head of the draft's kind, a blank line and the record heading.
+const minutesPacketHead = (today, training) => [
+  training ? `[인생 관리 — 교육 기록 정리 요청 ${today}]` : `[인생 관리 — 회의록 정리 요청 ${today}]`,
+  ...(training ? MINUTES_PACKET_HEAD_TRAINING : MINUTES_PACKET_HEAD), "",
+  `## ${training ? "교육" : "회의"}`,
+];
+/* The minutes packet's text from gathered parts — pure, so smoke-logic can run it. `parts` = { today, training,
+   meetingLines, last, checks, work, tasks, transcript }: `last` is null or { head, hidden, decisions, followUps:
+   [{ mine, due, text }] } (open ones, mine first); `checks` is null or { eventLine, open: [text] }; `work` and `tasks`
+   are title arrays. A training draft states the record and the transcript only. The transcript goes last and verbatim
+   — line breaks kept, never folded — after the instructions and the vocabulary the reply should reuse. It is carried
+   up to MINUTES_PACKET_TRANSCRIPT chars; a longer one (a direct caller only — the form caps it) is cut there with the
+   guard line. When the text exceeds MINUTES_PACKET_MAX the reductions run one step at a time, rebuilding after each:
+   work 30 → 0, tasks 30 → 0, checks 30 → 0, the last minutes' follow-ups 30 → 5, its decisions clip 1,000 → 200, the
+   last minutes → none, and last, as a guard the form cannot reach, the transcript's tail. The title, the head, the
+   record section and the transcript heading are never dropped; a dropped section keeps its heading with `- 없음`. */
+const minutesPacketText = (parts) => {
+  const { today, training, meetingLines, last, checks } = parts;
+  const work = parts.work || [], tasks = parts.tasks || [];
+  const transcript = String(parts.transcript || "");
+  // The knobs the reductions turn; `build` reads them fresh each time.
+  const k = { work: MINUTES_PACKET_WORK, tasks: MINUTES_PACKET_TASKS, checks: MINUTES_PACKET_CHECKS, followUps: MINUTES_PACKET_FOLLOWUPS,
+    decisions: MINUTES_PACKET_DECISIONS, last: 1, transcript: Math.min(transcript.length, MINUTES_PACKET_TRANSCRIPT) };
+  const lastLines = () => {
+    if (!last || !k.last) return [];
+    if (last.hidden) return [`- ${last.head}`, "  내용 비공개 (AI에 보내지 않기)"];
+    const fus = last.followUps || [];
+    return [`- ${last.head}`, `  결정: ${oneLineText(last.decisions, k.decisions) || "없음"}`,
+      ...(fus.length ? [`  후속 미완료 ${fus.length}건:`, ...fus.slice(0, k.followUps)
+        .map((f) => `  - ${f.mine ? "내 담당" : "타인"} · ${f.due ? `기한 ${f.due}` : "기한 없음"} · ${oneLineText(f.text, MEETING_LIMITS.followUp)}`)] : [])];
+  };
+  const checkLines = () => {
+    const open = (checks?.open || []).slice(0, k.checks);
+    return open.length ? [`- ${checks.eventLine}`, ...open.map((t) => `- ${t}`)] : [];
+  };
+  const build = () => [
+    ...minutesPacketHead(today, training), ...meetingLines,
+    ...(training ? [] : [
+      ...packetSection("지난 회의록", lastLines()),
+      ...packetSection("연결된 일정의 확인할 것", checkLines()),
+      ...packetSection("오늘 업무 (이미 있음)", work.slice(0, k.work).map((t) => `- ${t}`)),
+      ...packetSection("열린 할 일 (연결 후보)", tasks.slice(0, k.tasks).map((t) => `- ${t}`)),
+    ]),
+    `## 녹취록 (${transcript.length}자)`,
+    ...(k.transcript ? [transcript.slice(0, k.transcript)] : []),
+    ...(k.transcript < transcript.length ? [`(녹취록 ${transcript.length}자 중 앞 ${k.transcript}자만 실었어요)`] : []),
+  ].join("\n");
+  // Each answers true when it tightened something and false once it has nothing left to give. The last one cuts the
+  // transcript by the overflow plus room for the guard line, so it fits in one or two rebuilds.
+  const reductions = [
+    () => k.work > 0 && (k.work = 0, true),
+    () => k.tasks > 0 && (k.tasks = 0, true),
+    () => k.checks > 0 && (k.checks = 0, true),
+    () => k.followUps > 5 && (k.followUps = 5, true),
+    () => k.decisions > MINUTES_PACKET_DECISIONS_TRIM && (k.decisions = MINUTES_PACKET_DECISIONS_TRIM, true),
+    () => k.last > 0 && (k.last = 0, true),
+    () => k.transcript > 0 && (k.transcript = Math.max(0, k.transcript - (out.length - MINUTES_PACKET_MAX) - 50), true),
+  ];
+  let out = build();
+  for (const reduce of reductions) while (out.length > MINUTES_PACKET_MAX && reduce()) out = build();
+  return out;
+};
+/* The minutes packet (`녹취록으로 정리`, rule 7 amendment 2026-10-02) for the one meeting draft open in `MeetingModal`.
+   This is the one packet that reads `transcript`, and it reads only the draft's own — never another meeting's. `draft` =
+   the form's current state { id?, projectId, date, title, attendees, kind, eventId, transcript, aiHidden, track,
+   followUps, taskIds } (`id` only when editing), so a just-pasted, unsaved transcript can be sent. Guards first, as
+   defence in depth (the form disables its button for the same cases), and neither guard text carries the transcript: a
+   draft flagged `aiHidden`, and a draft whose track is outside `packetTracks`. Context, meeting kind only: the project's
+   last minutes by `lastMeetingOf`, excluding the draft's own id (a memo gets none — the last memo is unrelated; a
+   hidden one lends its date and title only), the open checks of the linked event when `packetEventLinkOk` holds (never
+   its place or note), and the titles of today's open work on the packet tracks and of the open link candidates. Never
+   read: `profile` (no `## 이력`), documents, deals, the journal, the role model. Derived on demand, never stored (rule 9). */
+const buildMinutesPacket = (state, draft, today) => {
+  const training = isTraining(draft);
+  const tracks = packetTracks(state);
+  const blocked = (line) => [...minutesPacketHead(today, training), line].join("\n");
+  if (draft.aiHidden) return blocked("- 내용 비공개 (AI에 보내지 않기)");
+  if (!tracks.includes(meetingTrack(state, draft))) return blocked("- 직장 트랙 회의록 — AI 패킷에 실리지 않아요");
+  const project = draft.projectId == null ? null : (state.meetingProjects || []).find((p) => p.id === draft.projectId);
+  const title = String(draft.title || "").trim();
+  const attendees = String(draft.attendees || "").trim();
+  const meetingLines = [
+    `- ${draft.date} · ${MEETING_KIND[training ? "training" : "meeting"]} · ${title || "제목 미입력"} · 프로젝트 ${project?.name || "없음 (긴급 메모)"}`,
+    ...(attendees ? [`- ${training ? MEETING_FIELD_LABEL.training.attendees : "참석"}: ${oneLineText(attendees, MEETING_LIMITS.attendees)}`] : []),
+  ];
+  const transcript = String(draft.transcript || "").trim();
+  if (training) return minutesPacketText({ today, training, meetingLines, last: null, checks: null, work: [], tasks: [], transcript });
+  const prev = draft.projectId == null ? null : lastMeetingOf((state.meetings || []).filter((m) => m.id !== draft.id), draft.projectId);
+  const open = followUpsOf(prev).filter((f) => !f.done);
+  const last = !prev ? null : prev.aiHidden ? { head: `${prev.date} ${kindPrefix(prev)}${prev.title}`, hidden: true }
+    : { head: `${prev.date} ${kindPrefix(prev)}${prev.title}`, hidden: false, decisions: prev.decisions,
+      followUps: [...open.filter((f) => f.mine), ...open.filter((f) => !f.mine)].map((f) => ({ mine: f.mine === true, due: f.due || null, text: f.text })) };
+  const ev = draft.eventId ? (state.events || []).find((e) => e.id === draft.eventId) : null;
+  const checks = ev && packetEventLinkOk(state, ev.id) ? { eventLine: `${ev.date} ${ev.time || "시간 미정"} · ${ev.title}`,
+    open: (ev.checks || []).filter((c) => !c.done).map((c) => oneLineText(c.text, EVENT_CHECK_TEXT)) } : null;
+  const work = workOn(state, today, today).filter((w) => !w.done && tracks.includes(trackOf(w))).map((w) => w.title);
+  const tasks = meetingTaskCandidates(state, today).filter((c) => !c.done).map((c) => c.q.title);
+  return minutesPacketText({ today, training, meetingLines, last, checks, work, tasks, transcript });
+};
+// What `parseMinutesReply` checks a reply against, built from the same draft: its kind, its follow-up rows (texts
+// trimmed) and linked task ids, every link candidate (open first, then done — the picker's order) and today's work titles.
+const minutesReplyCtx = (state, draft, today) => ({
+  training: isTraining(draft),
+  followUps: (draft.followUps || []).map((f) => ({ ...f, text: String(f.text || "").trim() })),
+  taskIds: draft.taskIds || [],
+  tasks: meetingTaskCandidates(state, today).map((c) => ({ id: c.q.id, title: c.q.title })),
+  workTitles: workOn(state, today, today).map((w) => w.title),
+});
+/* Reads the JSON block a minutes reply carries — `data.minutes` and `data.note` only; a top-level `tasks`, `work`,
+   `checks`, `quiz`, `verdict` or any other key is ignored (rule 7 amendment 2026-10-02). Everything comes back as a
+   proposal for the confirm view: `fields` (summary, decisions, actions — a string or an array of strings joined by line
+   breaks, trimmed and clipped at the form's caps, with the length before the clip), `followUps` (the first
+   MINUTES_FOLLOWUPS_READ; `dropped` counts the rest), `taskLinks` (exact title matches against `ctx.tasks` only) and
+   `work` (a link key is ignored — the app sets the link). A training draft takes the three fields only. A rejected row
+   carries its reason. Pure: nothing here writes state, and the raw reply is never stored. */
+const parseMinutesReply = (text, ctx) => {
+  const raw = String(text || "");
+  const data = replyJson(raw);
+  const note = typeof data?.note === "string" ? data.note.trim().slice(0, MINUTES_NOTE_MAX) : "";
+  const m = data?.minutes;
+  const field = (v, cap) => {
+    const s = (typeof v === "string" ? v : Array.isArray(v) && v.every((x) => typeof x === "string") ? v.join("\n") : "").trim();
+    return { text: s.slice(0, cap), len: s.length, clipped: s.length > cap };
+  };
+  if (!m || typeof m !== "object" || Array.isArray(m)) {
+    const none = field("", 0);
+    return { raw, note, refused: "회의록 정리 답변이 아니에요 — 답변을 다시 받아요", fields: { summary: none, decisions: none, actions: none },
+      dropped: 0, followUps: [], taskLinks: [], work: [] };
+  }
+  const fields = { summary: field(m.summary, MEETING_LIMITS.summary), decisions: field(m.decisions, MEETING_LIMITS.decisions), actions: field(m.actions, MEETING_LIMITS.actions) };
+  const list = (v) => (ctx.training || !Array.isArray(v) ? [] : v);
+  // A real calendar day in YYYY-MM-DD, else null: `2026-02-30` rolls over and so is refused.
+  const day = (v) => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+    const t = Date.parse(`${v}T00:00:00Z`);
+    return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v ? v : null;
+  };
+  const draftFus = ctx.followUps || [];
+  const fuSeen = new Set(draftFus.map((f) => normWorkTitle(f.text)));
+  let fuRoom = MEETING_FOLLOWUPS_MAX - draftFus.length;
+  const fuIn = list(m.followUps);
+  const followUps = fuIn.slice(0, MINUTES_FOLLOWUPS_READ).map((e, n) => {
+    const full = typeof e?.text === "string" ? e.text.trim() : "";
+    const text = full.slice(0, MEETING_LIMITS.followUp);
+    let reject = null;
+    if (!text) reject = "내용이 없어요";
+    else if (fuSeen.has(normWorkTitle(text))) reject = "이미 후속 항목에 있어요";
+    else if (fuRoom <= 0) reject = `후속 항목은 ${MEETING_FOLLOWUPS_MAX}건까지예요`;
+    else { fuSeen.add(normWorkTitle(text)); fuRoom -= 1; }
+    return { key: `f${n}`, text, clipped: full.length > MEETING_LIMITS.followUp, mine: e?.mine === true, due: day(e?.due), reject };
+  });
+  const taskIds = ctx.taskIds || [];
+  const linked = new Set(taskIds);
+  let taskRoom = MEETING_LIMITS.tasks - taskIds.length;
+  const taskLinks = list(m.taskLinks).filter((t) => typeof t === "string").slice(0, MINUTES_TASKLINKS_READ).map((t, n) => {
+    const title = t.trim();
+    const hit = title ? (ctx.tasks || []).find((c) => String(c.title || "").trim() === title) : null;
+    let reject = null;
+    if (!hit) reject = "같은 제목의 할 일이 없어요";
+    else if (linked.has(hit.id)) reject = "이미 연결돼 있어요";
+    else if (taskRoom <= 0) reject = `할 일은 ${MEETING_LIMITS.tasks}개까지 연결돼요`;
+    else { linked.add(hit.id); taskRoom -= 1; }
+    return { key: `t${n}`, title, taskId: hit?.id || null, reject };
+  });
+  // A mine follow-up becomes a work item titled with its first WORK_LIMITS.title chars when the form is saved, so a work
+  // proposal equal to that title would register the same item twice.
+  const mineTitle = (f) => normWorkTitle(String(f.text || "").slice(0, WORK_LIMITS.title));
+  const mine = new Set([...draftFus.filter((f) => f.mine), ...followUps.filter((f) => !f.reject && f.mine)].map(mineTitle));
+  const workSeen = new Set((ctx.workTitles || []).map(normWorkTitle));
+  const work = list(m.work).slice(0, MINUTES_WORK_READ).map((e, n) => {
+    const title = String(e?.title || "").trim().slice(0, WORK_LIMITS.title);
+    let reject = null;
+    if (!title) reject = "제목이 없어요";
+    else if (workSeen.has(normWorkTitle(title))) reject = "오늘 업무에 이미 있어요";
+    else if (mine.has(normWorkTitle(title))) reject = "후속 항목(내 담당)과 같아요";
+    else workSeen.add(normWorkTitle(title));
+    return { key: `w${n}`, title, note: String(e?.note || "").trim().slice(0, WORK_LIMITS.note), track: replyTrackOf(e?.track), reject };
+  });
+  return { raw, note, refused: null, fields, dropped: Math.max(0, fuIn.length - MINUTES_FOLLOWUPS_READ), followUps, taskLinks, work };
+};
+
 /* ── Weekly review facts and the `주간 회고` packet (v28, the fourth packet) ── */
 /* The weekly review's per-track facts, derived at render (rule 9). TD-71: no completion stamp exists for a follow-up or
    a work item, so the week is read from due dates and item dates — follow-ups due in the week (done vs total), work items
