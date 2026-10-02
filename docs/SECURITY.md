@@ -96,13 +96,15 @@ its project; a project-less memo carries its own field); the safe default is `"w
 `packetTracks(state)` (`workInAiOf(state) ? TRACKS : PACKET_TRACKS_NO_WORK`) is the single source every packet
 reads: `TRACKS = ["work", "biz", "personal"]` while the switch is on, `PACKET_TRACKS_NO_WORK = ["biz",
 "personal"]` while it is off. **With the switch on (the default), a `직장`-track record goes into every one of
-the five AI packets that would otherwise carry it** — the daily check-in, `오늘 업무 만들기`, `AI에게 회의 준비 묻기`,
-and (through the count-only fields it touches) `AI에게 판정 묻기`; `주간 회고` stays business-track only regardless
+the six AI packets that would otherwise carry it** — the daily check-in, `오늘 업무 만들기`, `AI에게 회의 준비 묻기`,
+`녹취록으로 정리` (2026-10-02), and (through the count-only fields it touches) `AI에게 판정 묻기`; `주간 회고` stays business-track only regardless
 of the switch, by scope, not by the filter (below). **With the switch off, a `직장`-track record never leaves the
-device through any of the five AI packets**, exactly as it did before this switch existed: the meeting-prep card
+device through any of the six AI packets**, exactly as it did before this switch existed: the meeting-prep card
 states everything about a day-job event on-device (project name, last meeting, follow-ups, progress) but replaces
 its `AI에게 회의 준비 묻기` button with the line `직장 트랙 — AI 패킷에 실리지 않아요`, and every form's track-row caption
-(`직장 트랙은 AI 패킷에 실리지 않아요.`) reappears. There is **no per-record override**: the switch is the only control,
+(`직장 트랙은 AI 패킷에 실리지 않아요.`) reappears; a `직장`-track meeting draft's `녹취록으로 정리` button is disabled the
+same way, with the caption `직장 트랙 회의록 — AI 패킷에 실리지 않아요`, and the whole packet — transcript included —
+is never built. There is **no per-record override**: the switch is the only control,
 global, not per meeting or per event — the app still gives the user no "send this one only" toggle
 ([TD-73](exec-plans/tech-debt-tracker.md), backlog if the user asks). The per-meeting `AI에 보내지 않기` flag
 (`aiHidden`), the transcript exclusion and the profile-identifier exclusions apply unconditionally, in both
@@ -126,7 +128,7 @@ crosses is the opaque subscription (copied by hand into a secret) and the fixed 
 The calendar export ("The calendar file", below) is the one other place item titles leave the app, through a
 file the user hands to their own calendar app.
 
-The assistant bridge carries **six** packets, all text, all copy/paste only, all making no network call ([Rule 7](design-docs/core-beliefs.md#rule-7)):
+The assistant bridge carries **seven** packets, all text, all copy/paste only, all making no network call ([Rule 7](design-docs/core-beliefs.md#rule-7)):
 
 - **The daily check-in** (`AI에게 보내기`, `buildAssistantPacket`): goals, open tasks, the last seven journal entries, the last weekly review, the streak and the role-model's stage line (`단계 k/n · 조건 c/m`, or `단계 없음`/미설정 — no percentage since the [Rule 14](design-docs/core-beliefs.md#rule-14) amendment of 2026-09-18), and, since schema v21, one `## 이력` line stating degree, department/field, total months of practice and the most recent role — into a textarea and the clipboard; never photos. It never carries a meeting or a work item: `buildAssistantPacket` does not read `meetingProjects`, `meetings` or `work` ([product-specs/meetings.md](product-specs/meetings.md)). The reply the user pastes back is stored as text in `journal[].ai` and rendered as text; it can only propose tasks, never change a score.
 - **`오늘 업무 만들기`** (`buildWorkPacket`, schema v25, 2026-09-17): the same goals/tasks/schedule/business facts, plus what the daily packet never carries — the newest meeting minutes (summary, decisions) and their progress entries, and every undone work item carried into today plus yesterday's and today's own items, so the assistant does not repeat a proposal. Since schema v26 (2026-09-17), each visible meeting's follow-up items are also stated in full — owner flag, due date, done state and text, one line per item (open ones first). This is the user's own decision, reversing the 2026-09-16 default that the packet never reads a meeting: **every meeting is included by default**, except one flagged `aiHidden` (a per-meeting checkbox in `MeetingModal`, `AI에 보내지 않기`), whose line states only its date and title — no summary, decisions, follow-ups, progress, or project name (unchanged by v26). A project-less urgent memo (2026-09-17) is included the same way, printing `[프로젝트 없음]` in place of a project name. The reply's `work` array is read by `parseWorkReply`; each proposal becomes a work item, `source: "ai"`, only once the user ticks it in the confirm view. The raw reply is never stored (unlike the daily packet's `journal[].ai`). Since 2026-09-22, once `act.workRefreshedAt` exists the send pane offers a `지난 갱신 이후` chip that carries **less**, not more, than the default: only meetings, progress and documents dated on or after the stamp, plus older meetings' qualifying progress/follow-up lines — the same exclusions (no `transcript`, no profile identifier, `aiHidden` honoured) apply in both modes; `전체` restores the byte-identical full packet. A training record (2026-09-22) states the same fields as a meeting under different labels and is subject to the identical exclusions.
@@ -175,8 +177,24 @@ The assistant bridge carries **six** packets, all text, all copy/paste only, all
   compares the user's own picks against the parsed `answer` index and stores only the resulting score
   (`act.gate[date].quiz = { total, score, passed, attempts, at }`), never the questions, the choices or the raw
   reply. See [design-docs/assistant-bridge.md](design-docs/assistant-bridge.md#the-sixth-packet--오늘의-관문-퀴즈).
+- **`녹취록으로 정리`** (`buildMinutesPacket`, 2026-10-02): built for the one meeting draft open in `MeetingModal` —
+  **the one packet that reads a `transcript`**, and only that draft's own, reversing (for this packet only) the
+  2026-09-17 decision that no packet carries a transcript. It carries the draft's whole transcript (at most
+  30,000 characters, never clipped from the form), its date, kind, title, project name and attendees, the
+  project's last minutes (decisions and open follow-ups, a hidden last meeting contributing date and title only),
+  the linked event's open checks, and the titles of today's open work items and of open tasks. **Never**
+  `profile.name`, `birth`, `email`, `phone`, a school or an employer (no `## 이력` line), an event's `place`/`note`,
+  a document, or any other meeting's transcript. A draft flagged `aiHidden`, or on a track outside
+  `packetTracks(state)`, cannot be sent at all — the button is disabled and no packet, transcript included, is
+  built. The reply's `minutes`/`note` keys are read by `parseMinutesReply` — `tasks`, a top-level `work`,
+  `checks`, `quiz`, `verdict` or any other key is ignored — and the six earlier parsers are unchanged. A proposal
+  fills the form only once the user ticks it per field/item; it reaches `state.meetings` only on `저장`/`등록`.
+  Ticked work proposals register immediately, at `적용`, through `importWork(…, { keepModal: true })`, so a
+  registered work item can outlive an abandoned form. The raw reply is never stored. See
+  [design-docs/assistant-bridge.md](design-docs/assistant-bridge.md#the-seventh-packet--녹취록으로-정리) and
+  [design-docs/core-beliefs.md](design-docs/core-beliefs.md#rule-7) (amendment 2026-10-02).
 
-**The work packet never carries `transcript`; neither does the daily packet, the calendar file or the prep card** (2026-09-17) — a meeting's optional pasted transcript (up to 30,000 characters, [product-specs/meetings.md](product-specs/meetings.md)) is read only by `MeetingModal`, `MeetingViewModal`, `clearTranscript` and `recordFits` (which measures the whole record's string length, transcript included, against the storage budget, never inspecting its content); `buildWorkPacket`, `buildAssistantPacket`, `calendarExportOf`/`buildIcs` and `meetingPrepOf` never read the key. `tools/e2e/flow11.js`'s sentinel step (`the work packet states a memo under the no-project head and carries none of its transcript`) plants a marker string inside a transcript and asserts it is absent from the built packet text.
+**The work packet never carries `transcript`; neither does the daily packet, the calendar file or the prep card** (2026-09-17) — a meeting's optional pasted transcript (up to 30,000 characters, [product-specs/meetings.md](product-specs/meetings.md)) is read only by `MeetingModal`, `MeetingViewModal`, `clearTranscript` and `recordFits` (which measures the whole record's string length, transcript included, against the storage budget, never inspecting its content); `buildWorkPacket`, `buildAssistantPacket`, `calendarExportOf`/`buildIcs` and `meetingPrepOf` never read the key. `tools/e2e/flow11.js`'s sentinel step (`the work packet states a memo under the no-project head and carries none of its transcript`) plants a marker string inside a transcript and asserts it is absent from the built packet text. **Since 2026-10-02 this is no longer true of the whole app — one packet is the documented exception**: `buildMinutesPacket` (above) reads the one meeting draft's own `transcript`, and only that one; every other reader of the key — `MeetingModal`, `MeetingViewModal`, `clearTranscript`, `recordFits` — is unchanged, and `buildWorkPacket`, `buildAssistantPacket`, `calendarExportOf`/`buildIcs` and `meetingPrepOf` still never read it.
 
 Both packets share the same CV line (`cvSummaryOf`, built from `topEdu` / `latestCareer`) and it is deliberately the only place the CV is summarised for an outside reader: neither packet ever carries `profile.name`, the birth date, the e-mail, the phone number, the school name or the employer name — a school or an employer identifies a person nearly as well as a name does. Neither carries a photo, evidence text, or a journal entry (the journal line is the daily packet's own domain). Copying either packet is a user action, and pasting it into a third-party chat puts that text outside this threat model. `tools/e2e/flow11.js` asserts the work packet excludes every one of those identifying fields, and excludes a hidden meeting's summary and project name, the same way `flow8.js` proves it for the daily packet.
 

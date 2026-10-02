@@ -13,6 +13,16 @@ Items become exec plans in `active/` when picked up (planner writes the plan fir
 8. **Job-fit v3 (evidence for the new categories)** — the 150 V1.3 cross cells (5 new categories × 16 legacy jobs, 5 new jobs × 14 categories) are all C for lack of posting evidence. Adjacent jobs (e.g. `전기·기계` × `금속재료·비파괴`, `화학·소재` × `산업안전`) may deserve B/A: sample ≥ 100 postings per job (occupation-code filter) and re-judge by mention rate. The 47 individual exceptions carry their evidence strength in code comments.
 9. **Qualification rename tracker** — pending effective dates: `임업종묘기사` → `산림종묘기사` (2027-01-01); `기상기사` → `기상기후기사`, `어로산업기사` → `어업산업기사`, `건축구조기사`, `피부미용장`, `로봇시스템통합기사/기능사` (2028-01-01). Check the Q-Net change notice yearly.
 10. **Job-fit v2** — target employer type toggle (public / private / startup) recomputing exceptions (`컴퓨터활용능력`, `정보처리기사`, `한국사` public-sector bonus axis); per-job language pass lines (`해외영업` TOEIC 800+ / OPIc IH+); six-monthly re-verification of mention rates (S ≥ 30 % / A ≥ 15 % / B ≥ 5 %).
+11. **Share Target for the Samsung recorder's transcript (2026-10-02)** — let `텍스트로 공유` on the recorder's own
+    `.txt`/text output hand the transcript straight into `녹취록으로 정리`, skipping the manual copy/paste into the
+    transcript field first. Sketched in full in the transcript-to-minutes plan
+    ([exec-plans/completed/2026-10-02-transcript-to-minutes.md](completed/2026-10-02-transcript-to-minutes.md#share-target-later--not-in-scope)):
+    a `share_target` manifest entry (`POST`, `multipart/form-data` — a 30,000-char transcript does not fit a GET
+    URL), a service-worker `fetch` handler that caches the shared text under a new, non-`liferpg-*` cache name and
+    redirects to `./?open=share`, and a boot read that opens a prefilled `MeetingModal` with no project chosen.
+    **Device test first, before any plan is written**: whether the recorder shares as `EXTRA_TEXT` or a `.txt`
+    attachment, the size limit of each path, and whether the installed PWA even appears in the share sheet (Chrome
+    WebAPK vs. Samsung Internet) — the plan starts from that result, not before it.
 
 ## Smaller items (from the issue audit, see [tech-debt-tracker.md](tech-debt-tracker.md))
 - Role model: allow clearing it (no way back to `null`); button label when all areas are excluded.

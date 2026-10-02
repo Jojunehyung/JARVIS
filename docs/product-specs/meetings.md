@@ -10,7 +10,11 @@ under their own group `프로젝트 없음 · 긴급 메모` — and an optional
 exactly as pasted, up to 30,000 characters. This supersedes the "full transcripts are not stored" sentence below
 from 2026-09-16: the app still transcribes nothing itself (no recording, no speech-to-text, no API); the user
 pastes text they transcribed themselves, and the app stores it verbatim and never processes it — no summary, no
-split, no judgement ([Rule 7](../design-docs/core-beliefs.md#rule-7)).
+split, no judgement ([Rule 7](../design-docs/core-beliefs.md#rule-7)). Since 2026-10-02, the one exception is the
+user's own action: pressing `녹취록으로 정리 ›` builds a copy/paste packet carrying that transcript for an external
+chat, and the pasted reply only *proposes* text back — see
+["Transcript to minutes"](#transcript-to-minutes-2026-10-02) below. The app itself still transcribes,
+summarises and judges nothing.
 
 Since 2026-09-17 (schema v27), the tab also lists **documents** — top-level records of what a file says,
 attached to a project or to none — and, on a project-linked schedule event, a **pre-meeting checklist** and a
@@ -73,7 +77,9 @@ exactly as pasted, no normalisation, no clipping beyond the cap. It is written i
 behind a `녹취록 붙여넣기` button while empty), read collapsed in `MeetingViewModal` (`녹취록 {n}자 · 펼치기`) and
 cleared on its own (`녹취록 지우기`, below) — never merged with `summary`, never summarised, split or judged by
 the app. Only the form, the view, `clearTranscript`, `recordFits` (through `JSON.stringify` of the whole record)
-and `demoState` read it; no packet, the calendar file or the prep card do ([Rule 7](../design-docs/core-beliefs.md#rule-7), [SECURITY.md](../SECURITY.md)).
+and `demoState` read it; no packet, the calendar file or the prep card do — **except, since 2026-10-02, the one
+meeting draft open in `MeetingModal`, whose own transcript `buildMinutesPacket` reads when the user presses
+`녹취록으로 정리 ›`** ([Rule 7](../design-docs/core-beliefs.md#rule-7) amendment 2026-10-02, [SECURITY.md](../SECURITY.md)); every other packet, the calendar file and the prep card still never read it.
 
 A meeting is a record, never a task ([Rule 1](../design-docs/core-beliefs.md#rule-1),
 [Rule 18](../design-docs/core-beliefs.md#rule-18)): no payout, no trophy, no goal, no streak, no evidence gate.
@@ -394,7 +400,9 @@ is `whitespace-nowrap`).
   still `회의 요약`), which on tap opens `<MeetingText placeholder="녹취록 (선택) — 급히 녹음한 내용을 옮겨 적은
   글을 그대로 붙여넣어요" rows={6} cap={MEETING_LIMITS.transcript} />`; a saved transcript opens it at once on
   edit. Only the ends are trimmed on save — the interior (line breaks, spacing, punctuation) is byte-identical to
-  the paste; an all-whitespace transcript is not written. Then textareas (with `{n} / {cap}` counters, rose over cap, no
+  the paste; an all-whitespace transcript is not written. While the transcript holds text, a border button
+  `녹취록으로 정리 ›` appears directly under it — see
+  ["Transcript to minutes"](#transcript-to-minutes-2026-10-02) below. Then textareas (with `{n} / {cap}` counters, rose over cap, no
   `maxLength` — a paste is never silently truncated, the submit refuses instead) `회의 요약 — 논의한 내용을 요점
   으로 적어요` (`rows=8`), `결정 사항 (선택)`, `후속 조치 (선택)` (`rows=3` each); `일정 연결 (선택)` chips from
   `eventsOn(state, date)`: `연결 안 함` plus `{time || "시간 미정"} {title}` per occurrence that day, or the line
@@ -412,8 +420,10 @@ is `whitespace-nowrap`).
   from the initial selection, so it never counts toward the cap; saving writes `taskIds` (always an array,
   possibly empty) with ids of live tasks only. Below the `일정 연결` chips, a checkbox `AI에 보내지 않기` (state
   `aiHidden`, schema v25, initialised from the record) with the caption `켜면 오늘 업무 만들기 패킷에 이
-  회의록의 날짜와 제목만 실려요.` ([daily-work.md](daily-work.md)); the saved record always carries `aiHidden`
-  as a boolean and keeps the live `progress` array untouched — the form never edits entries.
+  회의록의 날짜와 제목만 실리고, 녹취록 정리도 요청할 수 없어요.` (2026-10-02; was `켜면 오늘 업무 만들기 패킷에 이
+  회의록의 날짜와 제목만 실려요.` before the minutes bridge, below) ([daily-work.md](daily-work.md)); the saved
+  record always carries `aiHidden` as a boolean and keeps the live `progress` array untouched — the form never
+  edits entries.
 
   **Follow-up items** (schema v26), below the `후속 조치 (선택)` textarea, which stays for free text — the two
   never merge and `actions` is never rewritten by this block ([Rule 12](../design-docs/core-beliefs.md#rule-12)).
@@ -435,8 +445,10 @@ is `whitespace-nowrap`).
   are never written, and a second tap on an unsaved form appends nothing new (every text already exists),
   stating `이미 있는 {n}건은 건너뛰었어요.`
 
-  Note, since 2026-09-17, `녹취록은 붙여넣은 그대로 저장돼요 — AI 패킷에는 실리지 않아요.` (replaces the
-  2026-09-16 `전체 녹취가 아니라 요약만 저장해요.`, now false — a transcript is stored, verbatim, above). Submit
+  Note, since 2026-10-02, `녹취록은 붙여넣은 그대로 저장돼요 — '녹취록으로 정리'를 누를 때만 AI 요청문에 실려요.`
+  (was `녹취록은 붙여넣은 그대로 저장돼요 — AI 패킷에는 실리지 않아요.` from 2026-09-17 to 2026-10-02, now true
+  only of every *other* packet — the minutes bridge, below, is the one exception; before that, from 2026-09-16,
+  `전체 녹취가 아니라 요약만 저장해요.`, now false — a transcript is stored, verbatim, above). Submit
   refuses, in order, with `프로젝트를 골라 주세요.`,
   `날짜를 선택해 주세요.`, `회의 이름을 입력해 주세요.`, `회의 요약을 입력해 주세요.`, then the
   `{field}은/는 {cap}자까지예요 — 지금 {n}자예요.` cap messages in field order — title, attendees, summary,
@@ -509,6 +521,45 @@ is `whitespace-nowrap`).
 - **Reverse side**: `TaskDetailModal` shows `관련 회의록` — the meetings whose `taskIds` include the task, newest
   first, each a `TodoRow` led by the full `date` and titled with the meeting title, opening `MeetingViewModal`. The
   section is hidden when no meeting links the task ([tasks.md](tasks.md)).
+
+## Transcript to minutes (2026-10-02)
+
+The seventh assistant-bridge packet ([Rule 7](../design-docs/core-beliefs.md#rule-7) amendment 2026-10-02,
+[assistant-bridge.md](../design-docs/assistant-bridge.md#the-seventh-packet--녹취록으로-정리),
+[SECURITY.md](../SECURITY.md)) turns a pasted transcript into drafted minutes through a copy/paste send/paste/confirm
+sheet, `MinutesBridgeModal`. It is the one place in the app that builds an AI packet from a meeting's `transcript`.
+
+- **The button.** While the transcript textarea holds text, `MeetingModal` shows a border button `녹취록으로
+  정리 ›` directly under it. It is disabled, with one caption line under it (first match wins): `aiHidden` →
+  `AI에 보내지 않기가 켜져 있어 녹취록 정리를 요청할 수 없어요.`; the draft's track outside `packetTracks(state)` →
+  `직장 트랙 회의록 — AI 패킷에 실리지 않아요`; the transcript over `MEETING_LIMITS.transcript` (30,000, unreachable
+  from the textarea's own cap) → `녹취록은 30000자까지예요 — 지금 {n}자예요.` `MeetingViewModal` gained no button of
+  its own — it reaches the bridge through its existing `수정`.
+- **The bridge.** Pressing the button does not open a new `modal.type`: `MeetingModal` keeps a snapshot of the
+  form's current state (`bridgeDraft` — a non-null value means the bridge shows) and renders either its own form
+  `<Modal>` or `MinutesBridgeModal`, never both, so every typed field, including the pasted transcript, survives
+  while the bridge is open. The bridge's own X and backdrop close back to the form, not the meeting list. Send
+  step: the packet (whole transcript, meeting line, the project's last minutes, the linked event's open checks,
+  today's open work and task titles — see assistant-bridge.md for the full shape and the measured lengths) in a
+  read-only textarea with copy and `붙여넣었어요 ›`; paste step: a textarea for the reply; confirm step: `기존`/
+  `제안` side-by-side cards per field (`요약`/`결정 사항`/`후속 조치`, training: `배운 것`/`핵심 정리`/`기억할
+  점`) with a per-field `적용` tick defaulting on only for an empty field with a non-empty proposal, tickable
+  follow-up rows (with a `내 담당` chip and a due-date line), tickable task-link rows (exact title match only)
+  and tickable work rows (with a track-chip row), or, for a training draft, the three fields only.
+- **Apply, then save.** `선택한 항목 적용` first registers every ticked work row through `importWork(…, {
+  keepModal: true })` — a refusal stops everything else and shows above the button — then fills the ticked form
+  fields, appends follow-up rows and task links, and closes back to the form; **nothing reaches `state.meetings`
+  until the user then presses `저장`/`등록`**, which runs the unchanged `commitMeeting` → `recordFits` path. A
+  registered work item, by contrast, is already in `state.work` the moment `적용` runs (`source: "ai"`,
+  `done: false`, the track picked per row) — it stays even if the meeting form is closed afterwards without
+  saving. The form shows the line `정리 제안 적용 — {applied field labels} · 후속 {n}건 · 할 일 {k}건 · 업무
+  {w}건 등록. 저장해야 회의록에 기록돼요.` under the transcript block (a 0-count fragment is omitted; the work
+  fragment only when `w > 0`).
+- **Training.** A training draft's packet and reply cover `배운 것`/`핵심 정리`/`기억할 점` only — no follow-up,
+  task-link or work section is shown or applied, whatever the reply carries.
+- **The two caption edits (2026-10-02).** The transcript block's note became `녹취록은 붙여넣은 그대로 저장돼요 —
+  '녹취록으로 정리'를 누를 때만 AI 요청문에 실려요.`; the `AI에 보내지 않기` caption gained the clause `, 녹취록
+  정리도 요청할 수 없어요` — both shown in full above.
 
 ## Follow-up items — reconcile, root handlers and mirroring (schema v26)
 
@@ -710,7 +761,9 @@ project ([TD-60](../exec-plans/tech-debt-tracker.md), accepted).
   `recordFits` (through `JSON.stringify` of the whole record) and `demoState`: `buildWorkPacket`,
   `buildAssistantPacket`, `calendarExportOf`, `buildIcs` and `meetingPrepOf` never read it — the app never
   summarises, splits or judges a transcript ([Rule 7](../design-docs/core-beliefs.md#rule-7)); see
-  [SECURITY.md](../SECURITY.md).
+  [SECURITY.md](../SECURITY.md). **Since 2026-10-02, the one exception is the user's own action**:
+  `buildMinutesPacket` reads the one draft open in `MeetingModal`'s own `transcript`, when the user presses
+  `녹취록으로 정리 ›` — see ["Transcript to minutes"](#transcript-to-minutes-2026-10-02) above.
 
 ## E2E coverage (2026-09-17)
 
@@ -745,4 +798,19 @@ switch caption on an existing meeting with stored follow-ups; the view hiding `�
 일` for one; a training record with a planted `mine` follow-up not appearing in the issue list's `할 일` section
 nor creating a work item on save (`commitMeeting` skips the reconcile); the work packet (both full and
 since-mode) omitting the training record entirely; and the prep packet keeping it, with its `기억할 점:` line and
-no follow-up/progress/task lines. See [tools/e2e/README.md](../../tools/e2e/README.md).
+no follow-up/progress/task lines.
+
+**Transcript to minutes (2026-10-02, written, `node --check`ed, not run):** `tools/e2e/flow14.js` (13 steps,
+chained after `flow13.js` and before `flow4.js`, which replaces the save) covers the button appearing only with a
+non-empty transcript; the three disabled captions (`aiHidden`, a day-job meeting with the switch off, an
+over-cap transcript); the packet carrying the whole transcript, the meeting line, the previous minutes' open
+decisions/follow-ups, the linked event's open checks, and today's work/task titles; the packet never carrying a
+profile identifier, another meeting's transcript, or an event's place/note (plus a re-assertion of the
+existing `flow11.js` sentinel that the work packet still carries none); a hidden previous meeting lending only
+its date and title; the confirm view's `기존`/`제안` columns and ticks defaulting to empty fields only; applying
+filling the form while `state.meetings` stays unchanged until `저장`/`등록`, after which a `내 담당` follow-up
+creates exactly one `source: "meeting"` work item; work proposals registering at `적용` with the picked track and
+keeping the form open, with a duplicate and a `mine`-equal proposal rejected; a reply's other top-level keys
+(`tasks`, `work`, `checks`, `quiz`, `verdict`) changing nothing; a refused reply showing `다시 붙여넣기`; a
+training draft applying the three relabelled fields only; closing the bridge keeping the form's draft; and exact
+(not substring) task-title matching. See [tools/e2e/README.md](../../tools/e2e/README.md).

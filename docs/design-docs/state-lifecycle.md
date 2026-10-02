@@ -155,6 +155,15 @@ save states `백업 기록 없음` from day one — a fact, not softened, [Rule 
 seeds `act.backupAt = shiftDay(today, -2)` so the demo stays fresh. The image backend sharing this date is covered
 above, under "The `store` adapter".
 
+**2026-10-02 (transcript to minutes, the seventh assistant-bridge packet) — schema stays v28, no migration block,
+no `v` bump, no new key.** `buildMinutesPacket`, `parseMinutesReply` and `MinutesBridgeModal`'s send/paste/confirm
+state are all derived or component state, lost on close ([Rule 9](core-beliefs.md#rule-9)). An applied proposal
+writes only into fields a meeting record already carries (`summary`, `decisions`, `actions`, `followUps[]`,
+`taskIds[]`), through the unchanged `submit` → `commitMeeting` path, and a ticked work proposal is a `work[]`
+record of the existing shape (`source: "ai"`). See
+[../product-specs/meetings.md](../product-specs/meetings.md#transcript-to-minutes-2026-10-02) and
+[assistant-bridge.md](assistant-bridge.md#the-seventh-packet--녹취록으로-정리).
+
 **2026-09-25 additions (the routine guide and the daily push) — schema stays v28, no migration block, no `v`
 bump.** `act` gains one more optional field, `opened?: { [date]: "HH:MM" }` — the day's first-open stamp,
 written once by a root effect on every path that brings the app up (boot, a day change while open, onboarding's

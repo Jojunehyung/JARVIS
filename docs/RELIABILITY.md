@@ -173,6 +173,30 @@ notes ([exec-plans/completed/2026-10-02-storage-expansion.md](exec-plans/complet
 for the full mutation list and measurements, including the real `localStorage` quota measured in Chrome
 (5,242,880 chars). `npm run verify` was not run for this plan either, per the same standing instruction.
 
+**The transcript-to-minutes plan (2026-10-02, schema still v28, no migrate block) edited the suite across both of
+its code phases**, also not run. Phase 1 (the minutes packet, `minutesPacketText`/`buildMinutesPacket`, the
+parser, smoke section 13) added no E2E file — `buildMinutesPacket` and `minutesReplyCtx` had no UI caller yet, so
+smoke alone (`liftClosure`) tested both. Phase 2 (`MinutesBridgeModal`, the form's button and its two reworded
+captions, `importWork`'s `keepModal` option) added the new `tools/e2e/flow14.js` (13 steps, chained after
+`flow13.js` and before `flow4.js`, which replaces the save — the plan's own draft named it `flow13.js`, but that
+name was already taken by the storage-expansion plan's file, found at the Phase 1 gate): the button appearing
+only with a non-empty transcript; the three disabled captions; the packet carrying the whole transcript and its
+context while never carrying a profile identifier, another meeting's transcript, or an event's place/note; a
+hidden previous meeting lending only its date and title; the confirm view's `기존`/`제안` columns and default
+ticks; applying filling the form while `state.meetings` stays unchanged until `저장`/`등록`; work proposals
+registering at `적용` with the picked track and keeping the form open; a reply's other top-level keys changing
+nothing; a refused reply's `다시 붙여넣기`; a training draft's three-field-only apply; the bridge's close keeping
+the form's draft; and exact (not substring) task-title matching. No new `run.js` helper. 314 `await step(` calls
+as written (`flow13.js` 10, `flow14.js` 13, the others unchanged — see
+[tools/e2e/README.md](../tools/e2e/README.md)); every edited file was checked with `node --check` and reads as
+syntactically valid; none of it has been executed. Both phases were build-verified (`npm run build`,
+`npm run finish`, `npm run lang:check`, `npm run smoke`, `npm run docs:gen && npm run docs:check`) and
+mutation-tested on the built preview/demo instead — nine mutations (m1–m9) across both phases, each caught by a
+smoke check or a throwaway UI/E2E-shaped assertion, then reverted — see the exec plan's progress notes
+([exec-plans/completed/2026-10-02-transcript-to-minutes.md](exec-plans/completed/2026-10-02-transcript-to-minutes.md))
+for the full mutation list and the measured packet lengths. `npm run verify` was not run for this plan either,
+per the same standing instruction.
+
 The one `롤모델` screen change (2026-09-18) was mutation-tested on the built demo, each mutation reverted once it failed as expected: leaving `buildReader`'s action as `{ type: "roleAdvice" }` left the reader's `›` opening no overlay at all (the retired type renders no branch) and failed the `startsWith("롤모델")` assertion, caught statically too by `grep roleAdvice src tools`; making `goRoleAction` also push a deal into `state.deals` for `deals_won` failed the landing step's record-boundary diff (`deals` moved, only `ui` and `lastTick` may); initialising `showGrades` to `true` left `칸 하나 = 등급 한 단계` visible before `펼치기 ›` and failed the collapsed-`영역 등급` assertion; and feeding `sp.journey` into the headline's percentage span changed `진행 50%` to `진행 6%`, failing the `flow.js` demo sweep's headline assertion while the numbers baseline (below) stayed byte-identical — a display swap is invisible to a value dump alone, which is why the headline assertions stay in the E2E rather than being replaced by a numbers check.
 
 A **numbers baseline** was also run and compared byte-for-byte against `HEAD` for this change: `roleGap`/`roleStageOf`/`stageProgressOf`/`roleVerdictDue`/`roleRecommendations` over the demo save, the demo save with `role.stages` replaced by a three-stage fixture, and the demo save with `role = null` — 17,788 chars, identical before and after the screen rewrite, confirming no number changed even though every surface that renders them did.
@@ -221,6 +245,15 @@ The production build ships a generated service worker (`dist/sw.js`): hashed ass
 - Dates use local time (`dstr`); a timezone change can shift streak boundaries.
 - A session crossing midnight now re-reads the date on focus and on a 60-second tick, so `today` follows the clock; only a timezone change still shifts streak boundaries.
 - **Photos are stored as resized data URLs, now in IndexedDB when it opens (2026-10-02), `localStorage` otherwise.** IndexedDB moves photos off the `localStorage` quota the state save shares, but it is not a safer place by itself: **on Android, IndexedDB can be evicted by the browser under storage pressure even with `navigator.storage.persist()` granted**, same as any other origin storage. The mitigation is the backup file — every photo travels in it — but the app cannot know whether the user has written one recently; that is exactly what the backup reminder (`act.backupAt`, [product-specs/daily-reader.md](product-specs/daily-reader.md), [product-specs/notifications.md](product-specs/notifications.md)) states a day count for, not a guarantee. A migrated photo's old `localStorage` copy is kept until the next export that contains it (the user's chosen option B), so it is never left only in evictable storage with no backup file written after the move — but a photo written and never exported, or an export that failed partway, still has no second copy anywhere but the device. **Without IndexedDB** (`file:` — the single-file demo, by design — no `indexedDB`, an open error/block, or a timeout past 1500 ms) every image key behaves exactly as before: `localStorage`, bounded by the same per-origin quota the state save shares. It is the user's job to write a backup out now and then regardless of backend.
+- **A work item the minutes bridge registers outlives an abandoned meeting form (2026-10-02, accepted).** `적용`
+  registers every ticked work proposal immediately, through `importWork(…, { keepModal: true })`, before the
+  meeting form itself is saved — by design, so a useful proposal is not lost to a later refusal or a closed tab —
+  but it also means closing the meeting form afterward without pressing `저장`/`등록` leaves that work item (and
+  any `source: "ai"` fields it carries) in `state.work` with no matching meeting record ever written. The confirm
+  view states this before the tick (`업무는 적용할 때 바로 업무 탭에 등록돼요 — 회의록을 저장하지 않아도 남아요.`);
+  there is no undo beyond the normal `업무` tab delete. See
+  [product-specs/daily-work.md](product-specs/daily-work.md#a-third-caller-of-importwork--the-minutes-bridge-2026-10-02) and
+  [tech-debt-tracker.md](exec-plans/tech-debt-tracker.md).
 - Installing from a different address creates a different origin, so the records do not follow; move them with a backup file.
 - The record storage budget (`STORAGE_BUDGET`, **4.5 MB since 2026-10-02**, previously 3.5 MB) is a heuristic guess at a slice of Chrome's own per-origin `localStorage` quota, measured at **5,242,880 chars** (throwaway measurement, [exec-plans/completed/2026-10-02-storage-expansion.md](exec-plans/completed/2026-10-02-storage-expansion.md)) — 524,288 chars of headroom above the new ceiling; a browser that blocks `localStorage` outright (private mode, disabled site data) fails the read-back check on every state change, not only on an image write, and surfaces the `저장에 실패했어요` toast every time rather than once (tracked in [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)). With IndexedDB open, photos no longer count against this budget at all; without it, they still share it exactly as before.
 - The calendar export (`캘린더로 내보내기`) writes a one-way snapshot: nothing completed, edited or deleted in the app after export reaches an already-imported calendar entry, and the app has no path to read a calendar back — see [design-docs/calendar-export.md](design-docs/calendar-export.md). Whether a given calendar app honours the file's `VALARM`s, and whether re-importing the same UID replaces, skips or duplicates the entry, both depend on that app and are unverified on a device — tracked as [TD-38](exec-plans/tech-debt-tracker.md) and backlog item 2, recorded (or `pending`) in [product-specs/install-and-backup.md](product-specs/install-and-backup.md).

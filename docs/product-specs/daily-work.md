@@ -314,6 +314,23 @@ before the user ticks and confirms; the raw reply is not stored anywhere
 change), stated with its summary, decisions, follow-ups and progress exactly like a project's meeting; its
 `transcript` is never read by `meetingLines` — the packet states named fields only ([SECURITY.md](../SECURITY.md)).
 
+### A third caller of `importWork` — the minutes bridge (2026-10-02)
+
+`importWork(list, date = today, { stamp = false, keepModal = false } = {})` gained one option for
+`MinutesBridgeModal` ([meetings.md](meetings.md#transcript-to-minutes-2026-10-02),
+[assistant-bridge.md](../design-docs/assistant-bridge.md#the-seventh-packet--녹취록으로-정리)): `keepModal` skips
+the function's own `setModal(null)`, so registering a work item from inside the meeting form's `녹취록으로 정리`
+sheet does not close that form and lose its unsaved draft. `MeetingModal` calls it as
+`onImportWork={(list) => importWork(list, today, { keepModal: true })}`; the two existing callers
+(`WorkBridgeModal`'s `workBridge` and `reviewBridge` renders) pass nothing new and are unaffected. Every path —
+written, refused, or empty — returns the refusal string, or `""` once written, so a caller can show it without
+also closing anything; the two existing callers still ignore the return. A work item registered this way carries
+`source: "ai"`, `done: false` and the track the confirm row picked, exactly like a `오늘 업무 만들기`/`주간 회고`
+proposal, and its `link` is `{ kind: "meeting", id }` for an edited meeting, `{ kind: "project", id: projectId }`
+for a new meeting with a project, or no link for a new memo — it registers **immediately** on `적용`, before the
+meeting itself is saved, so it stays in `state.work` even if the meeting form is later closed without pressing
+`저장`/`등록` ([core-beliefs.md](../design-docs/core-beliefs.md#rule-7) amendment 2026-10-02).
+
 ## The incremental packet — `act.workRefreshedAt` and since-mode (2026-09-22)
 
 Every `오늘 업무 만들기` packet used to restate the ten newest meetings whole, so a user who refreshes daily

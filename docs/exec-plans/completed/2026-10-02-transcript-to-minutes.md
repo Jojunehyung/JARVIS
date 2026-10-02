@@ -1,6 +1,6 @@
 # Transcript to minutes — the seventh bridge packet, `녹취록으로 정리`
 
-- Status: active (plan only — nothing is implemented until the user approves)
+- Status: completed (approved 2026-10-02; Phase 1 commit `708b13c`, Phase 2 commit `78c6117`, Phase 3 docs below)
 - Date: 2026-10-02
 - Needs approval: **yes** — [Rule 7](../../design-docs/core-beliefs.md#rule-7) requires explicit user approval for any new AI touchpoint, and this one **reverses, for one packet only, the 2026-09-17 decision that no packet ever carries a transcript** ([SECURITY.md](../../SECURITY.md)). No `migrate` block, no `v` bump, no `liferpg-*` key, no data row, no deletion of a user record.
 - Agents: planner → implementer (Phase 1, then Phase 2) → cleanup → verifier (smoke + `node --check` only; E2E written, never executed) → docs-syncer (Phase 3)
@@ -489,6 +489,91 @@ A later change could let the Samsung recorder's `텍스트로 공유` send the t
 ### Progress
 (implementer appends dated notes here)
 
+- 2026-10-02 — **Approved by the user** (option 2, "proceed"), including the Rule 7 reversal that lets this one packet carry the draft's transcript. Phase 1 started; Phases 2 and 3 wait for their gates.
+- 2026-10-02 — **Phase 1 done (implementer, not committed); stopped at Gate 1.**
+  - Code: `src/LifeManager.jsx` gains one block (pure addition, one hunk) in the Daily assistant region after `shuffleQuiz`, under the banner `/* ── The minutes packet (rule 7 amendment 2026-10-02, the seventh packet) … ── */`: the twelve `MINUTES_*` constants, `MINUTES_PACKET_HEAD`, `MINUTES_PACKET_HEAD_TRAINING`, `minutesPacketHead`, `minutesPacketText`, `buildMinutesPacket`, `minutesReplyCtx`, `parseMinutesReply`. No `migrate` block, still v28; no `store` call site, `liferpg-*` key, data row or existing line touched. `tools/harness/smoke-logic.js` gains section 13 (`minutes packet: 47 checks`).
+  - Gates: `npm run build` ok · `npm run smoke` all passed · `npm run finish` clean (no allowlist entry) · `npm run lang:check` clean · `node --check tools/harness/smoke-logic.js` ok · `npm run docs:gen && npm run docs:check` clean (`db-schema.md` line numbers and `symbol-index.md` regenerated). `npm run verify` and every E2E run skipped (standing user instruction). Every edited file LF.
+  - Baselines: 74 outputs captured at HEAD `61d72e6` before any edit — the six packets over the demo, the demo with `settings.workInAi: false` and a heavy save (30 meetings × 30 follow-ups with 2,000-char transcripts, a hidden meeting, three training records, six dated events with 30 checks each, 20 documents, 25 work items), plus since-mode work and every event's prep packet; `parseWorkReply` on the flow11-shaped replies (fenced, bare JSON, other keys, tracks, garbage) over the three saves; the other four parsers on the same replies. After the phase: byte-identical (sha256 `91df0701…` both). No baseline packet carries a transcript sentinel.
+  - Measurements (`buildMinutesPacket`, today 2026-10-02):
+    - (a) the demo's first meeting (the urgent memo) with a 2,000-char transcript: 3,352 chars, no reduction (a memo has no previous minutes; 4 work titles, 6 task titles). The demo's `유지보수 범위 협의` as a new draft linked to `○○물산 주간 점검`: 3,588 chars (last minutes with 2 open follow-ups, 2 open checks).
+    - (b) 30,000 chars with 300 line breaks and empty context: 31,215 chars, transcript whole, no guard line.
+    - (c) the heavy save, a new draft on the heavy project linked to an event with 22 open checks: 37,131 chars; reductions (0) work, (1) tasks and (2) checks fired, then it fit (the last minutes kept whole with 24 open follow-ups). Editing that project's newest meeting instead (its previous meeting is hidden): 35,614 chars, no reduction. The smoke fixture with full context (30 × 200-char follow-ups, 1,000-char decisions, 30 × 200-char checks, 30 + 30 titles): 38,892 chars, reductions 0–2 fired.
+    - (d) a training draft with a 30,000-char transcript: 30,737 chars.
+  - Mutations (each reverted; source restored byte-identical): (m1) the parser also reads top-level `work` → caught by `top-level work/tasks/checks/quiz/verdict are not read` (+2 refusal checks); (m2) `buildMinutesPacket` ignores `draft.aiHidden` → `an aiHidden draft: the guard text, no transcript`; (m5) substring task match → `task links: …`; (m6) the transcript folded through `oneLineText` → 7 checks incl. `whole transcript` and `the draft's own transcript only`; (m8) the packet reads `profile.name` → `no profile identifier, event place or note, document or journal` (+2); (m9) a training reply's lists kept → `training: the three fields only`. m3, m4 and m7 concern Phase 2 code.
+  - Deviations and interpretations:
+    1. Smoke sections 11 and 12 already exist (storage expansion), so the new section is **13**, placed before section 11 (the async tail that ends the run). The smoke file has no count header; the section prints its own check count.
+    2. `parseMinutesReply` returns one more key, `dropped` (follow-up entries beyond `MINUTES_FOLLOWUPS_READ`), which the plan names but does not place; a refused reply returns empty `fields` and `dropped: 0`.
+    3. `MINUTES_PACKET_TRANSCRIPT` is the transcript's carried maximum, per the amendment's "at most 30,000 characters": a longer transcript (direct callers only) is cut there with the guard line before any context reduction; the last reduction still trims further only if the text cannot fit otherwise.
+    4. A column-0 helper `minutesPacketHead(today, training)` (title, head, blank line, record heading) is shared by `minutesPacketText` and both guards; a training draft's guard text sits under `## 교육` rather than `## 회의`.
+    5. The builder trims the transcript's ends, as `submit` does before storing, so the packet carries what saving would store; the interior is untouched.
+    6. The work dedupe against `mine` follow-ups compares the follow-up's first `WORK_LIMITS.title` characters — the title `reconcileFollowUps` would register.
+    7. `  후속 미완료 {n}건:` states the total open count and is omitted when the last minutes have none open; the reduction shrinks the listed rows only. Check texts are folded with `oneLineText(…, EVENT_CHECK_TEXT)`. The two room rejections are templates over `MEETING_FOLLOWUPS_MAX` and `MEETING_LIMITS.tasks` (same strings).
+    8. `buildMinutesPacket` and `minutesReplyCtx` have no UI caller until Phase 2; smoke lifts and tests both (`liftClosure`), so `finish` is clean without an allowlist entry.
+  - For Phase 2: `tools/e2e/flow13.js` already exists (storage expansion) and the step count is no longer 291, so B6 needs a new file name (e.g. `flow14.js`) and a recount. The plan's Context line numbers are from `00ec1e1` and have shifted.
+  - Finding outside scope: the baseline heavy save's quiz packet is 27,045 chars, over `QUIZ_PACKET_MAX` (12,000) — its preparation section is never dropped and six events with 30 checks each fill it. Pre-existing and unchanged here.
+- 2026-10-02 — **Phase 2 done (implementer, not committed); stopped at Gate 2.**
+  - Code (`src/LifeManager.jsx`, no `migrate` block, still v28, nothing new stored, no `store` call site, `liferpg-*` key or data row touched):
+    - B1: `importWork(list, date = today, { stamp = false, keepModal = false } = {})` — `keepModal` skips `setModal(null)`; it returns the refusal string or `""` on every path. The two existing callers are unchanged and ignore the return.
+    - B2: the `meeting` slot passes `onImportWork={(list) => importWork(list, today, { keepModal: true })}` and `onToast`.
+    - B3/B4: inside the open transcript block, under its `MeetingText`, the border button `녹취록으로 정리 ›` (shown while `transcript.trim()` is non-empty) with the three disabled captions (first match wins), the applied line under it, and the two form copy edits verbatim.
+    - B5: `MinutesBridgeModal` directly after `MeetingModal` (send → paste → confirm, reusing `PacketSendPane`, `ReplyPastePane`, `copyPacket`), plus the column-0 list `MINUTES_FIELDS`. `MeetingModal` renders either its form `<Modal>` or the bridge (never both); the bridge's X and backdrop return to the form. `applyMinutes` fills the form only.
+  - E2E (written, `node --check`ed, **never executed**, per the standing instruction): new `tools/e2e/flow14.js` (13 steps, the plan's B6 list with the plan's step names), chained in `flow.js` after `flow13.js` with `// before flow4, which replaces the save`; the file plants its own fixture and ends by writing back the save it started from. `tools/e2e/README.md`: run-line count 301 → 314, a status paragraph and a `flow14.js` table row. 314 `await step(` calls as written (flow 38 · flow2 16 · flow3 25 · flow4 23 · flow5 19 · flow6 14 · flow7 27 · flow8 28 · flow9 10 · flow10 32 · flow11 42 · flow12 17 · flow13 10 · flow14 13). No `run.js` helper added.
+  - Gates: `npm run build` ok · `npm run finish` clean (no allowlist entry; one duplicate with `flow11.js`'s `pasteReply` was resolved by making `flow14.js`'s version assert the paste pane's title) · `npm run lang:check` clean · `npm run smoke` all passed · `node --check tools/e2e/flow14.js tools/e2e/flow.js` ok · `npm run docs:gen && npm run docs:check` clean (`db-schema.md` line numbers and `symbol-index.md` regenerated). `npm run verify` and every E2E run skipped (standing user instruction). Every edited file LF.
+  - Baselines: the Phase 1 harness (74 outputs: six packets × three saves, since-mode work, every prep packet, `parseWorkReply` on the flow11-shaped replies, the other four parsers) is byte-identical to the pre-Phase-1 capture (sha256 `91df0701…`). DOM: the single-file demo at HEAD vs. after — all seven tabs and the six demo meeting views are byte-identical; the six edit forms and the two new-meeting forms differ only by the two copy edits; the forms with an open transcript block additionally gain the block's wrapper `div` and, when the transcript holds text, the button.
+  - Throwaway checks (scratchpad puppeteer, `npm run build:demo`, 390 px; 54/54 passed, 0 console errors): no button on an empty form or empty transcript; enabled after a paste; the send pane replaces the form (one overlay) with the transcript verbatim and the context; the confirm view with `기존`/`제안` cards (ticks `[false, true, true]` with a typed summary), follow-ups with `내 담당` and due dates, task links (the substring refused), work rows with track chips and both rejections; no horizontal overflow at 390 px; `선택한 항목 적용` changes `work` only (two `source: "ai"` items, `personal` and `work` as picked, project link), the form keeps every typed value and shows the applied line `정리 제안 적용 — 결정 사항·후속 조치 · 후속 2건 · 할 일 1건 · 업무 2건 등록. 저장해야 회의록에 기록돼요.` and the toast; `등록` stores the fields, follow-ups, task link and transcript, the `내 담당` follow-up becomes exactly one `source: "meeting"` work item, no duplicate work titles, no reply text stored; X and backdrop keep the draft; the three disabled cases (and a `사업` memo enabled with the switch off, with the caption suffix); the refusal and `다시 붙여넣기`; training (caption, `## 교육`, three relabelled fields only, nothing written); editing the demo memo from `수정` (its transcript in the packet, the work item linked `{ kind: "meeting" }`, summary unticked by default, saved on `저장`); a packet over 30,000 chars (a full 30,000-char transcript plus context; no 40,000-char packet is reachable from the form) copied whole through the clipboard path and the `execCommand` fallback.
+  - Mutations (each built into the demo, run through the throwaway checks, then reverted; source restored byte-identical): (m3) the default tick ignores the field → 6 checks fail, incl. `default ticks only on empty fields` and the edited-meeting tick check — the E2E step `the confirm view shows existing and proposed text and ticks only empty fields` asserts the same `[false,true,true]`; (m4) `적용` writes the record through `onUpdate`/`onAdd` → 4 checks fail, incl. `meetings unchanged after apply` and `only work changed` — E2E `applying fills the form but writes nothing until save` (`changedKeys` empty); (m7) `importWork` ignores `keepModal` → `back to the form` fails — E2E `work proposals register on apply … and keep the form open` (title `새 회의록`).
+  - Deviations and interpretations:
+    1. The E2E file is `flow14.js` (the plan's `flow13.js` exists); the count is 301 → 314, not 291 → 304.
+    2. The "flag" is a snapshot: `MeetingModal` holds `bridgeDraft` (the draft as it stood when the button was pressed; null = the form shows) instead of a boolean `bridgeOpen`, so the packet and the reply context never shift while the bridge is open (e.g. after a work import).
+    3. The draft snapshot also carries `summary`, `decisions` and `actions` (the `기존` side and the default ticks need them); `buildMinutesPacket` does not read them.
+    4. `onApply` receives one more key, `work` (the count registered), for the applied line's `업무 {w}건 등록` fragment.
+    5. The field-card label (`MEETING_FIELD_LABEL[kind]`) uses `zinc-400`; the cards are bordered (`border-zinc-800`) so the two `bg-zinc-950` boxes stand out; the `내 담당` chip and the track chips are hidden on rejected rows; an empty-text follow-up row shows its facts line and the reject only; a work row shows its link text (`workLinkText`, else `연결 없음`) before the note, as `WorkBridgeModal` does.
+    6. The disabled captions are `text-zinc-500` lines under the button.
+    7. `demoState` is unchanged: the demo memo already carries a transcript, so the feature is reachable in the demo from its `수정`.
+- 2026-10-02 — **Phase 3 done (docs-syncer); plan completed.** Phases 1 (`708b13c`) and 2 (`78c6117`) were already
+  committed; this phase touched docs only.
+  - Rule 7 amendment appended verbatim after the 2026-09-25 amendment (`### Rule` count stays 19, verified).
+  - `assistant-bridge.md`: a new `## The seventh packet — 녹취록으로 정리` section (sections, caps, the head
+    verbatim, reductions with the measured lengths from the Phase 1 note, the parser table, `MinutesBridgeModal`,
+    what it never carries); the packet count raised to seven in the overview line, the tracks table and the
+    day-job-switch captions paragraph; a new tracks-table row; the work packet's "never a transcript" paragraph
+    gained the one-exception note.
+  - `SECURITY.md`: "six packets" → seven with a new bullet for `buildMinutesPacket`; the day-job-switch paragraph's
+    packet count raised to six (recounted against the file's own "five" figure, which already excluded the sixth,
+    quiz, packet — an existing gap left alone); the "never carries `transcript`" paragraph gained the exception.
+  - `meetings.md`: the intro and record-section sentences amended for the exception; the transcript block's button
+    documented inline; the `AI에 보내지 않기` caption and the transcript note's history both updated; a new
+    `## Transcript to minutes (2026-10-02)` subsection (the button, the bridge, apply-then-save, training, the two
+    caption edits); a new E2E coverage paragraph for `flow14.js`'s 13 steps; the "never read anywhere" bullet in
+    "What a meeting never does" gained the exception.
+  - `daily-work.md`: a new "A third caller of `importWork` — the minutes bridge" subsection (`keepModal`, the
+    return value, the `source`/`link`/track shape of a registered item, and that it outlives an abandoned form).
+  - `state-lifecycle.md`: a "2026-10-02 (transcript to minutes …)" entry confirming nothing new is stored.
+  - `ARCHITECTURE.md`: the Daily assistant row gained the seventh packet's symbols; the Meetings row gained
+    `MinutesBridgeModal` and `MeetingModal`'s new props/state; the App root row gained `importWork`'s `keepModal`
+    option; the Current status paragraph's E2E count and flow list updated to 314 / `flow14.js`.
+  - `RELIABILITY.md`: a new paragraph on both code phases' E2E/mutation coverage (matching the progress notes
+    above); a new "Known limits" bullet on the risk that a registered work item outlives an abandoned form.
+  - `tech-debt-tracker.md`: TD-135 (no check against the transcript, mitigated), TD-136 (the abandoned-form risk,
+    cross-referenced with RELIABILITY.md), TD-137 (`내 담당` flip does not re-run the work dedupe, open), TD-138 (a
+    near-cap paste may become a ChatGPT attachment, accepted) — the plan's own next numbers (129+) were already
+    taken by the storage-expansion plan, so these start at TD-135 — and TD-139, a **pre-existing** finding from the
+    Phase 1 baseline measurement, unrelated to this plan: the heavy-save quiz packet measures 27,045 chars, over
+    `QUIZ_PACKET_MAX` (12,000), because its preparation section is never dropped by design.
+  - `backlog.md`: item 11, the Share Target follow-up, with its device-test-first instruction.
+  - `decision-log.md`: a dated 2026-10-02 row recording the user-approved reversal, for this packet only, of the
+    2026-09-17 "no packet ever carries a transcript" decision.
+  - `tools/e2e/README.md`: already carried the `flow14.js` row and the 301 → 314 narrative from the Phase 2
+    commit; recounted (`grep -c "await step(" tools/e2e/flow*.js`, sums to 314) and left unchanged — no edit
+    needed.
+  - Grepped `docs/` for "no packet … carries a transcript" / "never … transcript" statements: the prep-packet and
+    core-beliefs/decision-log occurrences are either packet-scoped (still true of that one packet) or dated
+    historical records, not current-behaviour claims, and were left as written.
+  - `npm run docs:gen` (no generated file changed — no schema or data touched) and `npm run docs:check` both exit
+    0. `npm run verify` was **not run**, per the standing user instruction; the E2E suite stays written and
+    `node --check`ed only.
+  - Plan moved to `docs/exec-plans/completed/2026-10-02-transcript-to-minutes.md`.
+
 ## Verification
 - `npm run build`
 - `npm run smoke` (section 11)
@@ -503,10 +588,10 @@ A later change could let the Samsung recorder's `텍스트로 공유` send the t
 `npm run verify` is **not** run (standing user instruction); E2E is written only.
 
 ## Cleanup checklist
-- [ ] `npm run finish` exit 0: no unused symbol, no duplicate block (see decision 10), no residue, no Korean outside UI copy/data
-- [ ] no dead prop on `MeetingModal`/`MinutesBridgeModal`; `importWork`'s existing callers unchanged
-- [ ] allowlist additions (with reason) mirrored in `tech-debt-tracker.md`
-- [ ] scratchpad scripts not committed
+- [x] `npm run finish` exit 0: no unused symbol, no duplicate block (see decision 10), no residue, no Korean outside UI copy/data
+- [x] no dead prop on `MeetingModal`/`MinutesBridgeModal`; `importWork`'s existing callers unchanged
+- [x] allowlist additions (with reason) mirrored in `tech-debt-tracker.md`
+- [x] scratchpad scripts not committed
 
 ## Docs to sync
 - `docs/design-docs/core-beliefs.md` — append the Rule 7 amendment above, verbatim, after the 2026-09-25 amendment. The heading count stays 19.
